@@ -16,9 +16,8 @@ use std::str::FromStr as _;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use chain_types::PeopleConfig;
+use chain_types::{PeopleConfig, PeopleExtrinsicParamsBuilder};
 use sqlx::{PgPool, Row as _};
-use subxt::config::DefaultExtrinsicParamsBuilder;
 use subxt::dynamic::{self, Value};
 use subxt::tx::{DynamicPayload, TransactionStatus};
 use subxt::utils::AccountId32;
@@ -278,7 +277,7 @@ impl Writer {
         payload: &DynamicPayload<Vec<Value>>,
         nonce: u64,
     ) -> anyhow::Result<()> {
-        let params = DefaultExtrinsicParamsBuilder::<PeopleConfig>::new()
+        let params = PeopleExtrinsicParamsBuilder::<PeopleConfig>::new()
             .nonce(nonce)
             .build();
         let mut tx_client = self.chain.online().tx().await?;

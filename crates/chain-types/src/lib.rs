@@ -29,9 +29,198 @@ pub use subxt;
 /// subxt [`Config`](subxt::Config) for People Chain.
 ///
 /// People Chain is Polkadot-shaped (`AccountId32` + `MultiAddress<_, ()>` +
-/// `MultiSignature`, Blake2 hashing). The chain's custom signed-extension params
-/// are wired at the signing boundary (the identity-chain-writer), not on this alias.
-pub type PeopleConfig = subxt::PolkadotConfig;
+/// `MultiSignature`, Blake2 hashing), but its transaction-extension pipeline has
+/// People-specific no-op gates before the standard nonce/payment checks.
+#[derive(Debug, Clone, Default)]
+pub struct PeopleConfig(subxt::PolkadotConfig);
+
+impl subxt::Config for PeopleConfig {
+    type AccountId = <subxt::PolkadotConfig as subxt::Config>::AccountId;
+    type Address = <subxt::PolkadotConfig as subxt::Config>::Address;
+    type Signature = <subxt::PolkadotConfig as subxt::Config>::Signature;
+    type Header = <subxt::PolkadotConfig as subxt::Config>::Header;
+    type TransactionExtensions = PeopleTransactionExtensions<Self>;
+    type AssetId = <subxt::PolkadotConfig as subxt::Config>::AssetId;
+    type Hasher = <subxt::PolkadotConfig as subxt::Config>::Hasher;
+
+    fn genesis_hash(&self) -> Option<subxt::config::HashFor<Self>> {
+        self.0.genesis_hash()
+    }
+
+    fn spec_and_transaction_version_for_block_number(
+        &self,
+        block_number: u64,
+    ) -> Option<(u32, u32)> {
+        self.0
+            .spec_and_transaction_version_for_block_number(block_number)
+    }
+
+    fn metadata_for_spec_version(&self, spec_version: u32) -> Option<subxt::ArcMetadata> {
+        self.0.metadata_for_spec_version(spec_version)
+    }
+
+    fn set_metadata_for_spec_version(&self, spec_version: u32, metadata: subxt::ArcMetadata) {
+        self.0.set_metadata_for_spec_version(spec_version, metadata);
+    }
+}
+
+type PeopleTransactionExtensions<T> = (
+    Noop<AuthorizeValueTransfer>,
+    subxt::config::transaction_extensions::VerifySignature<T>,
+    Noop<AsPerson>,
+    Noop<AsProofOfInkParticipant>,
+    Noop<ScoreAsParticipant>,
+    Noop<GameAsInvited>,
+    Noop<PeopleLiteAuth>,
+    Noop<AsMember>,
+    Noop<AsCoinage>,
+    Noop<AsResources>,
+    Noop<HonourAuth>,
+    Noop<AuthorizeCall>,
+    Noop<RestrictOrigins>,
+    Noop<CheckNonZeroSender>,
+    subxt::config::transaction_extensions::CheckSpecVersion,
+    subxt::config::transaction_extensions::CheckTxVersion,
+    subxt::config::transaction_extensions::CheckGenesis<T>,
+    subxt::config::transaction_extensions::CheckMortality<T>,
+    subxt::config::transaction_extensions::CheckNonce,
+    Noop<CheckWeight>,
+    subxt::config::transaction_extensions::ChargeAssetTxPayment<T>,
+    Noop<StorageWeightReclaim>,
+);
+
+/// Builder for the People Chain transaction extension params used by the writer.
+pub struct PeopleExtrinsicParamsBuilder<T: subxt::Config> {
+    mortality: subxt::config::transaction_extensions::CheckMortalityParams<T>,
+    nonce: Option<u64>,
+    tip: u128,
+}
+
+impl<T: subxt::Config> PeopleExtrinsicParamsBuilder<T> {
+    /// Start with an immortal, no-tip transaction.
+    pub fn new() -> Self {
+        Self {
+            mortality: subxt::config::transaction_extensions::CheckMortalityParams::immortal(),
+            nonce: None,
+            tip: 0,
+        }
+    }
+
+    /// Provide a specific nonce.
+    pub fn nonce(mut self, nonce: u64) -> Self {
+        self.nonce = Some(nonce);
+        self
+    }
+
+    /// Build params for [`PeopleTransactionExtensions`].
+    pub fn build(
+        self,
+    ) -> <PeopleTransactionExtensions<T> as subxt::config::TransactionExtensions<T>>::Params {
+        (
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            self.mortality,
+            self.nonce.map_or_else(
+                subxt::config::transaction_extensions::CheckNonceParams::from_chain,
+                subxt::config::transaction_extensions::CheckNonceParams::with_nonce,
+            ),
+            (),
+            subxt::config::transaction_extensions::ChargeAssetTxPaymentParams::tip(self.tip),
+            (),
+        )
+    }
+}
+
+impl<T: subxt::Config> Default for PeopleExtrinsicParamsBuilder<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub trait NoopName {
+    const NAME: &'static str;
+}
+
+#[derive(Debug, Clone)]
+pub struct Noop<N>(core::marker::PhantomData<N>);
+
+impl<T: subxt::Config, N: NoopName + Send + Sync + 'static> subxt::config::TransactionExtension<T>
+    for Noop<N>
+{
+    type Decoded = ();
+    type Params = ();
+
+    fn new(
+        _client: &subxt::config::ClientState<T>,
+        _params: Self::Params,
+    ) -> Result<Self, subxt::error::TransactionExtensionError> {
+        Ok(Self(core::marker::PhantomData))
+    }
+}
+
+impl<R: subxt::ext::scale_type_resolver::TypeResolver, N: NoopName>
+    subxt::ext::frame_decode::extrinsics::TransactionExtension<R> for Noop<N>
+{
+    const NAME: &str = N::NAME;
+
+    fn encode_value_to(
+        &self,
+        _type_id: R::TypeId,
+        _type_resolver: &R,
+        _out: &mut Vec<u8>,
+    ) -> Result<(), subxt::ext::frame_decode::extrinsics::TransactionExtensionError> {
+        Ok(())
+    }
+
+    fn encode_implicit_to(
+        &self,
+        _type_id: R::TypeId,
+        _type_resolver: &R,
+        _out: &mut Vec<u8>,
+    ) -> Result<(), subxt::ext::frame_decode::extrinsics::TransactionExtensionError> {
+        Ok(())
+    }
+}
+
+macro_rules! noop_name {
+    ($ty:ident, $name:literal) => {
+        pub struct $ty;
+        impl NoopName for $ty {
+            const NAME: &'static str = $name;
+        }
+    };
+}
+
+noop_name!(AuthorizeValueTransfer, "AuthorizeValueTransfer");
+noop_name!(AsPerson, "AsPerson");
+noop_name!(AsProofOfInkParticipant, "AsProofOfInkParticipant");
+noop_name!(ScoreAsParticipant, "ScoreAsParticipant");
+noop_name!(GameAsInvited, "GameAsInvited");
+noop_name!(PeopleLiteAuth, "PeopleLiteAuth");
+noop_name!(AsMember, "AsMember");
+noop_name!(AsCoinage, "AsCoinage");
+noop_name!(AsResources, "AsResources");
+noop_name!(HonourAuth, "HonourAuth");
+noop_name!(AuthorizeCall, "AuthorizeCall");
+noop_name!(RestrictOrigins, "RestrictOrigins");
+noop_name!(CheckNonZeroSender, "CheckNonZeroSender");
+noop_name!(CheckWeight, "CheckWeight");
+noop_name!(StorageWeightReclaim, "StorageWeightReclaim");
 
 #[cfg(test)]
 mod tests {
