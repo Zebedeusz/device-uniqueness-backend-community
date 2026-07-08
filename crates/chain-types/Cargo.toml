@@ -1,0 +1,13 @@
+[package]
+name = "chain-types"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+subxt.workspace = true
+
+[lints]
+workspace = true

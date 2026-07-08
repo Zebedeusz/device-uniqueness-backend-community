@@ -1,0 +1,91 @@
+name: identity-backend-v2
+
+# Local/dev topology: Postgres + the two service binaries built from one image.
+# The People Chain RPC is external (a public Paseo endpoint by default), so
+# `docker compose up` needs outbound internet to reach it.
+#
+# Secrets below use dev-only defaults so `docker compose up` works out of the
+# box. Override anything real via a `.env` file next to this compose file (it is
+# auto-loaded) or the shell environment. NEVER ship these defaults to prod.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: identity
+      POSTGRES_PASSWORD: identity
+      POSTGRES_DB: identity
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity -d identity"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # N-replica HTTP API. Stateless; scale with `--scale identity-api=N`.
+  # Applies embedded migrations on boot (advisory-locked, safe across replicas).
+  identity-api:
+    build: .
+    image: identity-backend-v2:local
+    command: ["identity-api"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Optional: full var set from a local .env (see .env.example). Values in
+    # `environment:` below override it (notably DATABASE_URL -> internal host).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      # Dev-only 32-byte Ed25519 seed (0x + 64 hex). Replace in prod.
+      JWT_ED25519_SECRET: ${JWT_ED25519_SECRET:-0x0101010101010101010101010101010101010101010101010101010101010101}
+      # Dev default = //Alice's sr25519 public key (coherent with the writer SURI below).
+      ATTESTER_PUBLIC_KEY: ${ATTESTER_PUBLIC_KEY:-0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d}
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      ENFORCE_AUTH: ${ENFORCE_AUTH:-false}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      # Covers migrations + the blocking People Chain connect at startup.
+      start_period: 40s
+
+  # Single-instance worker: drains the reservation outbox onto People Chain.
+  # Reuses the image built by identity-api. MUST stay at exactly one replica —
+  # one signer = one nonce lane. Do not `--scale` this service.
+  identity-chain-writer:
+    image: identity-backend-v2:local
+    command: ["identity-chain-writer"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-api:
+        condition: service_started
+    # Optional: full var set from a local .env (see .env.example). Values in
+    # `environment:` below override it (notably DATABASE_URL -> internal host).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      # Dev signer. In prod this is the least-privilege proxy key; set
+      # CHAIN_WRITER_PROXY_FOR to the cold attester primary it signs for.
+      CHAIN_WRITER_SIGNER_SURI: ${CHAIN_WRITER_SIGNER_SURI:-//Alice}
+      CHAIN_WRITER_PROXY_FOR: ${CHAIN_WRITER_PROXY_FOR:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    deploy:
+      replicas: 1
+
+volumes:
+  pgdata:

@@ -1,0 +1,7 @@
+target
+.git
+.local
+.zdx
+docs
+.env
+*.log

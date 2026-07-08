@@ -1,0 +1,270 @@
+//! `POST /api/v1/usernames` — the username write path (registration intake).
+//!
+//! JWT-gated + rate-limited. Validates the request, enforces `who` == JWT
+//! subject (the beneficiary must be the authenticated account), selects the
+//! discriminator, and persists a `RESERVED` row in the reservation outbox before
+//! returning `202`. The `identity-chain-writer` binary drains the outbox onto People
+//! Chain; the app confirms the result on-chain (`UsernameOwnerOf`), so there is
+//! no backend status-poll route.
+//!
+//! Byte-compatible with the shipping iOS/Android `UsernameApi.register`: flat
+//! request fields, `202 {base_username, digits, username, device_check_available?}`.
+
+use std::collections::BTreeSet;
+use std::str::FromStr as _;
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::Json;
+use rand::rngs::OsRng;
+use rand::seq::SliceRandom as _;
+use serde::{Deserialize, Serialize};
+
+use crate::chain::outbox::{self, InsertError, NewReservation};
+use crate::http::error::{AppError, AppResult};
+use crate::http::extract::AuthAccount;
+use crate::http::state::AppState;
+
+use super::{available_digits, is_valid_base};
+
+/// The flat registration request, matching the shipping clients verbatim.
+#[derive(Deserialize)]
+pub struct RegisterRequest {
+    #[serde(rename = "candidateAccountId")]
+    candidate_account_id: String,
+    username: String,
+    #[serde(rename = "preferredDigits")]
+    preferred_digits: Option<String>,
+    #[serde(rename = "candidateSignature")]
+    candidate_signature: String,
+    #[serde(rename = "ringVrfKey")]
+    ring_vrf_key: String,
+    #[serde(rename = "proofOfOwnership")]
+    proof_of_ownership: String,
+    #[serde(rename = "consumerRegistrationSignature")]
+    consumer_registration_signature: String,
+    #[serde(rename = "identifierKey")]
+    identifier_key: String,
+    dotns: Option<Dotns>,
+}
+
+/// Optional DotNS reservation, parking a base label for later full-person use.
+#[derive(Deserialize)]
+struct Dotns {
+    signature: String,
+    #[serde(rename = "signedAt")]
+    signed_at: i64,
+    #[serde(rename = "reservedUsername")]
+    reserved_username: Option<String>,
+}
+
+/// `202` body: the reserved full username and its parts.
+#[derive(Serialize)]
+pub struct RegisterResponse {
+    base_username: String,
+    digits: String,
+    username: String,
+    #[serde(
+        rename = "device_check_available",
+        skip_serializing_if = "Option::is_none"
+    )]
+    device_check_available: Option<bool>,
+}
+
+/// Reserve a lite username and enqueue it for on-chain registration.
+pub async fn register(
+    State(state): State<AppState>,
+    account: AuthAccount,
+    Json(req): Json<RegisterRequest>,
+) -> AppResult<(StatusCode, Json<RegisterResponse>)> {
+    let base = req.username.trim().to_string();
+    if !is_valid_base(&base) {
+        return Err(AppError::bad_request(
+            "username must be at least 6 lowercase letters",
+        ));
+    }
+
+    // Hard contract: the beneficiary must be the authenticated account.
+    let candidate = subxt::utils::AccountId32::from_str(&req.candidate_account_id)
+        .map_err(|_| AppError::bad_request("candidateAccountId is not a valid SS58 address"))?;
+    let candidate_hex = format!("0x{}", hex::encode(candidate.0));
+    if candidate_hex != account.account_id {
+        return Err(AppError::forbidden(
+            "candidateAccountId must equal the authenticated account",
+        ));
+    }
+
+    // Relayed verbatim into the on-chain call; validate shape/length here.
+    let candidate_signature = decode_hex("candidateSignature", &req.candidate_signature, Some(64))?;
+    let ring_vrf_key = decode_hex("ringVrfKey", &req.ring_vrf_key, None)?;
+    let proof_of_ownership = decode_hex("proofOfOwnership", &req.proof_of_ownership, Some(64))?;
+    let consumer_registration_signature = decode_hex(
+        "consumerRegistrationSignature",
+        &req.consumer_registration_signature,
+        Some(64),
+    )?;
+    let identifier_key = decode_hex("identifierKey", &req.identifier_key, Some(65))?;
+
+    let (dotns_signature, dotns_signed_at, reserved_username) = match req.dotns {
+        Some(d) => (
+            Some(decode_hex("dotns.signature", &d.signature, Some(64))?),
+            Some(d.signed_at),
+            d.reserved_username,
+        ),
+        None => (None, None, None),
+    };
+
+    // Attestation-off (M0): the iOS DeviceCheck free-slot gate that would return
+    // `200 {registrationOutcome: "PAYMENT_REQUIRED"}` is wired in Slice 6. While
+    // `auth_enabled` is false every request is treated as an instant free reservation.
+    if state.config.auth_enabled {
+        tracing::debug!("attestation enabled: DeviceCheck free-slot gate not yet implemented");
+    }
+
+    let taken = state.chain.taken_discriminators(&base).await?;
+    let digit = select_digit(&taken, req.preferred_digits.as_deref())?;
+    let digits = format!("{digit:02}");
+    let full_username = format!("{base}.{digits}");
+
+    let new = NewReservation {
+        account_id: account.account_id.clone(),
+        candidate_account_id: req.candidate_account_id,
+        base: base.clone(),
+        digits: digits.clone(),
+        full_username: full_username.clone(),
+        candidate_signature,
+        ring_vrf_key,
+        proof_of_ownership,
+        consumer_registration_signature,
+        identifier_key,
+        dotns_signature,
+        dotns_signed_at,
+        reserved_username,
+    };
+
+    match outbox::insert(&state.pool, &new).await {
+        Ok(id) => {
+            tracing::info!(id, username = %full_username, "username reserved");
+        }
+        Err(InsertError::Conflict) => {
+            return Err(AppError::conflict("username is already taken"));
+        }
+        Err(InsertError::Db(e)) => return Err(AppError::from(e)),
+    }
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(RegisterResponse {
+            base_username: base,
+            digits,
+            username: full_username,
+            device_check_available: None,
+        }),
+    ))
+}
+
+/// Decode a `0x`-hex field, optionally enforcing an exact byte length.
+fn decode_hex(name: &str, value: &str, expect_len: Option<usize>) -> AppResult<Vec<u8>> {
+    let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(value))
+        .map_err(|_| AppError::bad_request(format!("{name} must be 0x-hex")))?;
+    if let Some(n) = expect_len {
+        if bytes.len() != n {
+            return Err(AppError::bad_request(format!(
+                "{name} must be {n} bytes, got {}",
+                bytes.len()
+            )));
+        }
+    }
+    Ok(bytes)
+}
+
+/// Choose the discriminator: the preferred one if free, else a random free one.
+/// The pool is `01..=99` (`00` is never offered).
+fn select_digit(taken: &BTreeSet<u8>, preferred: Option<&str>) -> AppResult<u8> {
+    match preferred {
+        Some(p) => {
+            let d = parse_preferred(p)
+                .ok_or_else(|| AppError::bad_request("preferredDigits must be 01-99"))?;
+            if taken.contains(&d) {
+                return Err(AppError::conflict("preferred digits are taken"));
+            }
+            Ok(d)
+        }
+        None => {
+            let available = available_digits(taken);
+            available
+                .choose(&mut OsRng)
+                .copied()
+                .ok_or_else(|| AppError::conflict("no digits available for this name"))
+        }
+    }
+}
+
+/// Parse a two-character `01`..`99` suffix into `1..=99`.
+fn parse_preferred(s: &str) -> Option<u8> {
+    if s.len() != 2 || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    match s.parse::<u8>().ok()? {
+        d @ 1..=99 => Some(d),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_validation_matches_read_path() {
+        assert!(is_valid_base("alicexyz"));
+        assert!(!is_valid_base("short")); // < 6
+        assert!(!is_valid_base("Alicexyz")); // uppercase
+        assert!(!is_valid_base("alice123")); // digits
+    }
+
+    #[test]
+    fn parses_two_digit_preferred_suffix() {
+        assert_eq!(parse_preferred("01"), Some(1));
+        assert_eq!(parse_preferred("42"), Some(42));
+        assert_eq!(parse_preferred("99"), Some(99));
+        assert_eq!(parse_preferred("00"), None); // 00 never offered
+        assert_eq!(parse_preferred("5"), None); // must be two chars
+        assert_eq!(parse_preferred("100"), None);
+        assert_eq!(parse_preferred("ab"), None);
+    }
+
+    #[test]
+    fn available_excludes_taken_and_zero() {
+        let taken: BTreeSet<u8> = [1u8, 2, 99].into_iter().collect();
+        let available = available_digits(&taken);
+        assert!(!available.contains(&0));
+        assert!(!available.contains(&1));
+        assert!(!available.contains(&99));
+        assert!(available.contains(&3));
+        assert_eq!(available.len(), 99 - 3);
+    }
+
+    #[test]
+    fn preferred_digit_selection() {
+        let taken: BTreeSet<u8> = [7u8].into_iter().collect();
+        assert_eq!(select_digit(&taken, Some("08")).unwrap(), 8);
+        assert!(matches!(
+            select_digit(&taken, Some("07")),
+            Err(AppError::Conflict(_))
+        ));
+        assert!(matches!(
+            select_digit(&taken, Some("zz")),
+            Err(AppError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn random_selection_when_exhausted_conflicts() {
+        let taken: BTreeSet<u8> = (1..=99u8).collect();
+        assert!(matches!(
+            select_digit(&taken, None),
+            Err(AppError::Conflict(_))
+        ));
+    }
+}

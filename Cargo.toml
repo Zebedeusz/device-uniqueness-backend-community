@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.95"
+license = "GPL-3.0-only"
+# Private workspace: none of these crates are published to crates.io.
+publish = false
+
+[workspace.dependencies]
+chain-types = { path = "crates/chain-types" }
+
+subxt = { version = "0.50", default-features = false, features = ["native"] }
+subxt-signer = { version = "0.50", default-features = false, features = ["sr25519", "std"] }
+
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+uninlined_format_args = "warn"
