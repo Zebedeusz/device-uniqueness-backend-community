@@ -25,7 +25,7 @@ Cargo workspace, two crates:
 
 ## Commands
 
-- `just check` — the full gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace`. **No CI exists**, so this is the only gate; run it before declaring done.
+- `just check` — the full gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace`. CI runs the same three checks on push/PR; run it before declaring done.
 - `just run` / `just run-writer` — run `identity-api` / `identity-chain-writer` locally.
 - Single test: `cargo test -p identity-service <name>` (or `-p chain-types`).
 - `just deny` — `cargo-deny` audit; **not** in `just check`, needs `cargo install cargo-deny`.

@@ -6,6 +6,16 @@ Current test deployment: `https://identity.dotspark.app` on `ubuntu@51.15.134.8`
 
 ## Update / redeploy
 
+Preferred — one command from a local checkout (backs up the DB, syncs code, rebuilds, waits for `/readyz`):
+
+```bash
+just deploy          # wraps scripts/deploy.sh; DEPLOY_HOST=ibv2 by default
+```
+
+It never touches the server's `.env`, and it takes a `pg_dump` to `~/backups/` on the server before anything else (keeps the last 14).
+
+Manual alternative on the server:
+
 ```bash
 cd ~/identity-backend-v2
 git pull
@@ -14,17 +24,21 @@ sudo docker compose up -d --build
 
 Only changed layers rebuild. Migrations apply automatically on boot (advisory-locked, safe across replicas). Never run migrations by hand.
 
-Alternative during development — sync a local working copy instead of pulling:
+Never sync or overwrite the server's `.env`.
+
+## Backups / restore
+
+`just deploy` and CI both write `~/backups/identity-<timestamp>.sql.gz` on the server before each deploy. Manual backup:
 
 ```bash
-rsync -az --delete \
-  --exclude='.git/' --exclude='target/' --exclude='.local/' --exclude='.zdx/' \
-  --exclude='output/' --exclude='.playwright-cli/' --exclude='.polkadot/' \
-  --exclude='.env' --exclude='.DS_Store' --exclude='*.log' \
-  ./ <server>:~/identity-backend-v2/
+sudo docker compose exec -T postgres pg_dump -U identity identity | gzip > ~/backups/identity-$(date +%Y%m%d-%H%M%S).sql.gz
 ```
 
-Never sync or overwrite the server's `.env`.
+Restore into a fresh/empty database (e.g. after a volume wipe, once containers are up):
+
+```bash
+gunzip -c ~/backups/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres psql -U identity -d identity
+```
 
 ## Health
 
@@ -90,4 +104,4 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
 | `readyz` says `chain: down` | People Chain RPC unreachable or endpoint changed. Check `PEOPLE_RPC_URL` against the current environments list. |
 | Registrations stuck in `RETRY_AFTER` with wasm-trap errors | Payload invalid for `PeopleLite.attest` (dummy/stale signatures), or attester/proxy authorization missing on-chain. |
 | Writer exits immediately at boot | Bad `CHAIN_WRITER_SIGNER_SURI` (see DEPLOY troubleshooting) or DB unreachable. |
-| Everything down after server reboot | Start manually: `cd ~/identity-backend-v2 && sudo docker compose up -d` (containers have no restart policy yet). |
+| Everything down after server reboot | Containers have `restart: unless-stopped` and come back with Docker. If they don't (policy predates last deploy): `cd ~/identity-backend-v2 && sudo docker compose up -d`. |

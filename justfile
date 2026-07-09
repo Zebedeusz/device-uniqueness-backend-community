@@ -26,3 +26,8 @@ run:
 # Run the identity-chain-writer worker (drains the reservation outbox onto People Chain).
 run-writer:
     cargo run -p identity-service --bin identity-chain-writer
+
+# Manual fallback deploy of the local working copy (normal path: CI deploys on push to main).
+# Overrides: DEPLOY_HOST (default ibv2), DEPLOY_URL (default https://identity.dotspark.app).
+deploy:
+    ./scripts/deploy.sh

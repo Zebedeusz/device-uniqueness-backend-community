@@ -1,0 +1,53 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: tests
+        run: cargo test --workspace
+
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-ibv2
+      cancel-in-progress: false
+    steps:
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.IBV2_SSH_KEY }}
+          HOST: ${{ secrets.IBV2_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy (git update + backup + rebuild + health check)
+        env:
+          HOST: ${{ secrets.IBV2_HOST }}
+          SHA: ${{ github.sha }}
+        run: |
+          ssh ubuntu@"$HOST" "set -euo pipefail
+            cd ~/identity-backend-v2
+            git fetch origin main
+            git reset --hard '$SHA'
+            bash scripts/remote-deploy.sh"
+
+      - name: Public health check
+        run: |
+          curl -fsS --max-time 20 https://identity.dotspark.app/readyz
+          echo
