@@ -21,11 +21,11 @@ use sqlx::{PgPool, Row as _};
 use subxt::dynamic::{self, Value};
 use subxt::tx::{DynamicPayload, TransactionStatus};
 use subxt::utils::AccountId32;
-use subxt_signer::sr25519::Keypair;
 use time::OffsetDateTime;
 
 use super::client::ChainClient;
 use super::outbox::{self, Guard, Reservation};
+use super::signer::WriterSigner;
 
 /// Chain-writer configuration, loaded from the environment.
 #[derive(Debug, Clone)]
@@ -98,8 +98,8 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     );
     let pool = crate::db::connect(&config.database_url).await?;
     let chain = ChainClient::connect(&config.people_rpc_url).await?;
-    let signer = build_signer(&config.signer_suri)?;
-    let signer_account = AccountId32(signer.public_key().0);
+    let signer = WriterSigner::from_secret(&config.signer_suri)?;
+    let signer_account = AccountId32(signer.public_bytes());
     tracing::info!(signer = %hex_account(&signer_account.0), "identity-chain-writer connected");
 
     let mut writer = Writer {
@@ -116,7 +116,7 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
 struct Writer {
     pool: PgPool,
     chain: ChainClient,
-    signer: Keypair,
+    signer: WriterSigner,
     signer_account: AccountId32,
     config: WriterConfig,
     /// Locally-tracked nonce; reset to a chain re-fetch on any error.
@@ -483,12 +483,6 @@ fn attest_call(r: &Reservation, candidate: &[u8; 32]) -> Value {
 /// `MultiSignature::Sr25519(sig)`.
 fn sr25519_signature(bytes: &[u8]) -> Value {
     Value::unnamed_variant("Sr25519", [Value::from_bytes(bytes)])
-}
-
-fn build_signer(suri: &str) -> anyhow::Result<Keypair> {
-    let uri =
-        subxt_signer::SecretUri::from_str(suri).context("parsing CHAIN_WRITER_SIGNER_SURI")?;
-    Keypair::from_uri(&uri).context("building signer keypair from SURI")
 }
 
 fn parse_account(ss58: &str) -> anyhow::Result<[u8; 32]> {

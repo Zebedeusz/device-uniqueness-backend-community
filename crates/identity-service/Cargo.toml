@@ -26,6 +26,7 @@ chain-types.workspace = true
 subxt = { workspace = true, features = ["jsonrpsee"] }
 subxt-rpcs.workspace = true
 subxt-signer = { workspace = true, features = ["subxt"] }
+schnorrkel = "0.11"
 
 tokio.workspace = true
 axum.workspace = true

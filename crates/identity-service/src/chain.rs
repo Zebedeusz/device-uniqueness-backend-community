@@ -5,6 +5,7 @@
 
 pub mod client;
 pub mod outbox;
+pub mod signer;
 pub mod writer;
 
 pub use client::ChainClient;
