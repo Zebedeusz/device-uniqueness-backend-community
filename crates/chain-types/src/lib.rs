@@ -154,6 +154,7 @@ impl<T: subxt::Config> Default for PeopleExtrinsicParamsBuilder<T> {
 
 pub trait NoopName {
     const NAME: &'static str;
+    const VALUE: &'static [u8] = &[];
 }
 
 #[derive(Debug, Clone)]
@@ -182,8 +183,9 @@ impl<R: subxt::ext::scale_type_resolver::TypeResolver, N: NoopName>
         &self,
         _type_id: R::TypeId,
         _type_resolver: &R,
-        _out: &mut Vec<u8>,
+        out: &mut Vec<u8>,
     ) -> Result<(), subxt::ext::frame_decode::extrinsics::TransactionExtensionError> {
+        out.extend_from_slice(N::VALUE);
         Ok(())
     }
 
@@ -204,20 +206,27 @@ macro_rules! noop_name {
             const NAME: &'static str = $name;
         }
     };
+    ($ty:ident, $name:literal, $value:expr) => {
+        pub struct $ty;
+        impl NoopName for $ty {
+            const NAME: &'static str = $name;
+            const VALUE: &'static [u8] = $value;
+        }
+    };
 }
 
-noop_name!(AuthorizeValueTransfer, "AuthorizeValueTransfer");
-noop_name!(AsPerson, "AsPerson");
-noop_name!(AsProofOfInkParticipant, "AsProofOfInkParticipant");
-noop_name!(ScoreAsParticipant, "ScoreAsParticipant");
-noop_name!(GameAsInvited, "GameAsInvited");
-noop_name!(PeopleLiteAuth, "PeopleLiteAuth");
-noop_name!(AsMember, "AsMember");
-noop_name!(AsCoinage, "AsCoinage");
-noop_name!(AsResources, "AsResources");
-noop_name!(HonourAuth, "HonourAuth");
+noop_name!(AuthorizeValueTransfer, "AuthorizeValueTransfer", &[0]);
+noop_name!(AsPerson, "AsPerson", &[0]);
+noop_name!(AsProofOfInkParticipant, "AsProofOfInkParticipant", &[0]);
+noop_name!(ScoreAsParticipant, "ScoreAsParticipant", &[0]);
+noop_name!(GameAsInvited, "GameAsInvited", &[0]);
+noop_name!(PeopleLiteAuth, "PeopleLiteAuth", &[0]);
+noop_name!(AsMember, "AsMember", &[0]);
+noop_name!(AsCoinage, "AsCoinage", &[0]);
+noop_name!(AsResources, "AsResources", &[0]);
+noop_name!(HonourAuth, "HonourAuth", &[0]);
 noop_name!(AuthorizeCall, "AuthorizeCall");
-noop_name!(RestrictOrigins, "RestrictOrigins");
+noop_name!(RestrictOrigins, "RestrictOrigins", &[0]);
 noop_name!(CheckNonZeroSender, "CheckNonZeroSender");
 noop_name!(CheckWeight, "CheckWeight");
 noop_name!(StorageWeightReclaim, "StorageWeightReclaim");
