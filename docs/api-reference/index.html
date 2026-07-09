@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Identity Backend V2 API Reference</title>
+<style>
+:root{
+  --bg:#0b0e14;
+  --bg-2:#0f131a;
+  --bg-3:#13171f;
+  --panel:#11151d;
+  --panel-2:#0e1219;
+  --border:#1e2430;
+  --border-2:#262d3b;
+  --border-3:#323a4a;
+  --text:#e6e9ef;
+  --text-dim:#a4adc0;
+  --text-mute:#6b7589;
+  --text-faint:#4a5365;
+  --accent:#7dd3fc;
+  --accent-dim:#5b9bbf;
+  --green:#56d364;
+  --green-bg:rgba(86,211,100,0.10);
+  --yellow:#e3b341;
+  --yellow-bg:rgba(227,179,65,0.10);
+  --red:#f85149;
+  --red-bg:rgba(248,81,73,0.10);
+  --blue:#58a6ff;
+  --blue-bg:rgba(88,166,255,0.10);
+  --purple:#bc8cff;
+  --mono:'SF Mono','Menlo','Monaco','Consolas','Roboto Mono',ui-monospace,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:14px;
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  display:flex;
+  min-height:100vh;
+}
+::selection{background:rgba(125,211,252,0.25);color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--border-3)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ---------- LAYOUT ---------- */
+.sidebar{
+  width:286px;
+  flex-shrink:0;
+  position:sticky;
+  top:0;
+  height:100vh;
+  overflow-y:auto;
+  background:var(--bg-2);
+  border-right:1px solid var(--border);
+  padding:0 0 24px;
+}
+.sidebar-inner{padding:20px 0 0}
+.brand{
+  padding:0 20px 16px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:8px;
+}
+.brand-tag{
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--accent);
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  padding:2px 6px;
+  border:1px solid rgba(125,211,252,0.3);
+  border-radius:3px;
+  margin-bottom:8px;
+}
+.brand-title{
+  font-family:var(--mono);
+  font-size:13px;
+  font-weight:600;
+  color:var(--text);
+  letter-spacing:-0.01em;
+}
+.brand-sub{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--text-mute);
+  margin-top:3px;
+}
+.nav-section{padding:8px 0 4px}
+.nav-section-title{
+  font-family:var(--mono);
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:0.1em;
+  text-transform:uppercase;
+  color:var(--text-faint);
+  padding:8px 20px;
+}
+.nav-item{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:5px 20px;
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--text-dim);
+  text-decoration:none;
+  border-left:2px solid transparent;
+  transition:all 0.12s;
+}
+.nav-item:hover{
+  background:var(--bg-3);
+  color:var(--text);
+  text-decoration:none;
+}
+.nav-item.active{
+  color:var(--accent);
+  border-left-color:var(--accent);
+  background:rgba(125,211,252,0.06);
+}
+.nav-item .method-mini{
+  font-size:9px;
+  font-weight:700;
+  width:30px;
+  flex-shrink:0;
+  letter-spacing:0.05em;
+  color:var(--text-mute);
+}
+.nav-item.m-get .method-mini{color:var(--green)}
+.nav-item.m-post .method-mini{color:var(--yellow)}
+.nav-item.m-put .method-mini{color:var(--blue)}
+.nav-item.m-del .method-mini{color:var(--red)}
+.nav-item .path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.main{
+  flex:1;
+  min-width:0;
+  padding:0 48px 80px;
+  max-width:100%;
+}
+.main-inner{
+  max-width:1080px;
+  margin:0 auto;
+}
+
+/* ---------- HERO ---------- */
+.hero{
+  padding:36px 0 24px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:36px;
+}
+.hero-eyebrow{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--accent);
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  margin-bottom:10px;
+}
+.hero h1{
+  font-family:var(--sans);
+  font-size:28px;
+  font-weight:700;
+  letter-spacing:-0.02em;
+  margin-bottom:6px;
+}
+.hero h1 .v{
+  font-family:var(--mono);
+  color:var(--accent);
+  font-weight:500;
+  font-size:24px;
+  margin-left:6px;
+}
+.hero p.sub{
+  font-size:15px;
+  color:var(--text-dim);
+  margin-bottom:20px;
+}
+.meta-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:1px;
+  background:var(--border);
+  border:1px solid var(--border);
+  border-radius:6px;
+  overflow:hidden;
+  margin-bottom:20px;
+}
+.meta-cell{
+  background:var(--bg-2);
+  padding:12px 14px;
+}
+.meta-label{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--text-faint);
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  margin-bottom:4px;
+}
+.meta-value{
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--text);
+  word-break:break-all;
+}
+.meta-value.mono-small{font-size:11px}
+.meta-value .status-chip{
+  display:inline-block;
+  padding:1px 6px;
+  border-radius:3px;
+  font-size:10px;
+  font-weight:600;
+  background:var(--yellow-bg);
+  color:var(--yellow);
+  border:1px solid rgba(227,179,65,0.3);
+}
+
+.base-url-box{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 14px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  font-family:var(--mono);
+  font-size:12px;
+}
+.base-url-box .label{
+  color:var(--text-faint);
+  font-size:10px;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+}
+.base-url-box .url{color:var(--accent);flex:1;word-break:break-all}
+.copy-btn{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--text-dim);
+  background:var(--bg-3);
+  border:1px solid var(--border-2);
+  padding:3px 8px;
+  border-radius:3px;
+  cursor:pointer;
+  transition:all 0.12s;
+  user-select:none;
+}
+.copy-btn:hover{
+  color:var(--text);
+  border-color:var(--border-3);
+}
+.copy-btn.copied{
+  color:var(--green);
+  border-color:rgba(86,211,100,0.4);
+}
+
+/* ---------- WARNING ---------- */
+.warn-box{
+  display:flex;
+  gap:12px;
+  padding:14px 16px;
+  background:var(--yellow-bg);
+  border:1px solid rgba(227,179,65,0.25);
+  border-left:3px solid var(--yellow);
+  border-radius:4px;
+  margin-bottom:28px;
+  font-size:13px;
+}
+.warn-icon{
+  flex-shrink:0;
+  width:18px;
+  height:18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:700;
+  color:var(--yellow);
+  font-family:var(--mono);
+  font-size:14px;
+}
+.warn-text{color:var(--text-dim)}
+.warn-text strong{color:var(--yellow);font-weight:600}
+
+/* ---------- SECTIONS ---------- */
+.section{
+  margin-bottom:48px;
+  scroll-margin-top:20px;
+}
+.section-header{
+  display:flex;
+  align-items:baseline;
+  gap:12px;
+  margin-bottom:16px;
+  padding-bottom:10px;
+  border-bottom:1px solid var(--border);
+}
+.section-num{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--text-faint);
+}
+.section h2{
+  font-family:var(--sans);
+  font-size:18px;
+  font-weight:600;
+  letter-spacing:-0.01em;
+}
+.section-anchor{
+  margin-left:auto;
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--text-faint);
+}
+.section-anchor:hover{color:var(--accent);text-decoration:none}
+
+.section p.lead{
+  color:var(--text-dim);
+  font-size:13px;
+  margin-bottom:14px;
+}
+
+/* ---------- FLOW ---------- */
+.flow-list{
+  list-style:none;
+  counter-reset:flow;
+  margin:8px 0 14px;
+  padding:14px 16px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  border-radius:6px;
+}
+.flow-list li{
+  counter-increment:flow;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:5px 0;
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--text-dim);
+}
+.flow-list li::before{
+  content:counter(flow);
+  flex-shrink:0;
+  width:20px;
+  height:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--bg-3);
+  border:1px solid var(--border-2);
+  border-radius:50%;
+  color:var(--accent);
+  font-size:11px;
+  font-weight:600;
+}
+.flow-note{
+  padding:12px 14px;
+  background:rgba(88,166,255,0.06);
+  border:1px solid rgba(88,166,255,0.2);
+  border-left:3px solid var(--blue);
+  border-radius:4px;
+  font-size:12px;
+  color:var(--text-dim);
+}
+.flow-note code{
+  font-family:var(--mono);
+  background:var(--bg-3);
+  padding:1px 5px;
+  border-radius:3px;
+  font-size:11px;
+  color:var(--accent);
+}
+
+/* ---------- ENDPOINT ---------- */
+.endpoint{
+  margin-bottom:32px;
+  scroll-margin-top:20px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:6px;
+  overflow:hidden;
+}
+.endpoint-head{
+  padding:14px 18px;
+  border-bottom:1px solid var(--border);
+  background:var(--bg-2);
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:10px;
+}
+.endpoint-title{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  flex:1;
+  min-width:0;
+}
+.method-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-family:var(--mono);
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:0.06em;
+  padding:3px 8px;
+  border-radius:3px;
+  min-width:54px;
+  text-align:center;
+}
+.m-get{background:var(--green-bg);color:var(--green);border:1px solid rgba(86,211,100,0.3)}
+.m-post{background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(227,179,65,0.3)}
+.m-put{background:var(--blue-bg);color:var(--blue);border:1px solid rgba(88,166,255,0.3)}
+.m-del{background:var(--red-bg);color:var(--red);border:1px solid rgba(248,81,73,0.3)}
+
+.endpoint-path{
+  font-family:var(--mono);
+  font-size:14px;
+  color:var(--text);
+  font-weight:500;
+  word-break:break-all;
+}
+.endpoint-path .param{color:var(--purple)}
+.endpoint-path .query{color:var(--text-mute)}
+.endpoint-path .query .pname{color:var(--accent-dim)}
+
+.endpoint-meta{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.chip{
+  font-family:var(--mono);
+  font-size:10px;
+  padding:2px 7px;
+  border-radius:3px;
+  letter-spacing:0.04em;
+  border:1px solid var(--border-2);
+  color:var(--text-mute);
+  background:var(--bg-3);
+}
+.chip.green{color:var(--green);border-color:rgba(86,211,100,0.3);background:var(--green-bg)}
+.chip.yellow{color:var(--yellow);border-color:rgba(227,179,65,0.3);background:var(--yellow-bg)}
+.chip.blue{color:var(--blue);border-color:rgba(88,166,255,0.3);background:var(--blue-bg)}
+.chip.red{color:var(--red);border-color:rgba(248,81,73,0.3);background:var(--red-bg)}
+.chip.purple{color:var(--purple);border-color:rgba(188,140,255,0.3);background:rgba(188,140,255,0.08)}
+
+.endpoint-body{
+  padding:16px 18px;
+}
+.endpoint-desc{
+  color:var(--text-dim);
+  font-size:13px;
+  margin-bottom:14px;
+}
+.endpoint-desc strong{color:var(--text);font-weight:600}
+.endpoint-desc code{
+  font-family:var(--mono);
+  background:var(--bg-3);
+  padding:1px 5px;
+  border-radius:3px;
+  font-size:12px;
+  color:var(--accent);
+}
+
+/* ---------- TABLES ---------- */
+.tbl-wrap{
+  overflow-x:auto;
+  margin:10px 0 14px;
+  border:1px solid var(--border);
+  border-radius:4px;
+}
+table.params{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+table.params th{
+  text-align:left;
+  font-family:var(--mono);
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:var(--text-faint);
+  padding:8px 12px;
+  background:var(--bg-2);
+  border-bottom:1px solid var(--border);
+}
+table.params td{
+  padding:8px 12px;
+  border-bottom:1px solid var(--border);
+  vertical-align:top;
+}
+table.params tr:last-child td{border-bottom:none}
+table.params td.name{
+  font-family:var(--mono);
+  color:var(--accent);
+  white-space:nowrap;
+}
+table.params td.type{
+  font-family:var(--mono);
+  color:var(--purple);
+  font-size:11px;
+  white-space:nowrap;
+}
+table.params td.req{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--text-mute);
+  white-space:nowrap;
+}
+table.params td.req.yes{color:var(--red)}
+table.params td.desc{
+  color:var(--text-dim);
+  font-size:12px;
+}
+table.params td.desc code{
+  font-family:var(--mono);
+  background:var(--bg-3);
+  padding:1px 4px;
+  border-radius:3px;
+  font-size:11px;
+  color:var(--text);
+}
+
+/* ---------- CODE PANELS ---------- */
+.code-block{
+  margin:10px 0 14px;
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:4px;
+  overflow:hidden;
+}
+.code-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:6px 12px;
+  background:var(--bg-2);
+  border-bottom:1px solid var(--border);
+}
+.code-head-label{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--text-faint);
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+}
+.code-head-right{
+  display:flex;
+  gap:6px;
+  align-items:center;
+}
+.code-lang-tag{
+  font-family:var(--mono);
+  font-size:9px;
+  color:var(--text-faint);
+  padding:1px 5px;
+  border:1px solid var(--border-2);
+  border-radius:2px;
+}
+.code-block pre{
+  margin:0;
+  padding:12px 14px;
+  font-family:var(--mono);
+  font-size:12px;
+  line-height:1.55;
+  color:var(--text);
+  overflow-x:auto;
+  white-space:pre;
+}
+.code-block pre .k{color:var(--purple)}
+.code-block pre .s{color:var(--green)}
+.code-block pre .n{color:var(--accent)}
+.code-block pre .b{color:var(--blue)}
+.code-block pre .c{color:var(--text-faint);font-style:italic}
+.code-block pre .p{color:var(--text-mute)}
+
+/* ---------- AUTH NOTES ---------- */
+.auth-note{
+  display:flex;
+  gap:10px;
+  padding:10px 14px;
+  background:rgba(88,166,255,0.05);
+  border:1px solid rgba(88,166,255,0.2);
+  border-radius:4px;
+  margin-bottom:14px;
+  font-size:12px;
+}
+.auth-note .auth-label{
+  font-family:var(--mono);
+  font-size:10px;
+  font-weight:600;
+  color:var(--blue);
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  flex-shrink:0;
+}
+.auth-note .auth-text{color:var(--text-dim)}
+.auth-note .auth-text code{
+  font-family:var(--mono);
+  background:var(--bg-3);
+  padding:1px 5px;
+  border-radius:3px;
+  font-size:11px;
+  color:var(--accent);
+}
+
+/* ---------- STATUS GRID ---------- */
+.status-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+  gap:10px;
+  margin-top:10px;
+}
+.status-card{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:5px;
+  padding:12px 14px;
+  position:relative;
+}
+.status-card .sc-head{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:6px;
+}
+.status-card .sc-code{
+  font-family:var(--mono);
+  font-size:11px;
+  font-weight:700;
+  padding:1px 6px;
+  border-radius:3px;
+}
+.status-card .sc-code.c400{background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(227,179,65,0.3)}
+.status-card .sc-code.c401{background:var(--red-bg);color:var(--red);border:1px solid rgba(248,81,73,0.3)}
+.status-card .sc-code.c403{background:var(--red-bg);color:var(--red);border:1px solid rgba(248,81,73,0.3)}
+.status-card .sc-code.c409{background:var(--blue-bg);color:var(--blue);border:1px solid rgba(88,166,255,0.3)}
+.status-card .sc-code.c429{background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(227,179,65,0.3)}
+.status-card .sc-code.c500{background:var(--red-bg);color:var(--red);border:1px solid rgba(248,81,73,0.3)}
+.status-card .sc-label{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--text);
+  font-weight:600;
+}
+.status-card .sc-desc{
+  font-size:12px;
+  color:var(--text-dim);
+  line-height:1.5;
+}
+.status-card .sc-desc code{
+  font-family:var(--mono);
+  background:var(--bg-3);
+  padding:1px 4px;
+  border-radius:3px;
+  font-size:11px;
+  color:var(--accent);
+}
+
+/* ---------- CURL ---------- */
+.curl-block{
+  margin:14px 0;
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  overflow:hidden;
+}
+.curl-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:8px 14px;
+  background:var(--bg-2);
+  border-bottom:1px solid var(--border);
+}
+.curl-title{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--text);
+  letter-spacing:0.04em;
+}
+.curl-body{
+  padding:12px 14px;
+  font-family:var(--mono);
+  font-size:12px;
+  line-height:1.7;
+  color:var(--text);
+  overflow-x:auto;
+  white-space:pre;
+}
+.curl-body .var{color:var(--purple)}
+.curl-body .str{color:var(--green)}
+.curl-body .cmd{color:var(--accent)}
+.curl-body .flag{color:var(--yellow)}
+.curl-body .cmt{color:var(--text-faint);font-style:italic}
+.curl-body .url{color:var(--text)}
+.curl-body .out{color:var(--text-mute)}
+
+.curl-note{
+  margin-top:14px;
+  padding:12px 14px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  border-left:3px solid var(--accent);
+  border-radius:4px;
+  font-size:12px;
+  color:var(--text-dim);
+}
+.curl-note code{
+  font-family:var(--mono);
+  background:var(--bg-3);
+  padding:1px 5px;
+  border-radius:3px;
+  font-size:11px;
+  color:var(--accent);
+}
+
+/* ---------- FOOTER ---------- */
+.footer{
+  margin-top:48px;
+  padding-top:20px;
+  border-top:1px solid var(--border);
+  font-size:12px;
+  color:var(--text-mute);
+}
+.footer code{
+  font-family:var(--mono);
+  color:var(--text-dim);
+  font-size:11px;
+}
+
+/* ---------- RESPONSIVE ---------- */
+@media (max-width: 920px){
+  body{flex-direction:column}
+  .sidebar{
+    position:relative;
+    width:100%;
+    height:auto;
+    border-right:none;
+    border-bottom:1px solid var(--border);
+  }
+  .main{padding:0 20px 60px}
+  .hero{padding:24px 0 20px}
+  .meta-grid{grid-template-columns:1fr}
+}
+@media (max-width: 600px){
+  .endpoint-head{flex-direction:column;align-items:flex-start}
+  .endpoint-meta{width:100%}
+  .main{padding:0 16px 40px}
+}
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-inner">
+    <div class="brand">
+      <div class="brand-tag">v2 · M0</div>
+      <div class="brand-title">identity-backend</div>
+      <div class="brand-sub">API Reference</div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Overview</div>
+      <a class="nav-item" href="javascript:void(0)" data-scroll-to="overview"><span style="flex:1">Context & Metadata</span></a>
+      <a class="nav-item" href="javascript:void(0)" data-scroll-to="flow"><span style="flex:1">Validation Flow</span></a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Liveness</div>
+      <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-healthcheck"><span class="method-mini">GET</span><span class="path">/healthcheck</span></a>
+      <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-livez"><span class="method-mini">GET</span><span class="path">/livez</span></a>
+      <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-readyz"><span class="method-mini">GET</span><span class="path">/readyz</span></a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Discovery</div>
+      <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-jwks"><span class="method-mini">GET</span><span class="path">/.well-known/jwks.json</span></a>
+      <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-attester"><span class="method-mini">GET</span><span class="path">/api/v1/attester</span></a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Authentication</div>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-challenges"><span class="method-mini">POST</span><span class="path">/auth/challenges</span></a>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-attest"><span class="method-mini">POST</span><span class="path">/auth/app-attest/attestations</span></a>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-token"><span class="method-mini">POST</span><span class="path">/auth/token</span></a>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-refresh"><span class="method-mini">POST</span><span class="path">/auth/token/refresh</span></a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Usernames</div>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-available"><span class="method-mini">POST</span><span class="path">/usernames/available</span></a>
+      <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-search"><span class="method-mini">GET</span><span class="path">/usernames/search</span></a>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-reserve"><span class="method-mini">POST</span><span class="path">/usernames</span></a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Errors</div>
+      <a class="nav-item" href="javascript:void(0)" data-scroll-to="errors"><span style="flex:1">Error Model</span></a>
+      <a class="nav-item" href="javascript:void(0)" data-scroll-to="curl"><span style="flex:1">Smoke Commands</span></a>
+    </div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="main-inner">
+
+    <!-- HERO -->
+    <section class="hero" id="overview">
+      <div class="hero-eyebrow">API Reference · Identity Service</div>
+      <h1>Identity Backend V2 <span class="v">v2</span></h1>
+      <p class="sub">API Reference for Leonardo's iOS smoke — client compatibility runs against the live server.</p>
+
+      <div class="meta-grid">
+        <div class="meta-cell">
+          <div class="meta-label">Base URL</div>
+          <div class="meta-value mono-small">https://identity.dotspark.app</div>
+        </div>
+        <div class="meta-cell">
+          <div class="meta-label">Auth Mode</div>
+          <div class="meta-value"><span class="status-chip">AUTH_ENABLED=false</span></div>
+        </div>
+        <div class="meta-cell">
+          <div class="meta-label">Chain</div>
+          <div class="meta-value">Paseo Next v2 People</div>
+        </div>
+        <div class="meta-cell">
+          <div class="meta-label">Writer Signer</div>
+          <div class="meta-value mono-small">5HEhiB3hMb8P36L6Edj716fR4wLPUSqoZZpcUrrYEod7f3qu</div>
+        </div>
+        <div class="meta-cell">
+          <div class="meta-label">Purpose</div>
+          <div class="meta-value">Client compatibility smoke</div>
+        </div>
+        <div class="meta-cell">
+          <div class="meta-label">Spec Version</div>
+          <div class="meta-value">2026-07-08</div>
+        </div>
+      </div>
+
+      <div class="base-url-box">
+        <span class="label">BASE</span>
+        <span class="url" id="base-url-text">https://identity.dotspark.app</span>
+        <button class="copy-btn" onclick="copyBaseUrl(this)">copy</button>
+      </div>
+
+      <div class="warn-box">
+        <div class="warn-icon">!</div>
+        <div class="warn-text">
+          <strong>Attestation is disabled for M0.</strong> Apple/Google provider verification is intentionally a no-op. JWT account proof and People Chain reads still run end-to-end.
+        </div>
+      </div>
+    </section>
+
+    <!-- FLOW -->
+    <section class="section" id="flow">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <h2>Validation Flow</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="flow">#</a>
+      </div>
+      <p class="lead">The iOS smoke drives this sequence end-to-end. Each step gates the next.</p>
+
+      <ol class="flow-list">
+        <li><span class="cmd" style="color:var(--yellow)">POST</span>&nbsp;<code style="font-family:var(--mono);color:var(--accent);background:var(--bg-3);padding:1px 6px;border-radius:3px;font-size:11px">/api/v1/auth/challenges</code>&nbsp;&nbsp;<span style="color:var(--text-faint)">— challenge</span></li>
+        <li><span class="cmd" style="color:var(--yellow)">POST</span>&nbsp;<code style="font-family:var(--mono);color:var(--accent);background:var(--bg-3);padding:1px 6px;border-radius:3px;font-size:11px">/api/v1/auth/app-attest/attestations</code>&nbsp;&nbsp;<span style="color:var(--text-faint)">— returns 202 {} no-op</span></li>
+        <li><span class="cmd" style="color:var(--yellow)">POST</span>&nbsp;<code style="font-family:var(--mono);color:var(--accent);background:var(--bg-3);padding:1px 6px;border-radius:3px;font-size:11px">/api/v1/auth/token</code>&nbsp;&nbsp;<span style="color:var(--text-faint)">— sr25519 proof → JWT</span></li>
+        <li><span class="cmd" style="color:var(--yellow)">POST</span>&nbsp;<code style="font-family:var(--mono);color:var(--accent);background:var(--bg-3);padding:1px 6px;border-radius:3px;font-size:11px">/api/v1/usernames/available?version=v1</code>&nbsp;&nbsp;<span style="color:var(--text-faint)">— JWT-gated chain read</span></li>
+        <li><span class="cmd" style="color:var(--yellow)">POST</span>&nbsp;<code style="font-family:var(--mono);color:var(--accent);background:var(--bg-3);padding:1px 6px;border-radius:3px;font-size:11px">/api/v1/usernames</code>&nbsp;&nbsp;<span style="color:var(--text-faint)">— 202 outbox reservation</span></li>
+      </ol>
+
+      <div class="flow-note">
+        If the app reaches <code>202</code> on <code>POST /api/v1/usernames</code>, client/API compatibility is mostly proven. The writer now signs as the real IB attester account; on-chain finalization still requires a valid attestation payload (and the attester proxy authorization on People Chain).
+      </div>
+    </section>
+
+    <!-- LIVENESS -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <h2>Liveness &amp; Readiness</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="ep-healthcheck">#</a>
+      </div>
+
+      <div class="endpoint" id="ep-healthcheck">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-get">GET</span>
+            <span class="endpoint-path">/healthcheck</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip">public</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Process liveness probe. No dependencies checked.</p>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span><span class="s">"status"</span><span class="p">:</span> <span class="s">"ok"</span><span class="p">,</span> <span class="s">"service"</span><span class="p">:</span> <span class="s">"identity-service"</span><span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-livez">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-get">GET</span>
+            <span class="endpoint-path">/livez</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip">public</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Kubernetes liveness probe.</p>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span><span class="s">"status"</span><span class="p">:</span> <span class="s">"alive"</span><span class="p">,</span> <span class="s">"service"</span><span class="p">:</span> <span class="s">"identity-service"</span><span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-readyz">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-get">GET</span>
+            <span class="endpoint-path">/readyz</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip">public</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Readiness probe — checks <code>db</code> and <code>chain</code> subsystems.</p>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"status"</span><span class="p">:</span> <span class="s">"ready"</span><span class="p">,</span>
+  <span class="s">"service"</span><span class="p">:</span> <span class="s">"identity-service"</span><span class="p">,</span>
+  <span class="s">"db"</span><span class="p">:</span> <span class="s">"up"</span><span class="p">,</span>
+  <span class="s">"chain"</span><span class="p">:</span> <span class="s">"up"</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DISCOVERY -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <h2>Discovery</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="ep-jwks">#</a>
+      </div>
+
+      <div class="endpoint" id="ep-jwks">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-get">GET</span>
+            <span class="endpoint-path">/.well-known/jwks.json</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip">public</span>
+            <span class="chip purple">EdDSA · OKP</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">JWT verification keyset. Ed25519 public key used to sign issued JWTs.</p>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"keys"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="s">"kty"</span><span class="p">:</span> <span class="s">"OKP"</span><span class="p">,</span>
+      <span class="s">"crv"</span><span class="p">:</span> <span class="s">"Ed25519"</span><span class="p">,</span>
+      <span class="s">"use"</span><span class="p">:</span> <span class="s">"sig"</span><span class="p">,</span>
+      <span class="s">"alg"</span><span class="p">:</span> <span class="s">"EdDSA"</span><span class="p">,</span>
+      <span class="s">"kid"</span><span class="p">:</span> <span class="s">"..."</span><span class="p">,</span>
+      <span class="s">"x"</span><span class="p">:</span> <span class="s">"..."</span>
+    <span class="p">}</span>
+  <span class="p">]</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-attester">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-get">GET</span>
+            <span class="endpoint-path">/api/v1/attester</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip">public</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Returns the on-chain attester account the backend writes as. Used by clients to validate the writer surface.</p>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"attester"</span><span class="p">:</span> <span class="s">"0xe4cd20d6d1e0e119d63a943afd2d7496fbbb0ac8e7cd99c3c5f16b63a68e7432"</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AUTH -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <h2>Authentication</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="ep-challenges">#</a>
+      </div>
+
+      <div class="endpoint" id="ep-challenges">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/auth/challenges</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip yellow">201</span>
+            <span class="chip">public</span>
+            <span class="chip">empty body</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Mint a fresh challenge for the sr25519 proof flow. <strong>Public</strong>, no body required. Returns <code>201</code> on success.</p>
+          <div class="auth-note">
+            <span class="auth-label">Auth</span>
+            <span class="auth-text">None. The returned <code>challenge</code> is consumed by <code>/auth/token</code> as the <code>Auth-Challenge</code> header.</span>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 201 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"challenge"</span><span class="p">:</span> <span class="s">"base64-32-byte-challenge"</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-attest">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/auth/app-attest/attestations</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip yellow">202</span>
+            <span class="chip">public</span>
+            <span class="chip yellow">M0 no-op</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc"><strong>No-op in M0.</strong> Endpoint accepts the iOS App Attest payload but does not verify against Apple/Google. Always returns <code>202</code> with an empty body.</p>
+          <div class="auth-note">
+            <span class="auth-label">Auth</span>
+            <span class="auth-text">None. Submit <code>keyId</code>, <code>challenge</code>, and <code>attestation</code> from the iOS client.</span>
+          </div>
+
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">keyId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 or client key identifier from App Attest enrollment.</td></tr>
+                <tr><td class="name">challenge</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Challenge previously returned from <code>/auth/challenges</code>.</td></tr>
+                <tr><td class="name">attestation</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 attestation object from the platform.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Request Body</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"keyId"</span><span class="p">:</span> <span class="s">"base64-or-client-key-id"</span><span class="p">,</span>
+  <span class="s">"challenge"</span><span class="p">:</span> <span class="s">"challenge-from-/auth/challenges"</span><span class="p">,</span>
+  <span class="s">"attestation"</span><span class="p">:</span> <span class="s">"base64-attestation-object"</span>
+<span class="p">}</span></pre>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 202 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-token">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/auth/token</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip yellow">200</span>
+            <span class="chip">public</span>
+            <span class="chip purple">sr25519 proof</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Exchange an sr25519 signature over the raw request body for a JWT + opaque refresh token. The backend verifies the client proof using the public key in <code>Auth-ClientId</code> over the raw bytes of the body.</p>
+          <div class="auth-note">
+            <span class="auth-label">Auth</span>
+            <span class="auth-text">Proof headers required. Body may be empty <code>{}</code> but the signature must still cover the raw body bytes.</span>
+          </div>
+
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Header</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">Auth-ClientId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 of the 32-byte sr25519 public key.</td></tr>
+                <tr><td class="name">Auth-ClientProof</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 of the 64-byte sr25519 signature over the raw body.</td></tr>
+                <tr><td class="name">Auth-Challenge</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Challenge previously minted via <code>/auth/challenges</code>.</td></tr>
+                <tr><td class="name">Auth-iOS-Package</td><td class="type">string</td><td class="req">no</td><td class="desc">Optional platform signal, e.g. <code>io.pcf.polkadotapp</code>.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Request Body</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{}</span></pre>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"token"</span><span class="p">:</span> <span class="s">"jwt"</span><span class="p">,</span>
+  <span class="s">"refreshToken"</span><span class="p">:</span> <span class="s">"opaque-base64-token"</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-refresh">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/auth/token/refresh</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip yellow">200</span>
+            <span class="chip">refresh-token</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Rotate the JWT using a previously issued opaque refresh token. The old refresh token is single-use and invalidated.</p>
+
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">refreshToken</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Opaque refresh token issued by <code>/auth/token</code> or a prior refresh.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Request Body</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"refreshToken"</span><span class="p">:</span> <span class="s">"opaque-base64-token"</span>
+<span class="p">}</span></pre>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"token"</span><span class="p">:</span> <span class="s">"jwt"</span><span class="p">,</span>
+  <span class="s">"refreshToken"</span><span class="p">:</span> <span class="s">"new-opaque-base64-token"</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- USERNAMES -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">05</span>
+        <h2>Usernames</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="ep-available">#</a>
+      </div>
+
+      <div class="endpoint" id="ep-available">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/usernames/available<span class="query">?version=<span class="pname">v1</span></span></span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip yellow">200</span>
+            <span class="chip blue">bearer JWT</span>
+            <span class="chip purple">chain read</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Chain-backed availability check. Reads <strong>People Chain UsernameOwnerOf</strong>. Base validation rules: lowercase ASCII, minimum length 6.</p>
+          <div class="auth-note">
+            <span class="auth-label">Auth</span>
+            <span class="auth-text">Bearer JWT required. The query parameter <code>version=v1</code> selects the response schema tag.</span>
+          </div>
+
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">usernames</td><td class="type">string[]</td><td class="req yes">yes</td><td class="desc">Array of candidate usernames to validate and check.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Request Body</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"usernames"</span><span class="p">:</span> <span class="p">[</span><span class="s">"tallesx"</span><span class="p">,</span> <span class="s">"abc"</span><span class="p">]</span>
+<span class="p">}</span></pre>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"_tag"</span><span class="p">:</span> <span class="s">"v1"</span><span class="p">,</span>
+  <span class="s">"value"</span><span class="p">:</span> <span class="p">{</span>
+    <span class="s">"tallesx"</span><span class="p">:</span> <span class="p">{</span>
+      <span class="s">"status"</span><span class="p">:</span> <span class="s">"AVAILABLE"</span><span class="p">,</span>
+      <span class="s">"availableDigits"</span><span class="p">:</span> <span class="p">[</span><span class="n">1</span><span class="p">,</span> <span class="n">2</span><span class="p">,</span> <span class="n">3</span><span class="p">]</span>
+    <span class="p">},</span>
+    <span class="s">"abc"</span><span class="p">:</span> <span class="p">{</span>
+      <span class="s">"status"</span><span class="p">:</span> <span class="s">"INVALID"</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-search">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-get">GET</span>
+            <span class="endpoint-path">/api/v1/usernames/search<span class="query">?prefix=<span class="pname">&lt;text&gt;</span></span></span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip red">400</span>
+            <span class="chip">public</span>
+            <span class="chip yellow">empty until indexer</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Prefix search over registered usernames. <strong>Public</strong> for iOS compatibility — currently returns an empty list until the indexer is wired up. Missing or empty <code>prefix</code> yields <code>400 WRONG_DATA</code>.</p>
+
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Param</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">prefix</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Username prefix to search for. Must be non-empty.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"usernames"</span><span class="p">:</span> <span class="p">[],</span>
+  <span class="s">"nextCursor"</span><span class="p">:</span> <span class="k">null</span>
+<span class="p">}</span></pre>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 400 · missing/empty prefix</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"WRONG_DATA"</span><span class="p">,</span>
+  <span class="s">"message"</span><span class="p">:</span> <span class="s">"prefix is required"</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-reserve">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/usernames</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip yellow">202</span>
+            <span class="chip blue">bearer JWT</span>
+            <span class="chip">outbox</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Enqueues a username reservation into the outbox. Returns <code>202</code> on accepted enqueue. On-chain finalization depends on writer authorization — see the flow note above.</p>
+          <div class="auth-note">
+            <span class="auth-label">Auth</span>
+            <span class="auth-text">Bearer JWT required. The <code>candidateAccountId</code> must match the JWT subject or the request is rejected with <code>403 FORBIDDEN</code>.</span>
+          </div>
+
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">candidateAccountId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">SS58 account matching JWT subject.</td></tr>
+                <tr><td class="name">username</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base username (lowercase ASCII, ≥6 chars).</td></tr>
+                <tr><td class="name">preferredDigits</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Two-digit suffix, e.g. <code>"07"</code>.</td></tr>
+                <tr><td class="name">candidateSignature</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x...</code> 64-byte signature.</td></tr>
+                <tr><td class="name">ringVrfKey</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x...</code> ring VRF key.</td></tr>
+                <tr><td class="name">proofOfOwnership</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x...</code> 64-byte ownership proof.</td></tr>
+                <tr><td class="name">consumerRegistrationSignature</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x...</code> 64-byte consumer registration signature.</td></tr>
+                <tr><td class="name">identifierKey</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x...</code> 65-byte identifier key.</td></tr>
+                <tr><td class="name">dotns</td><td class="type">object</td><td class="req">no</td><td class="desc">Optional dotns reservation block — see below.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>dotns.*</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">dotns.signature</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x...</code> 64-byte signature.</td></tr>
+                <tr><td class="name">dotns.signedAt</td><td class="type">number</td><td class="req yes">yes</td><td class="desc">Unix timestamp, e.g. <code>1780000000</code>.</td></tr>
+                <tr><td class="name">dotns.reservedUsername</td><td class="type">string</td><td class="req">no</td><td class="desc">Optional reserved name override.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Request Body</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"candidateAccountId"</span><span class="p">:</span> <span class="s">"SS58 account matching JWT subject"</span><span class="p">,</span>
+  <span class="s">"username"</span><span class="p">:</span> <span class="s">"tallesx"</span><span class="p">,</span>
+  <span class="s">"preferredDigits"</span><span class="p">:</span> <span class="s">"07"</span><span class="p">,</span>
+  <span class="s">"candidateSignature"</span><span class="p">:</span> <span class="s">"0x...64 bytes..."</span><span class="p">,</span>
+  <span class="s">"ringVrfKey"</span><span class="p">:</span> <span class="s">"0x..."</span><span class="p">,</span>
+  <span class="s">"proofOfOwnership"</span><span class="p">:</span> <span class="s">"0x...64 bytes..."</span><span class="p">,</span>
+  <span class="s">"consumerRegistrationSignature"</span><span class="p">:</span> <span class="s">"0x...64 bytes..."</span><span class="p">,</span>
+  <span class="s">"identifierKey"</span><span class="p">:</span> <span class="s">"0x...65 bytes..."</span><span class="p">,</span>
+  <span class="s">"dotns"</span><span class="p">:</span> <span class="p">{</span>
+    <span class="s">"signature"</span><span class="p">:</span> <span class="s">"0x...64 bytes..."</span><span class="p">,</span>
+    <span class="s">"signedAt"</span><span class="p">:</span> <span class="n">1780000000</span><span class="p">,</span>
+    <span class="s">"reservedUsername"</span><span class="p">:</span> <span class="s">"optional-name"</span>
+  <span class="p">}</span>
+<span class="p">}</span></pre>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 202 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"base_username"</span><span class="p">:</span> <span class="s">"tallesx"</span><span class="p">,</span>
+  <span class="s">"digits"</span><span class="p">:</span> <span class="s">"07"</span><span class="p">,</span>
+  <span class="s">"username"</span><span class="p">:</span> <span class="s">"tallesx.07"</span>
+<span class="p">}</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ERRORS -->
+    <section class="section" id="errors">
+      <div class="section-header">
+        <span class="section-num">06</span>
+        <h2>Error Model</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="errors">#</a>
+      </div>
+      <p class="lead">All non-2xx responses share a single envelope. <code>error</code> is a stable machine code; <code>message</code> is a human-readable detail that may vary.</p>
+
+      <div class="code-block">
+        <div class="code-head">
+          <span class="code-head-label">Error JSON Shape</span>
+          <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+        </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"WRONG_DATA"</span><span class="p">,</span>
+  <span class="s">"message"</span><span class="p">:</span> <span class="s">"human-readable detail"</span>
+<span class="p">}</span></pre>
+      </div>
+
+      <div class="status-grid">
+        <div class="status-card">
+          <div class="sc-head">
+            <span class="sc-code c400">400</span>
+            <span class="sc-label">WRONG_DATA</span>
+          </div>
+          <div class="sc-desc">Malformed body/header, invalid username, empty search prefix.</div>
+        </div>
+        <div class="status-card">
+          <div class="sc-head">
+            <span class="sc-code c401">401</span>
+            <span class="sc-label">UNAUTHORIZED</span>
+          </div>
+          <div class="sc-desc">Missing/invalid bearer token, bad challenge, bad proof, spent refresh token.</div>
+        </div>
+        <div class="status-card">
+          <div class="sc-head">
+            <span class="sc-code c403">403</span>
+            <span class="sc-label">FORBIDDEN</span>
+          </div>
+          <div class="sc-desc"><code>candidateAccountId</code> does not match JWT subject.</div>
+        </div>
+        <div class="status-card">
+          <div class="sc-head">
+            <span class="sc-code c409">409</span>
+            <span class="sc-label">CONFLICT</span>
+          </div>
+          <div class="sc-desc">Preferred digits or username already taken/reserved.</div>
+        </div>
+        <div class="status-card">
+          <div class="sc-head">
+            <span class="sc-code c429">429</span>
+            <span class="sc-label">RATE_LIMITED</span>
+          </div>
+          <div class="sc-desc">Per-route rate limiter exceeded.</div>
+        </div>
+        <div class="status-card">
+          <div class="sc-head">
+            <span class="sc-code c500">500</span>
+            <span class="sc-label">INTERNAL</span>
+          </div>
+          <div class="sc-desc">Unexpected backend/database/chain failure.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CURL -->
+    <section class="section" id="curl">
+      <div class="section-header">
+        <span class="section-num">07</span>
+        <h2>Smoke Commands</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="curl">#</a>
+      </div>
+      <p class="lead">Bare-bones curl sequence that exercises the public surface of the service. Safe to run from any shell.</p>
+
+      <div class="curl-block">
+        <div class="curl-head">
+          <span class="curl-title">smoke.sh</span>
+          <button class="copy-btn" onclick="copyCurl(this)">copy</button>
+        </div>
+<pre class="curl-body">BASE="https://identity.dotspark.app"
+
+curl -fsS "$BASE/healthcheck"
+curl -fsS "$BASE/readyz"
+curl -fsS -X POST "$BASE/api/v1/auth/challenges"
+curl -fsS "$BASE/api/v1/attester"
+curl -fsS "$BASE/.well-known/jwks.json"</pre>
+      </div>
+
+      <div class="curl-note">
+        Full token and username calls require the mobile app or a client that can produce the <code>sr25519</code> proof headers. The bundled repo example can drive the flow against a base URL.
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      Generated from the current <code>identity-backend-v2</code> route code on <code>2026-07-08</code>. Served at <code>https://identity.dotspark.app</code> (test deployment).
+    </footer>
+
+  </div>
+</main>
+
+<script>
+function copyBaseUrl(btn){
+  const text = document.getElementById('base-url-text').textContent;
+  navigator.clipboard && navigator.clipboard.writeText(text);
+  btn.textContent='copied'; btn.classList.add('copied');
+  setTimeout(()=>{btn.textContent='copy'; btn.classList.remove('copied')},1400);
+}
+function copyCurl(btn){
+  const pre = btn.closest('.curl-block').querySelector('pre.curl-body');
+  navigator.clipboard && navigator.clipboard.writeText(pre.innerText);
+  btn.textContent='copied'; btn.classList.add('copied');
+  setTimeout(()=>{btn.textContent='copy'; btn.classList.remove('copied')},1400);
+}
+// sidebar active state on scroll
+const scrollLinks = document.querySelectorAll('[data-scroll-to]');
+scrollLinks.forEach(link => {
+  link.addEventListener('click', event => {
+    event.preventDefault();
+    const target = document.getElementById(link.dataset.scrollTo);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+const navLinks = document.querySelectorAll('.nav-item[data-scroll-to]');
+const targets = Array.from(navLinks).map(l=>document.getElementById(l.dataset.scrollTo)).filter(Boolean);
+function onScroll(){
+  let cur = targets[0];
+  const y = window.scrollY + 80;
+  for(const t of targets){
+    if(t.offsetTop <= y) cur = t;
+  }
+  navLinks.forEach(l=>{
+    l.classList.toggle('active', l.dataset.scrollTo === cur.id);
+  });
+}
+window.addEventListener('scroll', onScroll, {passive:true});
+onScroll();
+</script>
+</body>
+</html>
