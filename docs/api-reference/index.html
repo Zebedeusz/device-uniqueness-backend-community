@@ -888,7 +888,7 @@ table.params td.desc code{
       </ol>
 
       <div class="flow-note">
-        If the app reaches <code>202</code> on <code>POST /api/v1/usernames</code>, client/API compatibility is mostly proven. The writer now signs as the real IB attester account; on-chain finalization still requires a valid attestation payload (and the attester proxy authorization on People Chain).
+        The full write path is verified end-to-end on this deployment (2026-07-09): a real-signature registration returned <code>202</code>, was drained by the chain-writer (proxy-signed <code>PeopleLite.attest</code>), and finalized on People Chain — confirmed in <code>Resources.UsernameOwnerOf</code>. Invalid or dummy attestation payloads are still rejected by the runtime.
       </div>
     </section>
 
