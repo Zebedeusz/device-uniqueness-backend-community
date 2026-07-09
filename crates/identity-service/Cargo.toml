@@ -57,7 +57,7 @@ futures = "0.3"
 [dev-dependencies]
 jsonrpsee-core = { version = "0.24", features = ["server"] }
 jsonrpsee-server = "0.24"
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [lints]
 workspace = true
