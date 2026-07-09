@@ -12,7 +12,8 @@ publish = false
 [workspace.dependencies]
 chain-types = { path = "crates/chain-types" }
 
-subxt = { version = "0.50", default-features = false, features = ["native"] }
+subxt = { version = "0.50", default-features = false, features = ["native", "reconnecting-rpc-client"] }
+subxt-rpcs = { version = "0.50", default-features = false, features = ["native", "reconnecting-rpc-client"] }
 subxt-signer = { version = "0.50", default-features = false, features = ["sr25519", "std"] }
 
 tokio = { version = "1", features = ["full"] }

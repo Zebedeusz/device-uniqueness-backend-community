@@ -24,6 +24,7 @@ path = "src/bin/identity_chain_writer.rs"
 [dependencies]
 chain-types.workspace = true
 subxt = { workspace = true, features = ["jsonrpsee"] }
+subxt-rpcs.workspace = true
 subxt-signer = { workspace = true, features = ["subxt"] }
 
 tokio.workspace = true
@@ -53,6 +54,8 @@ time = "0.3"
 futures = "0.3"
 
 [dev-dependencies]
+jsonrpsee-core = { version = "0.24", features = ["server"] }
+jsonrpsee-server = "0.24"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 [lints]
