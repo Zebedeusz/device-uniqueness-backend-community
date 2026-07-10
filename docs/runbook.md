@@ -1,0 +1,78 @@
+# Runbook
+
+Operating the running deployment. From-zero setup: [deploy.md](deploy.md).
+
+Test deployment: `https://identity.dotspark.app` on `ubuntu@51.15.134.8`, repo at `~/identity-backend-v2`.
+
+## Deploys
+
+Push to `main` → CI tests, builds `ghcr.io/paritytech/identity-backend-rust:<sha>`, and the server pulls + restarts (health-gated). Watch with `gh run watch`.
+
+Manual fallback (builds on the server):
+
+```bash
+cd ~/identity-backend-v2 && git pull && sudo docker compose up -d --build
+```
+
+Migrations run automatically on boot — never by hand. Never overwrite the server's `.env`.
+
+## Health and logs
+
+```bash
+curl -fsS http://127.0.0.1:8080/readyz     # gates on Postgres + People Chain RPC
+sudo docker compose ps
+sudo docker compose logs -f identity-api
+sudo docker compose logs -f identity-chain-writer
+journalctl -u caddy -f
+```
+
+Healthy writer startup: `connected signer=0x…` then `acquired writer lease`.
+
+## Registration outbox
+
+`username_reservations` is the source of truth (`RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`); the chain is reconciled to it.
+
+```bash
+sudo docker compose exec -T postgres psql -U identity -d identity \
+  -c "select id, full_username, status, attempt, tx_hash, left(last_error,120) as err
+      from username_reservations order by id desc limit 10;"
+```
+
+- `RETRY_AFTER` retries automatically (max 8 attempts); `FAILED_TERMINAL` never retries — inspect `last_error`.
+- Independent check: query `Resources.UsernameOwnerOf("<base>.<NN>")` on the People Chain.
+
+## Writer rules
+
+- **Exactly one instance.** One signer = one nonce lane; never `--scale identity-chain-writer`.
+- Restart-safe: reconciles `SUBMITTING` rows against chain state instead of resubmitting.
+- Restart alone: `sudo docker compose restart identity-chain-writer`.
+
+## Config / secrets
+
+- Everything is in `~/identity-backend-v2/.env` (mode 600); apply changes with `sudo docker compose up -d`.
+- Rotating `JWT_ED25519_SECRET` invalidates outstanding JWTs (clients re-authenticate).
+- A new writer key must be an authorized attester (or proxy) with funds.
+
+## Database backup (manual)
+
+No automatic backups (testnet). Before anything risky:
+
+```bash
+sudo docker compose exec -T postgres pg_dump -U identity identity | gzip > ~/identity-$(date +%Y%m%d-%H%M%S).sql.gz
+# restore into an empty DB:
+gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres psql -U identity -d identity
+```
+
+## Caddy / TLS / docs
+
+- Config `/etc/caddy/Caddyfile`; apply: `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
+- Certificates renew automatically. `https://<domain>/docs` serves `docs/api-reference/` from the checkout — a `git pull` updates it, no rebuild.
+
+## Failure modes
+
+| Symptom | Action |
+|---|---|
+| `readyz`: `chain: down` | People Chain RPC unreachable/changed — check `PEOPLE_RPC_URL`. |
+| Rows stuck in `RETRY_AFTER` with wasm-trap errors | Invalid payload for `PeopleLite.attest`, or attester/proxy authorization missing on-chain. |
+| Writer exits at boot | Bad `CHAIN_WRITER_SIGNER_SURI` or DB unreachable. |
+| Down after reboot | Shouldn't happen (`restart: unless-stopped`); if it does: `sudo docker compose up -d`. |
