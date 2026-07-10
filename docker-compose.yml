@@ -30,7 +30,8 @@ services:
   # Applies embedded migrations on boot (advisory-locked, safe across replicas).
   identity-api:
     build: .
-    image: identity-backend-v2:local
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
     command: ["identity-api"]
     depends_on:
       postgres:
@@ -65,7 +66,8 @@ services:
   # Reuses the image built by identity-api. MUST stay at exactly one replica —
   # one signer = one nonce lane. Do not `--scale` this service.
   identity-chain-writer:
-    image: identity-backend-v2:local
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
     command: ["identity-chain-writer"]
     depends_on:
       postgres:

@@ -6,15 +6,11 @@ Current test deployment: `https://identity.dotspark.app` on `ubuntu@51.15.134.8`
 
 ## Update / redeploy
 
-Preferred — one command from a local checkout (backs up the DB, syncs code, rebuilds, waits for `/readyz`):
+**CI deploys automatically.** Every push to `main` (`.github/workflows/deploy.yml`): runs fmt/clippy/tests → builds the Docker image and pushes it to `ghcr.io/paritytech/identity-backend-rust:<sha>` → SSHes to the server, resets the checkout to the pushed commit, pulls the image, and restarts via `docker compose up -d --wait --no-build` (fails the run if containers don't come up healthy). Watch with `gh run watch`.
 
-```bash
-just deploy          # wraps scripts/deploy.sh; DEPLOY_HOST=ibv2 by default
-```
+Requirements (already configured): repo secrets `IBV2_SSH_KEY` + `IBV2_HOST`, the server's read-only GitHub deploy key, and `~/identity-backend-v2` being a git checkout. GHCR auth is an ephemeral `docker login` with the workflow's `GITHUB_TOKEN` — no registry credentials live on the server.
 
-It never touches the server's `.env`, and it takes a `pg_dump` to `~/backups/` on the server before anything else (keeps the last 14).
-
-Manual alternative on the server:
+Manual fallback (build on the server instead of pulling an image):
 
 ```bash
 cd ~/identity-backend-v2
@@ -22,22 +18,20 @@ git pull
 sudo docker compose up -d --build
 ```
 
-Only changed layers rebuild. Migrations apply automatically on boot (advisory-locked, safe across replicas). Never run migrations by hand.
+Migrations apply automatically on boot (advisory-locked, safe across replicas). Never run migrations by hand. Never overwrite the server's `.env`.
 
-Never sync or overwrite the server's `.env`.
+## Database backup (manual)
 
-## Backups / restore
-
-`just deploy` and CI both write `~/backups/identity-<timestamp>.sql.gz` on the server before each deploy. Manual backup:
+There is no automatic backup — the `pgdata` Docker volume persists across deploys/reboots, and this is a testnet deployment. Before anything risky (e.g. wiping the volume after a migration mismatch), snapshot manually:
 
 ```bash
-sudo docker compose exec -T postgres pg_dump -U identity identity | gzip > ~/backups/identity-$(date +%Y%m%d-%H%M%S).sql.gz
+sudo docker compose exec -T postgres pg_dump -U identity identity | gzip > ~/identity-$(date +%Y%m%d-%H%M%S).sql.gz
 ```
 
 Restore into a fresh/empty database (e.g. after a volume wipe, once containers are up):
 
 ```bash
-gunzip -c ~/backups/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres psql -U identity -d identity
+gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres psql -U identity -d identity
 ```
 
 ## Health
@@ -95,7 +89,7 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
 
 - Config: `/etc/caddy/Caddyfile`; apply with `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
 - Certificates renew automatically; state in `/var/lib/caddy/`.
-- `https://<domain>/docs` serves `docs/api-reference/index.html` straight from the repo checkout — updating docs is just a `git pull`/rsync, no rebuild.
+- `https://<domain>/docs` serves `docs/api-reference/index.html` straight from the repo checkout — updating docs is just a `git pull`, no rebuild.
 
 ## Known failure modes
 

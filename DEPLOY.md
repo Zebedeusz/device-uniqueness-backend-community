@@ -110,7 +110,7 @@ curl -fsS -X POST https://<your-domain>/api/v1/auth/challenges
 
 | You see | Fix |
 |---|---|
-| `migration 2 was previously applied but has been modified` | The Postgres volume holds an older schema. Use a fresh volume: `sudo docker compose down && sudo docker volume rm identity-backend-v2_pgdata && sudo docker compose up -d` (destroys DB state — take/restore a backup first, see RUNBOOK.md "Backups / restore"). |
+| `migration 2 was previously applied but has been modified` | The Postgres volume holds an older schema. Use a fresh volume: `sudo docker compose down && sudo docker volume rm identity-backend-v2_pgdata && sudo docker compose up -d` (destroys DB state — take a manual backup first, see RUNBOOK.md "Database backup"). |
 | writer: `Cannot parse hex string: Invalid string length` | `CHAIN_WRITER_SIGNER_SURI` is malformed. Use a mnemonic, `0x`+64-hex seed, or `0x`+128-hex raw sr25519 secret. |
 | writer: `Cannot encode transaction extension 'RestrictOrigins'` or a wasm trap in `TaggedTransactionQueue_validate_transaction` | Running a pre-fix build. Pull latest `main` and rebuild (`sudo docker compose up -d --build`). |
 | `identity-api` never becomes healthy | It blocks on People Chain RPC at startup. Check outbound connectivity to `PEOPLE_RPC_URL` and the container log. |
