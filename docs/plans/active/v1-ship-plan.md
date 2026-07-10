@@ -102,19 +102,22 @@ Per Karim/Ed (design-doc-first) and the project rule "analysis/design until a pl
   - [~] **Free-registration eligibility + queue**: intake reserves instantly under `AUTH_ENABLED=false` (M0). The iOS DeviceCheck free-slot gate (`200 {registrationOutcome:"PAYMENT_REQUIRED"}`) is a **Slice 6** concern (needs attestation on) — seam noted in `register.rs`. Digit selection (preferred → `409` if taken, else random excl. `00`) matches the current backend.
   - [x] Reservation outbox table + state machine (`RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`) per `identity-chain-writer-outbox-spec.md` (`migrations/0002_usernames.sql`, `outbox.rs`).
   - [x] Chain-writer runs as its **own single-instance binary** (`identity-chain-writer`), separate from `identity-api` (identity-service is now a lib + two bins). Minimal **Postgres lease** (`writer_lease`: `holder_id`/`lease_epoch`/`expires_at`/heartbeat); every writer DB mutation guarded by `WHERE … lease_epoch = current`.
-  - [x] Sign via a **`Proxy` of a cold primary** (attester authority) when `CHAIN_WRITER_PROXY_FOR` is set — `Proxy.proxy(Id(real), None, Utility.force_batch([PeopleLite.attest…]))` built with subxt dynamic values (flow-funder pattern). **One nonce lane, batched** (`force_batch`); no pipelined nonces.
+  - [x] Sign via a **`Proxy` of a cold primary** (attester authority) when `CHAIN_WRITER_PROXY_FOR` is set — `Proxy.proxy(Id(real), None, PeopleLite.attest(…))` built with subxt dynamic values (flow-funder pattern). **One nonce lane**; no pipelined nonces. Real multi-registration batching is a V1 parity task in Slice 8.
   - [x] Chain-writer submits via subxt 0.50; **records `SUBMITTING` (tx_hash+nonce) before await**; `AlreadyRegistered` = success; reconciles unknown outcomes against `UsernameOwnerOf`; drains `SUBMITTING` on lease-acquire; cached nonce reset on any error. ⚠️ **mortal extrinsics deferred** (immortal for now; reconcile-by-chain-state + attempt cap is the active safety net) — hardening follow-up.
+  - [x] **Avoid masked inner-call failures**: submit `PeopleLite.attest` directly while each extrinsic carries only one registration. When real multi-registration batching lands, inspect each batch item's result before advancing its row. Covered by direct + proxied payload-shape tests.
   - [x] `readyz` gates on Postgres **and** People Chain connectivity (landed in Slice 3).
-- **✅ Demo**: register a fresh name; within ~15s `UsernameOwnerOf(name)` returns the account; a queued registration is promoted and lands; a crash mid-submit reconciles instead of double-submitting; a registration with `who` ≠ JWT subject is rejected. **Status:** write-path machinery built + `just check` green (handler/outbox/writer unit tests). The live on-chain E2E (funded proxy + real ring-VRF attestation payload) is exercised in **Slice 5** with the shipping app; real attestation gating is **Slice 6**.
+- **✅ Demo (verified 2026-07-10)**: the local compose stack accepted a generated real-signature payload (`202`), the direct proxied `PeopleLite.attest` finalized, and `directzdxab.47` reached `ASSIGNED` on Paseo Next v2. On-chain checks confirmed `UsernameOwnerOf`, `Resources.Consumers`, and the automatic Statement Store allowance (`max_count=50`, `max_size=512000`). `just check` is green. This proves the service flow, not yet a shipping-device smoke; real attestation gating is **Slice 6**.
 - **Risks / failure modes**: nonce collisions (mitigated by single writer + one nonce lane; the lease shrinks deploy overlap; chain nonce + reconcile is the real backstop); RPC drops (reconnect + reconcile, never blind resubmit).
 
 ## Slice 5: Test on the real apps (Core MVP done)
 - **Goal**: a shipping **iOS** build drives the whole flow end-to-end against `identity-service` on a testnet, and **Android** route/contract compatibility is verified — both under `AUTH_ENABLED=false`.
 - **Scope checklist**:
   - [ ] Point an iOS build's backend base URL at the Rust service (testnet, `AUTH_ENABLED=false`); run challenge → token → available → register → on-chain confirm.
+  - [x] Registration regression check (local real-signature harness): after finalization, `UsernameOwnerOf`, `Resources.Consumers`, and the automatically granted Statement Store allowance exist on-chain.
   - [ ] Route-shape **golden tests** for the core auth/username/attester routes covering both iOS and Android request/response shapes.
   - [ ] At least one **Android** smoke against the service under `AUTH_ENABLED=false`.
   - [ ] Diff any payload/shape mismatch vs the shipping clients; fix in `identity-service`, not the apps.
+  - [ ] Failure-path test: force `PeopleLite.attest` to fail; verify the row is retried/failed and never marked `ASSIGNED`.
 - **✅ Demo (Core MVP done):** username registered from the iOS app appears owned on People Chain with no app-side changes; Android golden tests pass and an Android smoke authenticates. **Old backend still serves the non-core routes.**
 
 # V1 Retirement slices (retire the old API)
@@ -149,6 +152,7 @@ Per Karim/Ed (design-doc-first) and the project rule "analysis/design until a pl
     - `cargo sqlx prepare` → commit `.sqlx/`; CI sets `SQLX_OFFLINE=true` and runs `cargo sqlx prepare --check` to fail on a stale cache. Routine `cargo build` / rust-analyzer stay **DB-free** off the committed cache — a live DB is only needed to (re)generate the cache when a query changes.
     - Add `#[sqlx::test]` coverage (isolated per-test DB, auto-migrated) for outbox state transitions + auth refresh rotation.
   - [ ] **Parity-or-better benchmarks**: p50/p95 for `token` / `available` / `register` / `search` + registration throughput ≥ current prod.
+  - [ ] **Writer safety monitoring before cutover**: alert when registrations remain `RESERVED` / `SUBMITTING` too long or repeatedly fail finalization.
 - **✅ Demo**: all routes reachable via the single URL through the gateway; benchmarks meet or beat prod.
 
 ## Slice 9: Cutover + retire the old API
@@ -168,7 +172,7 @@ Per Karim/Ed (design-doc-first) and the project rule "analysis/design until a pl
 - `#![forbid(unsafe_code)]`; `just check` (fmt + clippy `-D warnings` + test) stays green.
 - Generated-only migrations; no manual edits; identity-service owns no ejected tables.
 - **Parity-or-better vs the deployed backend** (hard gate before cutover): benchmark prod p50/p95 + registration throughput as the baseline; V1 must meet or beat each. Prod batches registrations (`force_batch`), so V1 batches too.
-- **Ops floor (postmortem-driven):** fail-fast on missing required env/secrets at startup; `readyz` reflects real DB + chain health; structured logging; minimal per-JWT/route rate limits on auth + register + search. (Prometheus + Cloudflare edge rules come Post-V1.)
+- **Ops floor (postmortem-driven):** fail-fast on missing required env/secrets at startup; `readyz` reflects real DB + chain health; structured logging; minimal per-JWT/route rate limits on auth + register + search; writer/outbox/finalization safety metrics and alerts land before cutover. (Broader product metrics + Cloudflare edge rules come Post-V1.)
 
 # Key decisions (decide early)
 
@@ -182,7 +186,7 @@ Per Karim/Ed (design-doc-first) and the project rule "analysis/design until a pl
 # Testing
 
 - Manual smoke demo per slice (the ✅ Demos above).
-- Regression tests for contracts: JWT claim shape, `who`==subject rejection, free-reg decision (`INSTANT`/`QUEUED`/`PAYMENT_REQUIRED`), outbox state transitions (incl. `AlreadyRegistered`=success + reconcile), and route-shape golden tests — extended from core routes (M0) to the full app surface (V1).
+- Regression tests for contracts: JWT claim shape, `who`==subject rejection, free-reg decision (`INSTANT`/`QUEUED`/`PAYMENT_REQUIRED`), outbox state transitions (incl. `AlreadyRegistered`=success + reconcile), failed `PeopleLite.attest` handling, finalized registration postconditions (`UsernameOwnerOf` + `Resources.Consumers` + Statement Store allowance), and route-shape golden tests — extended from core routes (M0) to the full app surface (V1).
 
 # Post-V1
 

@@ -4,13 +4,13 @@
 //! Separate from the N-replica `identity-api`: exactly one live signer per
 //! account means one nonce lane. A minimal Postgres lease guards deploy overlap
 //! (best-effort, not a fence); the chain nonce + reconciliation is the real
-//! serializer. Registrations are submitted as `PeopleLite.attest` batched in
-//! `Utility.force_batch`, optionally wrapped in `Proxy.proxy` of a cold attester
-//! authority. `SUBMITTING` is recorded before awaiting inclusion; an unknown
+//! serializer. Each registration is submitted directly as `PeopleLite.attest`,
+//! optionally wrapped in `Proxy.proxy` of a cold attester authority. `SUBMITTING`
+//! is recorded before awaiting inclusion; an unknown
 //! outcome is reconciled against `UsernameOwnerOf`, never blindly resubmitted.
 //!
 //! Grounded in `.local/identity-chain-writer-outbox-spec.md` and the `flow-funder`
-//! reference (subxt 0.50, proxy + `force_batch`, cached nonce reset on error).
+//! reference (subxt 0.50, proxy signing, cached nonce reset on error).
 
 use std::str::FromStr as _;
 use std::time::Duration;
@@ -418,35 +418,37 @@ impl Writer {
     }
 }
 
-/// Build the registration extrinsic: `PeopleLite.attest` in `Utility.force_batch`,
-/// optionally wrapped in `Proxy.proxy(real = attester authority, …)`.
+/// Build the registration extrinsic: `PeopleLite.attest`, optionally wrapped in
+/// `Proxy.proxy(real = attester authority, …)`.
 fn build_registration_tx(
     r: &Reservation,
     candidate: &[u8; 32],
     proxy_for: Option<&[u8; 32]>,
 ) -> DynamicPayload<Vec<Value>> {
-    let force_batch_arg = Value::unnamed_composite(vec![attest_call(r, candidate)]);
     match proxy_for {
         Some(real) => {
-            let inner = Value::unnamed_variant(
-                "Utility",
-                [Value::unnamed_variant("force_batch", [force_batch_arg])],
-            );
             let args = vec![
                 // real: MultiAddress::Id(attester authority)
                 Value::unnamed_variant("Id", [Value::from_bytes(real)]),
                 // force_proxy_type: Option<ProxyType> = None (any granted type)
                 Value::unnamed_variant("None", []),
-                inner,
+                attest_call(r, candidate),
             ];
             dynamic::tx("Proxy", "proxy", args)
         }
-        None => dynamic::tx("Utility", "force_batch", vec![force_batch_arg]),
+        None => dynamic::tx("PeopleLite", "attest", attest_args(r, candidate)),
     }
 }
 
 /// One `PeopleLite.attest` call as a `RuntimeCall` value.
 fn attest_call(r: &Reservation, candidate: &[u8; 32]) -> Value {
+    Value::unnamed_variant(
+        "PeopleLite",
+        [Value::unnamed_variant("attest", attest_args(r, candidate))],
+    )
+}
+
+fn attest_args(r: &Reservation, candidate: &[u8; 32]) -> Vec<Value> {
     let reserved_username = match &r.reserved_username {
         Some(name) => Value::unnamed_variant("Some", [Value::from_bytes(name.as_bytes())]),
         None => Value::unnamed_variant("None", []),
@@ -467,17 +469,13 @@ fn attest_call(r: &Reservation, candidate: &[u8; 32]) -> Value {
         ),
         ("reserved_username".to_string(), reserved_username),
     ]);
-    let attest_args = vec![
+    vec![
         Value::from_bytes(candidate),
         sr25519_signature(&r.candidate_signature),
         Value::from_bytes(&r.ring_vrf_key),
         Value::from_bytes(&r.proof_of_ownership),
         Value::unnamed_variant("Some", [consumer]),
-    ];
-    Value::unnamed_variant(
-        "PeopleLite",
-        [Value::unnamed_variant("attest", attest_args)],
-    )
+    ]
 }
 
 /// `MultiSignature::Sr25519(sig)`.
@@ -500,4 +498,50 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reservation() -> Reservation {
+        Reservation {
+            id: 1,
+            full_username: "testing.42".to_string(),
+            candidate_account_id: String::new(),
+            candidate_signature: vec![1; 64],
+            ring_vrf_key: vec![2; 32],
+            proof_of_ownership: vec![3; 64],
+            consumer_registration_signature: vec![4; 64],
+            identifier_key: vec![5; 65],
+            reserved_username: None,
+            attempt: 0,
+        }
+    }
+
+    #[test]
+    fn direct_registration_is_not_wrapped_in_utility_batch() {
+        let reservation = reservation();
+        let candidate = [7; 32];
+        let payload = build_registration_tx(&reservation, &candidate, None);
+
+        assert_eq!(payload.pallet_name(), "PeopleLite");
+        assert_eq!(payload.call_name(), "attest");
+        assert_eq!(payload.call_data(), &attest_args(&reservation, &candidate));
+    }
+
+    #[test]
+    fn proxied_registration_wraps_attest_directly() {
+        let reservation = reservation();
+        let candidate = [7; 32];
+        let proxy_for = [8; 32];
+        let payload = build_registration_tx(&reservation, &candidate, Some(&proxy_for));
+
+        assert_eq!(payload.pallet_name(), "Proxy");
+        assert_eq!(payload.call_name(), "proxy");
+        assert_eq!(
+            payload.call_data()[2],
+            attest_call(&reservation, &candidate)
+        );
+    }
 }
