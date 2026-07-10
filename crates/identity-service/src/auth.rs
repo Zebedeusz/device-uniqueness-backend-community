@@ -68,3 +68,51 @@ pub(crate) fn detect_platform(headers: &HeaderMap) -> Option<&'static str> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn mobile_auth_headers_keep_the_shipping_names_and_shapes() {
+        let mut headers = HeaderMap::new();
+        headers.insert("auth-challenge", HeaderValue::from_static("AQID"));
+        headers.insert("auth-clientid", HeaderValue::from_static("BQUH"));
+        headers.insert("auth-clientproof", HeaderValue::from_static("CAkK"));
+
+        assert_eq!(
+            decode_header(&headers, "auth-challenge").unwrap(),
+            [1, 2, 3]
+        );
+        assert_eq!(decode_header(&headers, "auth-clientid").unwrap(), [5, 5, 7]);
+        assert_eq!(
+            decode_header(&headers, "auth-clientproof").unwrap(),
+            [8, 9, 10]
+        );
+    }
+
+    #[test]
+    fn mobile_package_headers_select_the_platform_claim() {
+        let mut ios = HeaderMap::new();
+        ios.insert(
+            "auth-ios-package",
+            HeaderValue::from_static("io.pcf.polkadotapp"),
+        );
+        assert_eq!(detect_platform(&ios), Some("ios"));
+
+        let mut android = HeaderMap::new();
+        android.insert(
+            "auth-android-package",
+            HeaderValue::from_static("io.novasama.polkadot"),
+        );
+        android.insert(
+            "auth-attestation-type",
+            HeaderValue::from_static("play-integrity"),
+        );
+        android.insert("auth-payload", HeaderValue::from_static("integrity-token"));
+        assert_eq!(detect_platform(&android), Some("android"));
+        assert_eq!(android["auth-attestation-type"], "play-integrity");
+        assert_eq!(android["auth-payload"], "integrity-token");
+    }
+}

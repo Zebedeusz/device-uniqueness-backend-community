@@ -35,3 +35,30 @@ pub async fn search(Query(query): Query<SearchQuery>) -> AppResult<Json<SearchRe
         next_cursor: None,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Uri;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn search_accepts_the_android_status_filter_and_keeps_the_mobile_shape() {
+        let uri: Uri = "/api/v1/usernames/search?status=ASSIGNED&prefix=alice"
+            .parse()
+            .unwrap();
+        let query = Query::<SearchQuery>::try_from_uri(&uri).unwrap();
+        let Json(response) = search(query).await.unwrap();
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({ "usernames": [], "nextCursor": null })
+        );
+    }
+
+    #[tokio::test]
+    async fn search_rejects_a_missing_prefix() {
+        let result = search(Query(SearchQuery { prefix: None })).await;
+        assert!(matches!(result, Err(AppError::BadRequest(_))));
+    }
+}

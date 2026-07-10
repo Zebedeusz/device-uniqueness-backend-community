@@ -84,3 +84,59 @@ async fn availability_for(state: &AppState, base: &str) -> AppResult<NameAvailab
         available_digits: Some(digits),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn availability_contract_matches_ios_and_android() {
+        let request = serde_json::from_value::<AvailableRequest>(json!({
+            "usernames": ["aliceuser"]
+        }))
+        .unwrap();
+        assert_eq!(request.usernames, ["aliceuser"]);
+
+        let response = AvailableResponse {
+            tag: "v1",
+            value: BTreeMap::from([(
+                "aliceuser".to_string(),
+                NameAvailability {
+                    status: "AVAILABLE",
+                    available_digits: Some(vec![1, 42, 99]),
+                },
+            )]),
+        };
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({
+                "_tag": "v1",
+                "value": {
+                    "aliceuser": {
+                        "status": "AVAILABLE",
+                        "availableDigits": [1, 42, 99]
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn unavailable_names_omit_available_digits() {
+        let response = AvailableResponse {
+            tag: "v1",
+            value: BTreeMap::from([(
+                "short".to_string(),
+                NameAvailability {
+                    status: "INVALID",
+                    available_digits: None,
+                },
+            )]),
+        };
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({ "_tag": "v1", "value": { "short": { "status": "INVALID" } } })
+        );
+    }
+}

@@ -33,17 +33,27 @@ mod tests {
     use subxt_signer::SecretUri;
 
     #[test]
-    fn accepts_a_valid_substrate_signature() {
+    fn accepts_shipping_mobile_body_variants() {
         let keypair = Keypair::from_uri(&SecretUri::from_str("//Alice").unwrap()).unwrap();
         let client_id = keypair.public_key().0;
         let challenge = b"challenge-bytes";
-        let body = b"{}";
+        let ios_and_play_integrity_body = b"{}";
 
-        let message = client_data_hash(challenge, &client_id, body);
+        let message = client_data_hash(challenge, &client_id, ios_and_play_integrity_body);
         let proof = keypair.sign(&message).0;
 
-        assert!(verify(challenge, &client_id, body, &proof));
+        assert!(verify(
+            challenge,
+            &client_id,
+            ios_and_play_integrity_body,
+            &proof
+        ));
         // Wrong body invalidates the proof (body is bound into the hash).
         assert!(!verify(challenge, &client_id, b"tampered", &proof));
+
+        let key_attestation_body = b"{\"attestationChain\":[\"certificate\"]}";
+        let message = client_data_hash(challenge, &client_id, key_attestation_body);
+        let proof = keypair.sign(&message).0;
+        assert!(verify(challenge, &client_id, key_attestation_body, &proof));
     }
 }

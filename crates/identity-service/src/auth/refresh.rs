@@ -132,3 +132,23 @@ fn random_token() -> String {
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     B64_STD.encode(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn refresh_request_keeps_the_mobile_wire_shape() {
+        let request = serde_json::from_value::<RefreshRequest>(json!({
+            "refreshToken": "opaque-refresh-token"
+        }))
+        .unwrap();
+
+        assert_eq!(request.refresh_token, "opaque-refresh-token");
+        assert!(serde_json::from_value::<RefreshRequest>(json!({
+            "refresh_token": "wrong-case"
+        }))
+        .is_err());
+    }
+}

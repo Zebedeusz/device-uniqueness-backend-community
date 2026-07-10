@@ -214,6 +214,64 @@ fn parse_preferred(s: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn registration_contract_matches_ios_and_android() {
+        let request = serde_json::from_value::<RegisterRequest>(json!({
+            "candidateAccountId": "5DypZvug3B3fCu2EJhLjXCpJGasDcNqSoAHXbxEPAQyDavGj",
+            "username": "aliceuser",
+            "preferredDigits": "42",
+            "candidateSignature": format!("0x{}", "01".repeat(64)),
+            "ringVrfKey": "0x0203",
+            "proofOfOwnership": format!("0x{}", "03".repeat(64)),
+            "consumerRegistrationSignature": format!("0x{}", "04".repeat(64)),
+            "identifierKey": format!("0x{}", "05".repeat(65))
+        }))
+        .unwrap();
+        assert_eq!(request.username, "aliceuser");
+        assert_eq!(request.preferred_digits.as_deref(), Some("42"));
+        assert!(request.dotns.is_none());
+
+        let response = RegisterResponse {
+            base_username: "aliceuser".to_string(),
+            digits: "42".to_string(),
+            username: "aliceuser.42".to_string(),
+            device_check_available: None,
+        };
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({
+                "base_username": "aliceuser",
+                "digits": "42",
+                "username": "aliceuser.42"
+            })
+        );
+    }
+
+    #[test]
+    fn registration_contract_accepts_optional_dotns_fields() {
+        let request = serde_json::from_value::<RegisterRequest>(json!({
+            "candidateAccountId": "5DypZvug3B3fCu2EJhLjXCpJGasDcNqSoAHXbxEPAQyDavGj",
+            "username": "aliceuser",
+            "candidateSignature": format!("0x{}", "01".repeat(64)),
+            "ringVrfKey": "0x0203",
+            "proofOfOwnership": format!("0x{}", "03".repeat(64)),
+            "consumerRegistrationSignature": format!("0x{}", "04".repeat(64)),
+            "identifierKey": format!("0x{}", "05".repeat(65)),
+            "dotns": {
+                "signature": format!("0x{}", "06".repeat(64)),
+                "signedAt": 123,
+                "reservedUsername": "alice"
+            }
+        }))
+        .unwrap();
+
+        assert!(request.preferred_digits.is_none());
+        let dotns = request.dotns.unwrap();
+        assert_eq!(dotns.signed_at, 123);
+        assert_eq!(dotns.reserved_username.as_deref(), Some("alice"));
+    }
 
     #[test]
     fn base_validation_matches_read_path() {

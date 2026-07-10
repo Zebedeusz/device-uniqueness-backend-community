@@ -24,3 +24,31 @@ pub struct AppAttestRequest {
 pub async fn register(Json(_req): Json<AppAttestRequest>) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::ACCEPTED, Json(json!({})))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ios_app_attest_contract_is_accepted_while_auth_is_off() {
+        let request = serde_json::from_value::<AppAttestRequest>(json!({
+            "keyId": "app-attest-key",
+            "challenge": "challenge",
+            "attestation": "attestation-object"
+        }))
+        .unwrap();
+
+        let (status, Json(body)) = register(Json(request)).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body, json!({}));
+    }
+
+    #[test]
+    fn ios_app_attest_contract_requires_all_camel_case_fields() {
+        assert!(serde_json::from_value::<AppAttestRequest>(json!({
+            "keyId": "app-attest-key",
+            "challenge": "challenge"
+        }))
+        .is_err());
+    }
+}

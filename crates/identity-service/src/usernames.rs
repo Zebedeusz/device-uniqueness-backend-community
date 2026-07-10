@@ -57,3 +57,21 @@ pub async fn attester(State(state): State<AppState>) -> Json<AttesterResponse> {
         attester: state.config.attester_public_key.clone(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn attester_response_keeps_the_mobile_wire_shape() {
+        let response = AttesterResponse {
+            attester: "0x86aac84d".to_string(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({ "attester": "0x86aac84d" })
+        );
+    }
+}

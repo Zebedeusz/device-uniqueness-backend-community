@@ -83,3 +83,19 @@ pub async fn issue(
 
     Ok(Json(TokenResponse::new(token, refresh_token)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn token_response_keeps_the_mobile_wire_shape() {
+        let response = TokenResponse::new("access".to_string(), "refresh".to_string());
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({ "token": "access", "refreshToken": "refresh" })
+        );
+    }
+}

@@ -57,3 +57,23 @@ pub async fn consume(pool: &PgPool, challenge: &[u8]) -> Result<bool, sqlx::Erro
     .await?;
     Ok(result.rows_affected() == 1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn challenge_response_keeps_the_mobile_wire_shape() {
+        let challenge = B64_STD.encode([7u8; 32]);
+        let response = ChallengeResponse {
+            challenge: challenge.clone(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({ "challenge": challenge })
+        );
+        assert_eq!(B64_STD.decode(challenge).unwrap().len(), 32);
+    }
+}

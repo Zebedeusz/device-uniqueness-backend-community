@@ -123,6 +123,29 @@ struct Writer {
     next_nonce: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitFailureAction {
+    Assign,
+    Retry,
+    Fail,
+}
+
+fn classify_submit_failure(
+    reason: &str,
+    observed_owner: Option<[u8; 32]>,
+    candidate: [u8; 32],
+    completed_attempts: i32,
+    max_attempts: i32,
+) -> SubmitFailureAction {
+    if observed_owner == Some(candidate) || reason.contains("AlreadyRegistered") {
+        SubmitFailureAction::Assign
+    } else if completed_attempts >= max_attempts {
+        SubmitFailureAction::Fail
+    } else {
+        SubmitFailureAction::Retry
+    }
+}
+
 impl Writer {
     async fn run_forever(&mut self) -> anyhow::Result<()> {
         loop {
@@ -251,18 +274,25 @@ impl Writer {
                 let reason = e.to_string();
 
                 // Reconcile: the extrinsic may have landed despite the error.
-                if let Ok(Some(owner)) = self.chain.username_owner(&r.full_username).await {
-                    if owner == candidate {
-                        return self.assign(guard, r).await;
+                let observed_owner = self
+                    .chain
+                    .username_owner(&r.full_username)
+                    .await
+                    .ok()
+                    .flatten();
+                match classify_submit_failure(
+                    &reason,
+                    observed_owner,
+                    candidate,
+                    r.attempt + 1,
+                    self.config.max_attempts,
+                ) {
+                    SubmitFailureAction::Assign => self.assign(guard, r).await,
+                    SubmitFailureAction::Retry => self.retry(guard, r, &reason).await,
+                    SubmitFailureAction::Fail => {
+                        self.fail(guard, r, &format!("max attempts reached: {reason}"))
+                            .await
                     }
-                }
-                if reason.contains("AlreadyRegistered") {
-                    self.assign(guard, r).await
-                } else if r.attempt + 1 >= self.config.max_attempts {
-                    self.fail(guard, r, &format!("max attempts reached: {reason}"))
-                        .await
-                } else {
-                    self.retry(guard, r, &reason).await
                 }
             }
         }
@@ -542,6 +572,39 @@ mod tests {
         assert_eq!(
             payload.call_data()[2],
             attest_call(&reservation, &candidate)
+        );
+    }
+
+    #[test]
+    fn failed_attest_retries_then_fails_without_becoming_assigned() {
+        let candidate = [7; 32];
+        let reason = "PeopleLite.InvalidAttestationSignature";
+
+        assert_eq!(
+            classify_submit_failure(reason, None, candidate, 1, 3),
+            SubmitFailureAction::Retry
+        );
+        assert_eq!(
+            classify_submit_failure(reason, None, candidate, 3, 3),
+            SubmitFailureAction::Fail
+        );
+    }
+
+    #[test]
+    fn submit_error_assigns_only_after_successful_reconciliation() {
+        let candidate = [7; 32];
+
+        assert_eq!(
+            classify_submit_failure("finalization timed out", Some(candidate), candidate, 1, 3),
+            SubmitFailureAction::Assign
+        );
+        assert_eq!(
+            classify_submit_failure("AlreadyRegistered", None, candidate, 1, 3),
+            SubmitFailureAction::Assign
+        );
+        assert_eq!(
+            classify_submit_failure("dispatch failed", Some([8; 32]), candidate, 1, 3),
+            SubmitFailureAction::Retry
         );
     }
 }
