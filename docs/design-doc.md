@@ -4,18 +4,18 @@ Design doc
 Authors: Talles Borges, Alberto Nicolás Penayo
 State: draft
 Approvers: Torsten, Karim
-Last updated: 2026-07-03
+Last updated: 2026-07-10
 
 ## TL;DR
 
-The current identity backend is one TypeScript service doing too much — identity, notifications, TURN, and invites all share code, secrets, and a failure domain, so an unrelated bug can take down login and username registration. V2 rewrites it as a **Rust Cargo workspace of small, isolated services** — each independently deployed with its own database, coupled only by a shared JWT contract and a thin core of genuinely-shared code. It stays **100% API-compatible** with today's mobile clients (same base URL, same paths, no client changes) and lets us **fully retire the old backend**. The result is a smaller security boundary, failures that stay contained to one service, and a clean base to move more responsibilities on-chain over time.
+The current identity backend is one TypeScript service doing too much — identity, notifications, TURN, and invites all share code, secrets, and a failure domain, so an unrelated bug can take down login and username registration. V2 rewrites it as a **Rust Cargo workspace of small, isolated services** — each independently deployed with its own persistence when needed, coupled only by a shared JWT contract and a thin core of genuinely-shared code. It stays **100% API-compatible** with today's mobile clients (same base URL, same paths, no client changes) and lets us **fully retire the old backend**. The result is a smaller security boundary, failures that stay contained to one service, and a clean base to move more responsibilities on-chain over time.
 
 ## In Short
 
-- **One workspace, many isolated services.** `identity-service` plus thin siblings (username read/search, a `/notify` relay, the invite faucet, TURN creds) live in one Cargo workspace but **deploy independently**, each with **its own database and secrets**. No shared database.
+- **One workspace, many isolated services.** `identity-service` plus thin siblings (username read/search, a `/notify` relay, the invite faucet, TURN creds) live in one Cargo workspace but **deploy independently**. Each owns its persistence if it has any, plus its secrets and operational lifecycle. No shared tables.
 - **Minimal coupling by design.** Services do **not** depend on each other at runtime. They share only a thin **core** of real shared code (chain connection, DB connection, config, telemetry) as leaf crates — nothing product-specific.
 - **JWT is the only contract.** `identity-service` is the **sole issuer** of JWTs (asymmetric, EdDSA/Ed25519 + JWKS). Every other service is **verify-only** — it validates tokens with the public key, never calls back into core and never reads core's tables.
-- **One public URL, path-routed.** A thin gateway routes `api.…/api/v1/auth` → identity-service, `/api/v1/usernames` → the read service, `/api/v1/notify` → notifications, etc. No per-service subdomains. This is what preserves 100% API compatibility.
+- **One public URL, path-routed.** A thin gateway routes auth, registration writes, and availability to identity-service; `GET /api/v1/usernames/search` to username-read; `/api/v1/notify` to notifications; and the remaining paths to their owners. No per-service public subdomains. This preserves 100% API compatibility.
 - **Migrate the app's whole live surface, then kill the old API.** Every endpoint the app calls today is rebuilt in the workspace so the old backend can be **fully decommissioned** — not left running to serve leftover routes.
 - **The tradeoff: more moving parts.** Isolation means more deployables, more databases, a gateway to run, and JWT/JWKS operations across services — plus a careful cutover from V1. We accept that cost for contained failures and a small audit surface; the **cutover is the main risk we manage** (see Open Questions).
 
@@ -33,13 +33,15 @@ The current identity backend is one TypeScript service doing too much — identi
 
 Principle: **every endpoint the app calls today is rebuilt in the new workspace so the old backend can be fully decommissioned.** V1 builds:
 
-- **`identity-service`** (fully built): device attestation (App Attest / DeviceCheck iOS-first, Play Integrity / Android Keystore); the **auth handshake** (challenge → attestation → JWT issue + refresh rotation, with `AUTH_ENABLED` / `ENFORCE_AUTH` gating); **username registration** (write path → free-registration queue + queue-advancer → reservation outbox → identity-chain-writer → People Chain); and **attester public-key publication**.
-- **Username availability / search:** the **backend serves** `/usernames/available` (availability + free digit suffixes) and `/usernames/search`, **exactly as the app calls today** (no client change). **Placement is flexible** — the read/indexer may live inside `identity-service` in V1 (it's coupled via local discriminator selection) and split into its own service later. (Moving availability on-device via `UsernameOwnerOf` / on-chain is Future Work.)
+- **`identity-service`**: its MVP is built for attestation-off auth/JWT, direct-chain discriminator availability, username registration, the reservation outbox, the chain writer, and attester publication. Real device attestation and free-registration eligibility remain required retirement work with dedicated plans.
+- **Username availability / search:** identity-service currently serves `/usernames/available` from direct `UsernameOwnerOf` reads. The active retirement path puts `GET /usernames/search` in the independent `username-read` service, populated from finalized `Resources.Consumers` state. Both preserve the shipping client contracts.
 - **`notifications`** — thin `/notify` relay only. (The `/subscriptions`(+rules) surface is **confirmed unused** by both shipping clients — the Android sync code is commented out, parked for "v2 push" — so it is **not built for V1**; deferred to notifications v3.)
 - **Invite faucet** — slim; today's faucet only (`/invitation-ticket/claim`). **No** backend game / personhood service — all DIM / Game / ProofOfInk logic runs on-chain + app.
 - **`turn`** — thin `/turn/issue` **credential** service (JWT-gated). The coturn **relay** stays SRE infrastructure, not ours.
 - **Single-URL gateway** routing `/api/v1/*` to the owning service.
 - **Removed, not rebuilt:** statement fan-out and the push subscription fan-out (already decentralized via the Statement Store / dead in the app).
+
+Delivery is tracked as independent ship-first plans under `docs/plans/`, indexed by `docs/roadmap.md`. The completed Identity Service MVP is not the retirement release; every remaining route, hardening gate, migration decision, and cutover step must still close before the legacy backend is shut down.
 
 ### Out-of-scope (deferred / Future Work)
 
@@ -82,9 +84,9 @@ Rewrite the identity backend as a **Rust workspace of isolated, independently-de
 ### High-Level Architecture
 
 - **Gateway (thin, routing-only):** one public URL; routes `/api/v1/<namespace>` to the owning service. Preserves the existing API contract.
-- **Services (isolated deployables, own DB + secrets):**
+- **Services (isolated deployables, own persistence when needed + secrets):**
   - `identity-service` — device attestation, the auth handshake + JWT issuance, username **write** path (free-reg queue + queue-advancer + reservation outbox + identity-chain-writer), attester publication.
-  - `username-read` / indexer — backend availability + prefix search (decoupled read model; **may live inside `identity-service` in V1**, splits out later).
+  - `username-read` / indexer — independent finalized-state projection for assigned-username prefix search. Direct-chain discriminator availability remains in identity-service for the current MVP.
   - `notifications` — thin `/notify` relay (subscription fan-out dropped; `/subscriptions` confirmed unused → notifications v3).
   - invite faucet — slim; issues invite tickets only (no backend game / personhood service).
   - `turn` — `/turn/issue` credential service (coturn relay = SRE infra, not ours).
@@ -97,7 +99,7 @@ Illustrative crate layout:
     - bin `identity-api` — axum API, N stateless replicas
     - bin `identity-chain-writer` — one nonce lane per writer, Postgres lease (V1: one active instance; scales via proxy sharding)
   - `chain-types/` — subxt codegen + typed People Chain surface
-  - V1 thin bins: `username-indexer` (or folded into identity-service), `notifications` (`/notify`), `turn` (`/turn/issue`), `invite-faucet`
+  - V1 thin bins: `username-read`, `notifications` (`/notify`), `turn` (`/turn/issue`), `invite-faucet`
   - leaf crates: `auth-verify`, `telemetry`, `config`
 
 ### Detailed Design — Key Components (high-level)
@@ -108,18 +110,18 @@ Illustrative crate layout:
   - **PAYMENT_REQUIRED** — the device already used its one free slot (DeviceCheck / device-id), or an unprovable Android build,
   - **QUEUED** — a fresh, unique device with no voucher: free but **rate-limited**, so it waits.
   Approved registrations land in the **outbox**; a **queue-advancer** promotes QUEUED entries by balance priority; the **identity-chain-writer** drains the outbox to People Chain (`PeopleLite.attest`, optional DotNS reservation). Registration is **async** (`202`); the app confirms the result **on-chain** (`UsernameOwnerOf`). (V1 uses separate daemons for the queue-advancer and identity-chain-writer; V2 may consolidate — an implementation choice.)
-- **Username read (own service, or inside identity-service for V1):** serves `/usernames/available` + `/usernames/search` from the backend mirror/index (same as today), populated from finalized chain state; skips malformed records but logs decode failures. (On-device `UsernameOwnerOf` availability is Future Work.)
+- **Username read (own service):** serves `/usernames/search` from a finalized `Resources.Consumers` projection; skips malformed records but logs decode failures. Identity-service keeps the working direct-chain `/usernames/available` path unless a later plan deliberately moves it.
 - **Notifications / TURN / invite faucet:** thin siblings — a `/notify` relay, a `/turn/issue` credential service (coturn relay is SRE infra), and the slim invite faucet. All are **JWT verify-only** with **no synchronous dependency** from identity-service.
 - **Chain-writer:** V1 runs one active instance (one nonce lane, Postgres lease) for simplicity; signs via a least-privilege **Proxy** of a cold attester authority. Scales to multiple writers via proxy-per-worker sharding (see Alternatives).
 
 ### Data Model
 
-- **Per-service databases** — each service owns its own database and secrets; no shared database.
+- **Per-service persistence** — each service owns its own persistence if it needs any; no shared tables. Stateless services should not add a database without a proven requirement.
 - **`identity-service` owns:** platform-attestation evidence, consumed-uniqueness markers, refresh-token state, voucher-secret hashes (while needed), the registration **outbox / reservation state** and the free-registration **queue**, attester authority material.
 - **`username-read` owns:** the username mirror + search index (populated from finalized chain state).
-- **Other services own** their own state (TURN credential state, invite/ticket pool).
+- **Other services own** their own state if needed (for example, the invite/ticket pool); the notify relay remains stateless unless delivery requirements prove otherwise.
 - Schema changes are generated migrations, applied per service; no cross-service schema ownership.
-- **The one boundary that isn't yet clean:** in V1 the register flow still **picks the discriminator locally** (reads the index → selects a free suffix → submits), so the write path (identity-service) retains a read dependency on username state that otherwise belongs to `username-read`. The design separates the concerns; the full split lands when discriminator assignment moves on-chain (Future Work).
+- **Current read/write boundary:** identity-service selects a discriminator through direct `UsernameOwnerOf` reads and does not depend on the username-read database. Username-read exists for discovery and prefix search, not registration correctness.
 
 ### APIs / Interfaces
 

@@ -6,18 +6,22 @@ This file gives coding agents the context they need to work in this repository.
 
 Identity Backend V2 — greenfield **Rust** rewrite of the Polkadot identity
 backend, scoped to **prove the device + register the username** on People Chain.
-Full scope, rationale, and carve-outs live in `docs/design-doc.md`; the active
-build plan is `docs/plans/active/v1-ship-plan.md`.
+Full scope, rationale, and carve-outs live in `docs/design-doc.md`; delivery is
+indexed by `docs/roadmap.md`. Active independent plans live under
+`docs/plans/active/`; the completed Identity Service MVP record is
+`docs/plans/done/identity-service-mvp.md`.
 
-**Canonical username-registration spec** (ground-truth for the `/usernames` write path — Slice 4):
+**Canonical username-registration spec** (ground-truth for the `/usernames` write path and future eligibility work):
 Alberto's "New JWT / Integrity / PoUD / Username Claim Logic" —
 https://docs.google.com/document/d/1YQy0how-ItgThH5VfC1SR0yR6j_Xh9jLTOn35Oo9ubc
 Covers Android md TEE attestation (`POST /auth/android/attestation`), PoUD (Android
 `{androidId, widevineId}` / iOS DeviceCheck), the INSTANT / PAYMENT_REQUIRED / QUEUED decision flow,
 the balance-priority queue (G1<10 … G4≥1000), QR-voucher bypass, and the `/usernames/payment-status`
-+ `/registration/queue` endpoints. (To digest fully before implementing Slice 4.)
++ `/registration/queue` endpoints. Digest it fully before implementing the
+attestation/eligibility plan.
 
-Cargo workspace, two crates:
+The current checked-in core workspace has two crates; active plans may add
+independently deployable service crates:
 - `chain-types` — canonical People Chain type surface (static subxt codegen).
 - `identity-service` — domain lib plus two deployable binaries:
   - `identity-api` — N-replica axum HTTP server (auth handshake, JWKS, `/usernames`, `/attester`).
@@ -33,7 +37,7 @@ Cargo workspace, two crates:
 
 ## Architecture / data flow
 
-- **Two binaries, one Postgres.** Registration is an outbox: `POST /api/v1/usernames` inserts a `RESERVED` row in `username_reservations` and returns `202`; `identity-chain-writer` claims rows and submits the People Chain calls (`PeopleLite.attest` / `Resources.register_lite_person`), advancing `RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`. **The DB row is source of truth; chain is reconciled to it.**
+- **The current identity core has two binaries and one Postgres.** Registration is an outbox: `POST /api/v1/usernames` inserts a `RESERVED` row in `username_reservations` and returns `202`; `identity-chain-writer` claims rows and submits the People Chain calls (`PeopleLite.attest` / `Resources.register_lite_person`), advancing `RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`. **The DB row is source of truth; chain is reconciled to it.** Future services own their persistence if any and must never read identity-service tables.
 - **`identity-chain-writer` is single-instance by design** — one signer = one nonce lane. The `writer_lease` table is only a best-effort deploy-overlap guard; the chain nonce + outbox reconciliation is the real serializer. Never run two writers / never scale it.
 - **Signing:** the writer signs as a least-privilege `Proxy` of a cold attester primary when `CHAIN_WRITER_PROXY_FOR` is set, else directly as its SURI.
 - **`chain-types` is the only place chain types live.** Static codegen from vendored metadata at `crates/chain-types/metadata/people.scale`; online transport + signing live in `identity-service::chain`, never in `chain-types`. Regenerate metadata with the `subxt metadata …` command at the top of `crates/chain-types/src/lib.rs`.
