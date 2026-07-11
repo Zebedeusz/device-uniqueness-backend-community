@@ -1,76 +1,70 @@
 # AGENTS.md
 
-This file gives coding agents the context they need to work in this repository.
+Operating contract for coding agents in this repo. Keep this file lean and operational —
+project narrative, architecture, and specs live in `docs/` and are linked below. Read the relevant
+doc before non-trivial work.
 
-## Project overview
+## Orientation
 
-Identity Backend V2 — greenfield **Rust** rewrite of the Polkadot identity
-backend, scoped to **prove the device + register the username** on People Chain.
-Full scope, rationale, and carve-outs live in `docs/design-doc.md`; delivery is
-indexed by `docs/roadmap.md`. Active independent plans live under
-`docs/plans/active/`; the completed Identity Service MVP record is
-`docs/plans/done/identity-service-mvp.md`.
+Identity Backend V2 — greenfield **Rust** rewrite of the Polkadot identity backend: an
+**API-compatible** replacement (prove the device + register the username on People Chain, same client
+contracts) built as isolated services, on track to **retire the legacy TypeScript backend**. Context
+lives in docs, not here:
 
-**Canonical username-registration spec** (ground-truth for the `/usernames` write path and future eligibility work):
-Alberto's "New JWT / Integrity / PoUD / Username Claim Logic" —
-https://docs.google.com/document/d/1YQy0how-ItgThH5VfC1SR0yR6j_Xh9jLTOn35Oo9ubc
-Covers Android md TEE attestation (`POST /auth/android/attestation`), PoUD (Android
-`{androidId, widevineId}` / iOS DeviceCheck), the INSTANT / PAYMENT_REQUIRED / QUEUED decision flow,
-the balance-priority queue (G1<10 … G4≥1000), QR-voucher bypass, and the `/usernames/payment-status`
-+ `/registration/queue` endpoints. Digest it fully before implementing the
-attestation/eligibility plan.
+- **Scope, rationale, carve-outs** → `docs/design-doc.md` (a living design doc — expect it to change).
+- **Architecture, service boundaries, naming, data-flow invariants** → `docs/architecture.md`
+- **Delivery index** → `docs/roadmap.md`; plans under `docs/plans/active/` and `docs/plans/done/`
+- **Deploy / operations** → `docs/deploy.md`, `docs/runbook.md`
 
-The current checked-in core workspace has two crates; active plans may add
-independently deployable service crates:
-- `chain-types` — canonical People Chain type surface (static subxt codegen).
-- `identity-service` — domain lib plus two deployable binaries:
-  - `identity-api` — N-replica axum HTTP server (auth handshake, JWKS, `/usernames`, `/attester`).
-  - `identity-chain-writer` — single-instance worker draining the reservation outbox onto chain.
+## Keeping docs current
+
+The **code is the source of truth**; the docs must be kept in sync with it. When a change alters behavior, architecture, service boundaries, naming, or invariants, update the matching doc in the **same change**, not later:
+
+- Architecture, service boundaries, naming, or data-flow invariants → `docs/architecture.md`.
+- Scope / carve-outs → `docs/design-doc.md`; delivery status → `docs/roadmap.md` + the plan under `docs/plans/`.
+- Commands, conventions, config, workspace layout, or gotchas → this file.
+
+If a change makes a doc wrong, fix the doc (or flag the drift) in the same change instead of leaving it stale.
+
+## Workspace
+
+Three crates today (plans may add more independently-deployable service crates):
+
+- `chain-types` — generated People Chain type surface (subxt codegen).
+- `identity-service` — the identity service (lib + bins `identity-api` and `identity-chain-writer`).
+- `username-indexer` — username indexer + search service.
+
+Each service's boundary, persistence, endpoints, and data-flow invariants are in `docs/architecture.md`.
 
 ## Commands
 
 - `just check` — the full gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace`. CI runs the same three checks on push/PR; run it before declaring done.
 - `just run` / `just run-writer` — run `identity-api` / `identity-chain-writer` locally.
-- Single test: `cargo test -p identity-service <name>` (or `-p chain-types`).
+- Single test: `cargo test -p identity-service <name>` (or `-p chain-types`, `-p username-indexer`).
 - `just deny` — `cargo-deny` audit; **not** in `just check`, needs `cargo install cargo-deny`.
-- Local stack: `docker compose up` (Postgres + api + writer). All env vars in `.env.example`.
-
-## Architecture / data flow
-
-- **The current identity core has two binaries and one Postgres.** Registration is an outbox: `POST /api/v1/usernames` inserts a `RESERVED` row in `username_reservations` and returns `202`; `identity-chain-writer` claims rows and submits the People Chain calls (`PeopleLite.attest` / `Resources.register_lite_person`), advancing `RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`. **The DB row is source of truth; chain is reconciled to it.** Future services own their persistence if any and must never read identity-service tables.
-- **`identity-chain-writer` is single-instance by design** — one signer = one nonce lane. The `writer_lease` table is only a best-effort deploy-overlap guard; the chain nonce + outbox reconciliation is the real serializer. Never run two writers / never scale it.
-- **Signing:** the writer signs as a least-privilege `Proxy` of a cold attester primary when `CHAIN_WRITER_PROXY_FOR` is set, else directly as its SURI.
-- **`chain-types` is the only place chain types live.** Static codegen from vendored metadata at `crates/chain-types/metadata/people.scale`; online transport + signing live in `identity-service::chain`, never in `chain-types`. Regenerate metadata with the `subxt metadata …` command at the top of `crates/chain-types/src/lib.rs`.
-- **HTTP** (`identity-service::http`): router in `http.rs` wrapped in a tower-http stack (request-id → trace → 30s timeout) with graceful shutdown. Health at `/livez`, `/readyz` (gates on a live Postgres `SELECT 1`), `/healthcheck`; JWKS at `/.well-known/jwks.json`. `AppState` = Postgres pool + `ChainClient` + `Jwt` + `Config`.
+- Local stack: `docker compose up` (Postgres + `identity-api` + `identity-chain-writer` + `username-indexer` + its own Postgres). All env vars in `.env.example`.
 
 ## Conventions (beyond rustfmt/clippy defaults)
 
 - Workspace lints: `unsafe_code = "forbid"`, clippy `uninlined_format_args = warn` → inline format args (`"{v:?}"`, not `"{}", v`).
-- **Errors:** domain enums via `thiserror` (`ConfigError`, `JwtError`, `InsertError`, …); HTTP maps through `http::error::AppError` (`impl IntoResponse`). `anyhow` only in the two bin `main`s, never in library public APIs.
+- **Errors:** domain enums via `thiserror` (`ConfigError`, `JwtError`, `InsertError`, …); HTTP maps through `http::error::AppError` (`impl IntoResponse`). `anyhow` only in the bin `main`s, never in library public APIs.
 - **sqlx is runtime-checked** — queries use `sqlx::query(...)` with bound `$n` params; there are **no** `query!`/`query_as!` macros and **no `.sqlx` cache**. Do not add compile-time SQL macros or `cargo sqlx prepare` (a live-Postgres CI dependency is deliberately deferred).
-- **Migrations auto-run** via `sqlx::migrate!("./migrations")` in `db::connect` on every boot (advisory-locked, safe across replicas). Don't run them by hand; add schema as new `crates/identity-service/migrations/*.sql`.
-- **Config is fail-fast** (`config::Config::from_env`): required `DATABASE_URL`, `JWT_ED25519_SECRET`, `ATTESTER_PUBLIC_KEY` have no defaults and abort startup if missing/malformed. Don't add fallbacks for them.
+- **Migrations auto-run** via `sqlx::migrate!("./migrations")` in `db::connect` on every boot (advisory-locked, safe across replicas). Don't run them by hand; add schema as new `crates/<service>/migrations/*.sql`.
+- **Config is fail-fast** (`Config::from_env`): required vars (e.g. `DATABASE_URL`, `JWT_ED25519_SECRET`, `ATTESTER_PUBLIC_KEY`) have no defaults and abort startup if missing/malformed. Don't add fallbacks for them.
 - Module layout: `foo.rs` + optional `foo/` children (no new `foo/mod.rs`); short `lib.rs` (docs + lints + `pub mod` + curated re-exports); doc every `pub` item.
 
 ## Configuration
 
 All vars + dev defaults are in `.env.example` (compose auto-loads `.env`).
-Non-obvious: `AUTH_ENABLED=false` is the current **M0 mode** — platform
-attestation is a **no-op** (a JWT is still issued and the sr25519 account proof
-still verified); `ENFORCE_AUTH` toggles soft (log-only) vs hard rejection.
-
-## Deployment
-
-Multi-stage `Dockerfile` builds both binaries (pure-Rust TLS, no OpenSSL);
-`docker-compose.yml` runs Postgres + `identity-api` + `identity-chain-writer`, writer
-pinned to `replicas: 1`. `identity-api` connects to the People Chain RPC at
-startup (blocking) — it won't boot without reachable RPC. Do not push or deploy
-without explicit consent.
+Non-obvious: `AUTH_ENABLED=false` is the current **M0 mode** — platform attestation is a **no-op**
+(a JWT is still issued and the sr25519 account proof still verified); `ENFORCE_AUTH` toggles soft
+(log-only) vs hard rejection.
 
 ## Gotchas / forbidden
 
 - **Don't run migrations manually** — auto-applied on boot.
 - **Don't scale `identity-chain-writer`** past one instance (nonce lane).
 - **Don't add `.sqlx` / `query!` compile-time SQL** — runtime-checked by design.
-- **`just check` is the only gate** (no CI); `cargo-deny` is separate (`just deny`).
-ny`).
+- **Run `just check` before declaring done** — the same three-check gate CI runs on push/PR. `cargo-deny` is separate (`just deny`).
+- **Don't push or deploy without explicit consent.** Full deploy steps live in `docs/deploy.md`.
+- **`identity-api` blocks on the People Chain RPC at startup** — no reachable RPC, no boot.

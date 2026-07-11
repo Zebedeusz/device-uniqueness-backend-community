@@ -1,19 +1,17 @@
-//! `/api/v1/attester` and `/api/v1/usernames/*` — the username API surface
-//! (availability read, public search, and registration intake).
+//! `/api/v1/attester` and the identity-owned username API surface
+//! (availability reads and registration intake).
 //!
 //! `available` is chain-backed (`Resources::UsernameOwnerOf`) and JWT-gated, as
-//! the shipping clients call it. `search` stays **public** because the shipping
-//! iOS client calls it with no auth — JWT-gating it would break byte-compat; the
-//! prefix indexer that backs real results lands in Slice 7 (`username-read`).
+//! the shipping clients call it. Public prefix search is owned by the separate
+//! `username-indexer` service.
 
 mod available;
 mod register;
-mod search;
 
 use std::collections::BTreeSet;
 
 use axum::extract::State;
-use axum::routing::{get, post};
+use axum::routing::post;
 use axum::{Json, Router};
 use serde::Serialize;
 
@@ -39,7 +37,6 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/", post(register::register))
         .route("/available", post(available::check))
-        .route("/search", get(search::search))
         .layer(axum::middleware::from_fn_with_state(
             state,
             crate::http::middleware::rate_limit,

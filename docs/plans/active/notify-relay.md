@@ -3,7 +3,7 @@
 # Goals
 - Preserve the shipping `POST /api/v1/notify` behavior in an independently deployable Rust service.
 - Deliver the existing encrypted chat payload through FCM, APNs alert, and APNs VoIP without changing either mobile client.
-- Isolate push credentials and provider failures from auth, username registration, and username-read.
+- Isolate push credentials and provider failures from auth, username registration, and username-indexer.
 
 # Non-goals
 - `/subscriptions`, subscription rules, Statement Store fan-out, broadcast notifications, Web Push, or notifications v3.
@@ -84,7 +84,7 @@
 - **Scope checklist**:
   - [ ] Add a separate image/process definition, service-owned secrets, and readiness checks.
   - [ ] Rate-limit by authenticated subject and route without venue-wide raw-IP coupling.
-  - [ ] Prove identity-service, username-read, and registration remain healthy when notify is stopped or provider credentials are invalid.
+  - [ ] Prove identity-service, username-indexer, and registration remain healthy when notify is stopped or provider credentials are invalid.
   - [ ] Document the future gateway route contract without implementing the gateway in this slice.
 - **✅ Demo**: stop notify and observe only `/api/v1/notify` fail; restart it with valid secrets and deliver a test push without restarting identity-service.
 - **Risks / failure modes**:
@@ -95,7 +95,7 @@
 - Require `Authorization: Bearer <JWT>` and verify with public-key material only.
 - Keep provider failures parseable by the shipping clients, including legacy HTTP status behavior.
 - Keep notify stateless unless a measured requirement proves persistence is necessary.
-- Never read identity-service or username-read databases.
+- Never read identity-service or username-indexer databases.
 - Push secrets and provider outages must not affect auth or registration.
 
 # Key decisions (decide early)

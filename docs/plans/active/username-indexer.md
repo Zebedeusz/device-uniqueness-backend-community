@@ -20,7 +20,7 @@
 # User journey
 1. A user registers a lite username through the existing identity-service.
 2. The registration finalizes on People Chain.
-3. Username-read indexes the finalized consumer.
+3. Username-indexer indexes the finalized consumer.
 4. Another user searches by prefix and sees the assigned username.
 
 # Foundations / Already shipped (✅)
@@ -40,13 +40,13 @@
 ## Phase 1: Searchable finalized snapshot
 - **Goal**: bootstrap an independent database from finalized People Chain state and serve real search results.
 - **Scope checklist**:
-  - [ ] Add an independently deployable username-read crate/binary with fail-fast configuration, liveness, and readiness.
-  - [ ] Add a service-owned migration for assigned username records and a deterministic prefix-search index.
-  - [ ] Scan finalized `Resources::Consumers` storage in bounded pages.
-  - [ ] Decode account ID, lite username, optional full username, and finalized onchain position; skip malformed records and log the failure.
-  - [ ] Upsert idempotently into the local projection.
-  - [ ] Serve public `GET /api/v1/usernames/search` with `prefix`, optional `status`, `limit`, `cursor`, and `includeOnchainData` compatibility.
-  - [ ] Preserve `{usernames, nextCursor}` and result fields used by the shipping clients.
+  - [x] Add an independently deployable username-indexer crate/binary with fail-fast configuration, liveness, and readiness.
+  - [x] Add a service-owned migration for assigned username records and a deterministic prefix-search index.
+  - [x] Scan finalized `Resources::Consumers` storage in bounded pages.
+  - [x] Decode account ID, lite username, optional full username, and finalized onchain position; skip malformed records and log the failure.
+  - [x] Upsert idempotently into the local projection.
+  - [x] Serve public `GET /api/v1/usernames/search` with `prefix`, optional `status`, `limit`, `cursor`, and `includeOnchainData` compatibility.
+  - [x] Preserve `{usernames, nextCursor}` and result fields used by the shipping clients.
 - **✅ Demo**: run one bootstrap against Paseo Next v2, search a known prefix through the new service, and receive the assigned account and username in a response both mobile models decode.
 - **Risks / failure modes**:
   - Runtime metadata drift can break storage decoding.
@@ -56,11 +56,11 @@
 ## Phase 2: Continuous finalized sync
 - **Goal**: make newly registered usernames discoverable without manual bootstrap.
 - **Scope checklist**:
-  - [ ] Persist the last successfully indexed finalized block or an equivalent resumable checkpoint.
-  - [ ] Poll finalized state on a configurable interval with reconnect and bounded retry.
-  - [ ] Advance the checkpoint only after all projection writes for the observed state succeed.
-  - [ ] Expose readiness/freshness and structured logs for last finalized block, last successful sync, records indexed, and decode failures.
-  - [ ] Re-running the same finalized range must be idempotent.
+  - [x] Persist the last successfully indexed finalized block or an equivalent resumable checkpoint.
+  - [x] Poll finalized state on a configurable interval with reconnect and bounded retry.
+  - [x] Advance the checkpoint only after all projection writes for the observed state succeed.
+  - [x] Expose readiness/freshness and structured logs for last finalized block, last successful sync, records indexed, and decode failures.
+  - [x] Re-running the same finalized range must be idempotent.
 - **✅ Demo**: register a fresh username with identity-service; after finalization and one configured sync interval, search returns it without restarting either service.
 - **Risks / failure modes**:
   - RPC interruption must not advance the checkpoint or erase the last good projection.
@@ -69,11 +69,11 @@
 ## Phase 3: Mobile compatibility completion
 - **Goal**: prove the read service can replace the legacy search route without client changes.
 - **Scope checklist**:
-  - [ ] Golden fixtures for iOS prefix-only and Android `status=ASSIGNED` requests.
-  - [ ] Pagination tests covering stable ordering, cursor continuation, and no duplicate rows.
-  - [ ] Rate limit public search without adding JWT or proof-of-compute requirements.
-  - [ ] Add the username-read container and service-owned environment variables without changing identity-service deployment state.
-- **✅ Demo**: contract tests pass, a mobile-compatible request returns a newly indexed username, and stopping username-read does not affect auth or registration readiness.
+  - [x] Golden fixtures for iOS prefix-only and Android `status=ASSIGNED` requests.
+  - [x] Pagination tests covering stable ordering, cursor continuation, and no duplicate rows.
+  - [x] Rate limit public search without adding JWT or proof-of-compute requirements.
+  - [x] Add the username-indexer container and service-owned environment variables without changing identity-service deployment state.
+- **✅ Demo**: contract tests pass, a mobile-compatible request returns a newly indexed username, and stopping username-indexer does not affect auth or registration readiness.
 - **Risks / failure modes**:
   - Gateway routing is deliberately deferred; test the service directly in this phase.
 
@@ -86,7 +86,8 @@
 - A stale index may affect search freshness, but it must not affect registration.
 
 # Key decisions (decide early)
-- Checkpoint strategy: periodic full finalized snapshots first, or incremental finalized-block/event indexing from the start.
+- Checkpoint strategy: **decided — incremental finalized-block, event-signalled indexing.** One full `bootstrap` runs once at startup to seed the projection, reconcile it (`DELETE ... WHERE snapshot_hash <> $1`), and set the `sync_state` checkpoint. The resync loop then polls the finalized head every `SYNC_INTERVAL_SECS` and, for each new finalized block from `checkpoint+1..=head`, decodes `Resources` events (`LitePersonRegistered` / `PersonRegistered` / `IdentifierKeyUpdated`, plus `PeopleLite::ConsumerRegistered` as a duplicate-safe signal) to learn which accounts changed — the events carry only an account, never the username — re-reads `Resources::Consumers(account)` at that block for the authoritative username, and upserts it (or deletes the local row if the entry is now absent) inside a single transaction that also advances the per-block checkpoint. Cost therefore scales with the number of changed accounts, not the total size of `Consumers`. Only block numbers up to the finalized head are processed, so no reorg-sensitive state is indexed; reprocessing a block re-reads authoritative storage and upserts by `account_id` primary key, so repeats are idempotent no-ops. In this mode `sync_state.last_finalized_*` is the per-block checkpoint and each `assigned_usernames.snapshot_hash` records the last block that touched that row (diverging from bootstrap's single shared snapshot value); that is expected and harmless because incremental never runs the bootstrap reconciliation delete.
+- Writer serialization: **decided — single active writer via a Postgres advisory lock.** Bootstrap and the incremental loop share one lock id; bootstrap takes it with a blocking `pg_advisory_lock` and **runs a full snapshot only when the `sync_state` checkpoint is empty**, and each incremental pass takes it with `pg_try_advisory_lock` (skipping the pass if another instance holds it). This makes the service safe to run as N replicas against one shared Postgres, and makes restarts resume incrementally from the checkpoint instead of re-scanning the whole map.
 - Cursor encoding and stable sort key, compatible with the legacy lowercased username ordering.
 - Whether `/usernames/available` moves into this service after search MVP; the current endpoint already works and is not a Phase 1 dependency.
 

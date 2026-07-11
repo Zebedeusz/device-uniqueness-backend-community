@@ -1,0 +1,160 @@
+# Identity Backend V2 — Architecture & Naming Alignment
+
+> Alignment reference for humans and sub-agents. **Source of truth is `docs/design-doc.md`;**
+> this file distills its boundaries + fixes the naming convention so everyone stays consistent.
+> If this file and `design-doc.md` ever disagree, `design-doc.md` wins — fix this file.
+
+## Vision
+
+Identity Backend V2 replaces the coupled TypeScript backend with **one Rust Cargo workspace of
+small, independently-deployable services under one team**. Boundaries exist to isolate secrets,
+persistence, deployment lifecycle, and failures: a notification, TURN, invite, or indexing fault
+must never disrupt login, attestation, or username registration.
+
+Principles that drive every boundary decision:
+
+- **`identity-service` is the sole JWT issuer.** Siblings are *verify-only* — they validate its
+  asymmetric JWT via JWKS **when a route needs auth**, but never mint tokens, never call
+  identity-service synchronously, and never read its tables. *Verify-only does not mean every
+  route requires a JWT* — e.g. username search is public.
+- **Shared code is minimal and product-agnostic.** No shared database, no shared product logic.
+- **Per-service persistence.** Each stateful service owns its data; stateless services add none
+  without evidence. No shared tables.
+- **The mobile API is frozen** — same base URL, same paths/payloads — behind one path-routing
+  front door. V2 rebuilds every live route and **fully retires V1**; two permanent backends is a
+  failure state.
+
+## Naming convention
+
+**Plain, boring, descriptive names. No decorative prefixes.**
+
+- A name says what the thing **is/does** in plain English — a new engineer guesses the role in <1s.
+- **No workspace prefix** (`id-`, `shared-`, `svc-`, `lib-`). The repo is already the namespace;
+  `Cargo.toml` and `docker ps` show the plain name. The non-identity services (`notifications`,
+  `turn`, `invites`) are *not* identity — don't imply otherwise.
+- Lowercase kebab-case, short, greppable. Boring is good.
+- **No themed/metaphorical names** (no `mint`/`citadel`/`signet`/nautical/etc.) and **no invented
+  `-ity` brands** (the `-ity` policy is public-facing only and exempts crate/CLI names; also avoids
+  colliding with Trinity/Levity/Nominality/…).
+
+## Naming vocabulary
+
+This is the **agreed vocabulary** for parts as they come to exist — **not** a list of folders to
+create now. See "How the workspace grows" below.
+
+### Shared library crates (product-agnostic, imported by services)
+
+| Concept | Name | Status |
+|---|---|---|
+| generated People Chain (subxt) typed surface | `chain-types` | **exists** (shared by identity-service + username-indexer) |
+| chain connection / RPC transport | `chain-client` | module in identity-service today |
+| Postgres connection + bootstrap | `postgres` | module in identity-service/username-indexer today |
+| config loading + fail-fast validation | `config` | module today |
+| telemetry (logs / metrics / tracing) | `telemetry` | not yet |
+| JWT + JWKS verification (for verify-only services) | `jwt-verify` | module today; the cross-service auth contract |
+
+### Deployable services (plain domain word)
+
+| Service | Responsibility | Status |
+|---|---|---|
+| `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. Bins: `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker). | **exists** |
+| `username-indexer` | Finalized-chain username **indexer + public prefix search** (`GET /api/v1/usernames/search`). Read-only projection; can be down without affecting registration. | **exists** |
+| `notifications` | Thin `/api/v1/notify` relay. | future |
+| `turn` | JWT-gated `/api/v1/turn/issue` credential issuer (coturn relay = SRE infra). | future |
+| `invites` | `/api/v1/invitation-ticket/claim` — invite tickets + funding. No game/personhood backend. | future |
+| gateway | Public-URL path routing via **Caddy** (reverse proxy): `/api/v1/usernames/search` → `username-indexer` (:8081), everything else → `identity-api` (:8080). See `docs/deploy.md`. | infra (Caddy) |
+
+## How the workspace grows (lazy extraction)
+
+The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
+
+- **Today there are 3 crates:** `chain-types`, `identity-service`, `username-indexer`.
+- **Services** become crates **when you build them** — `notifications`, `turn`, `invites` get a
+  folder the day work starts, not before.
+- **Shared libs are extracted lazily — only when a *second* service needs the code.** Until then
+  the logic lives as **modules inside** the owning service (today: `identity-service/src/{config,db,chain,jwt}.rs`).
+  Don't create a shared crate speculatively.
+- **When you do extract, prefer a *few focused* crates, not extremes:**
+  - ❌ 6 tiny crates scaffolded up front (premature boundaries, churn).
+  - ❌ one `common`/`shared` grab-bag (every service recompiles + pulls everything).
+  - ✅ a handful (realistically **2–4** over time) that each do one clear thing. Likely order:
+    `chain-types` (already shared) → `jwt-verify` (first, it's the cross-service auth contract) →
+    optionally a small `platform` grouping of `config`+`telemetry`(+`postgres`) **only if** they
+    always travel together.
+
+## Classification quick-reference
+
+- **attestation** → inside `identity-service` (NOT a service, NOT a shared lib).
+- **availability** → `identity-service` (current direct-chain read).
+- **username write** → `identity-service`.
+- **username read/search** → `username-indexer` — true carve-out.
+- **free-reg eligibility/queue** → `identity-service` product logic.
+- **chain-writer** → worker (`identity-chain-writer`) *inside* the `identity-service` boundary.
+- **notifications / turn / invites** → independent thin services (future).
+- **gateway** → Caddy path routing (infra).
+
+### Guardrails — do NOT create these as separate crates/services
+
+`attestation`, `availability`, `eligibility`, `queue`, `payment`, `writer` all live **inside**
+`identity-service`. Splitting any out contradicts the design (single identity failure/secret boundary).
+
+## Current → target names
+
+| On disk today | Target | Action |
+|---|---|---|
+| `chain-types` | `chain-types` | unchanged |
+| `identity-service` (+ `identity-api`, `identity-chain-writer`) | unchanged | already correct |
+| `username-read` → `username-indexer` | done | renamed |
+| *(future)* notifications / turn / invites | `notifications` / `turn` / `invites` | name on creation |
+| *(future)* shared libs | `chain-client` / `postgres` / `config` / `telemetry` / `jwt-verify` | extract lazily, per above |
+| gateway | Caddy | path routing in `deploy.md`; `/usernames/search` already routed to `username-indexer` |
+
+## Open decisions (need the user)
+
+1. **Queue worker topology** — keep the queue-advancer as a separate daemon in V1 or consolidate
+   with the writer later. Does not change ownership.
+2. **Database topology** — separate instances vs databases vs schemas. ("No shared tables" already decided.)
+3. **Migration/cutover** — migrate V1 data or start fresh, then route-by-route cutover + V1 shutdown.
+
+## Follow-up
+
+- (done) `AGENTS.md` now lists all three crates including `username-indexer`.
+
+## Implementation notes (data flow & invariants)
+
+Operational invariants an agent must respect when touching the code.
+
+- **Registration is an outbox.** `POST /api/v1/usernames` inserts a `RESERVED` row in
+  `username_reservations` and returns `202`; `identity-chain-writer` claims rows and submits the
+  People Chain calls (`PeopleLite.attest` / `Resources.register_lite_person`), advancing
+  `RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`. The DB row is source of truth;
+  chain is reconciled to it. No service reads another service's tables.
+- **`identity-chain-writer` is single-instance by design** — one signer = one nonce lane. The
+  `writer_lease` table is a best-effort deploy-overlap guard only; the chain nonce + outbox
+  reconciliation is the real serializer. Never run two writers / never scale it.
+- **Signing:** the writer signs as a least-privilege `Proxy` of a cold attester primary when
+  `CHAIN_WRITER_PROXY_FOR` is set, else directly as its SURI.
+- **`chain-types` is the only place chain types live.** Static codegen from vendored metadata at
+  `crates/chain-types/metadata/people.scale`; online transport + signing live in
+  `identity-service::chain`, never in `chain-types`. Regenerate with the `subxt metadata …` command
+  at the top of `crates/chain-types/src/lib.rs`.
+- **HTTP** (`identity-service::http`): router in `http.rs` wrapped in a tower-http stack
+  (request-id → trace → 30s timeout) with graceful shutdown. Health at `/livez`, `/readyz` (gates on
+  a live Postgres `SELECT 1`), `/healthcheck`; JWKS at `/.well-known/jwks.json`. `AppState` =
+  Postgres pool + `ChainClient` + `Jwt` + `Config`. `username-indexer` uses the same tower-http
+  stack, but its `/readyz` also reports index freshness and it has no JWT/JWKS.
+- **`username-indexer` serializes projection writes on one Postgres advisory lock.** Bootstrap and
+  the incremental sync loop share one lock id; a full snapshot bootstrap runs **only when the
+  `sync_state` checkpoint is empty**, and each sync pass takes the lock with `pg_try_advisory_lock`
+  (skips the pass if another instance holds it). So the service is safe as N replicas on one shared
+  Postgres, and restarts resume incrementally from the checkpoint (no full re-scan).
+
+## External references
+
+- **Canonical username-registration spec** (ground-truth for the `/usernames` write path + future
+  eligibility): Alberto's "New JWT / Integrity / PoUD / Username Claim Logic" —
+  https://docs.google.com/document/d/1YQy0how-ItgThH5VfC1SR0yR6j_Xh9jLTOn35Oo9ubc — covers Android
+  TEE attestation (`POST /auth/android/attestation`), PoUD (Android `{androidId, widevineId}` / iOS
+  DeviceCheck), the INSTANT / PAYMENT_REQUIRED / QUEUED decision flow, the balance-priority queue
+  (G1<10 … G4≥1000), QR-voucher bypass, and `/usernames/payment-status` + `/registration/queue`.
+  Digest it fully before implementing the attestation/eligibility plan.

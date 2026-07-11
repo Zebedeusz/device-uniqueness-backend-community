@@ -2,17 +2,18 @@
 
 Rust backend that proves a device and registers a username on Polkadot's People Chain.
 
-Two binaries, one Postgres:
+Three binaries with service-owned Postgres databases:
 
 - **`identity-api`** — HTTP API: auth handshake (challenge → attestation → JWT), `POST /api/v1/usernames`, JWKS, health.
 - **`identity-chain-writer`** — single-instance worker that drains the reservation outbox onto the chain.
+- **`username-indexer`** — finalized-chain username projection and public prefix search.
 
 Design and scope: [docs/design-doc.md](docs/design-doc.md)
 
 ## Run locally
 
 ```bash
-docker compose up          # Postgres + api + writer on :8080
+docker compose up          # identity API :8080, username search :8081
 ```
 
 Or natively: `just run` (api) / `just run-writer`, with env from `.env.example`.

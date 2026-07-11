@@ -1,0 +1,46 @@
+[package]
+name = "username-indexer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "username-indexer"
+path = "src/bin/username_indexer.rs"
+
+[dependencies]
+chain-types.workspace = true
+subxt.workspace = true
+subxt-rpcs.workspace = true
+
+tokio.workspace = true
+axum.workspace = true
+tower-http = { version = "0.6", features = ["trace", "timeout", "request-id"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "time",
+] }
+base64 = "0.22"
+blake2 = "0.10"
+bs58 = "0.5"
+time = { version = "0.3", features = ["serde"] }
+
+[lints]
+workspace = true

@@ -58,7 +58,7 @@
   - [x] Public `/usernames/search` placeholder with a valid empty response until the independent read service lands.
 - **✅ Demo**: live Paseo Next v2 checks return `AVAILABLE`, `EXHAUSTED`, or `INVALID` with the shipping response shape.
 - **Risks / failure modes**:
-  - Prefix search remains empty by design; see `docs/plans/active/username-read.md`.
+  - Prefix search remains empty by design; see `docs/plans/active/username-indexer.md`.
 
 ## Phase 3: Durable username registration ✅
 - **Goal**: accept a signed registration and finalize it on People Chain.

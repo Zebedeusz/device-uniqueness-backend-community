@@ -1,6 +1,6 @@
 name: identity-backend-v2
 
-# Local/dev topology: Postgres + the two service binaries built from one image.
+# Local/dev topology: Postgres + the identity binaries, plus the username-indexer
 # The People Chain RPC is external (a public Paseo endpoint by default), so
 # `docker compose up` needs outbound internet to reach it.
 #
@@ -90,5 +90,56 @@ services:
     deploy:
       replicas: 1
 
+  # username-indexer owns its persistence independently of the identity DB, so its
+  # projection can be rebuilt or wiped without touching auth/registration state.
+  username-indexer-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: username_indexer
+      POSTGRES_PASSWORD: username_indexer
+      POSTGRES_DB: username_indexer
+    ports:
+      - "5433:5432"
+    volumes:
+      - username_indexer_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U username_indexer -d username_indexer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Independent public search service. Bootstraps a finalized username projection
+  # from People Chain on boot, then serves rate-limited `GET /api/v1/usernames/search`.
+  # Reuses the image built by identity-api. Runs on host port 8081.
+  username-indexer:
+    build: .
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["username-indexer"]
+    depends_on:
+      username-indexer-postgres:
+        condition: service_healthy
+    # Optional: full var set from a local .env (see .env.example). Values in
+    # `environment:` below override it (notably DATABASE_URL -> internal host).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://username_indexer:username_indexer@username-indexer-postgres:5432/username_indexer
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      # Covers migrations + the finalized bootstrap scan + People Chain connect.
+      start_period: 120s
+
 volumes:
   pgdata:
+  username_indexer_pgdata:

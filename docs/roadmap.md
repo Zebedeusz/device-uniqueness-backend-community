@@ -16,7 +16,7 @@ This file is the small index of work required to retire the legacy backend. It i
 
 ## Active independent slices
 
-- Username read/search indexer: `docs/plans/active/username-read.md`.
+- Username read/search indexer: `docs/plans/active/username-indexer.md`.
 - Notification relay: `docs/plans/active/notify-relay.md`.
 
 These two slices can be assigned and implemented in parallel.
