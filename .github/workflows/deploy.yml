@@ -6,6 +6,7 @@ on:
   pull_request:
 
 jobs:
+  # Always runs on every push and PR — cheap validation, no path gating.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -18,8 +19,25 @@ jobs:
       - name: tests
         run: cargo test --workspace
 
+  # Detects whether anything deployable changed. Markdown-only pushes (docs,
+  # plans, README) are not deployable, so build+deploy below are skipped for them.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      deployable: ${{ steps.filter.outputs.deployable }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            deployable:
+              - '**'
+              - '!**/*.md'
+
   build:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: changes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.deployable == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,6 +60,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # needs build, so a docs-only push (build skipped) skips deploy too, while a
+  # real deploy still waits for `check` to pass first.
   deploy:
     needs: [check, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
