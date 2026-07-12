@@ -72,17 +72,34 @@
 - **Risks / failure modes**:
   - Catch-up regression would reintroduce gaps → guard with a contract test / manual verify.
 
+## Phase 3: Adaptive catch-up (replay vs snapshot) + rebuild
+- **Goal**: bound worst-case catch-up and survive a pruned RPC by snapshotting current state instead of replaying a huge block range.
+- **Scope checklist**:
+  - [ ] Each pass, compute `lag = head - checkpoint`.
+  - [ ] `lag <= CATCHUP_REPLAY_MAX_BLOCKS` → replay incrementally (today's path — cheap, precise).
+  - [ ] `lag > CATCHUP_REPLAY_MAX_BLOCKS` → snapshot fast-forward: reuse `bootstrap`'s merge (upsert-by-`account_id` + reconcile + set the checkpoint to the snapshot's finalized block), then resume incremental. No drop, no empty window.
+  - [ ] Fall back to the snapshot path when a replay fails with "state unavailable" (pruned node) errors on an old block.
+  - [ ] Add a manual `rebuild` startup mode / command that forces the snapshot fast-forward against the current finalized head.
+  - [ ] Log which path ran (replay vs snapshot) and why (lag / pruned-state error / manual).
+- **✅ Demo**: stop the indexer, let the chain advance past the threshold, restart; confirm it snapshot-fast-forwards (one full scan, checkpoint jumps to head) instead of replaying, search stays correct, and incremental resumes.
+- **Risks / failure modes**:
+  - Threshold too low → needless full scans; too high → slow replays. Tune from observed catch-up cost.
+  - The snapshot path re-reads all rows (bounded, but the "wasteful" full scan) — acceptable because it only runs when far behind.
+
 # Contracts (guardrails)
 - Only finalized state is indexed — never non-finalized.
 - Never miss a finalized block: the checkpoint catch-up must cover any stream gap.
 - The single-writer advisory lock is preserved; N replicas stay safe.
 - Search path, response fields, and cursor shape are unchanged.
 - Restart still resumes from the checkpoint — no full re-scan.
+- Catch-up never drops the projection or serves an empty window — the snapshot path merges (upsert-by-`account_id`, prune vanished), never truncates.
 - The subscription is optional: if it fails, polling still makes progress (no hard dependency).
 
 # Key decisions (decide early)
 - Subscription primitive: subxt `client.stream_blocks()` (finalized stream, `online_client.rs:249-262`); each item triggers `index_finalized_range` against the current head.
 - Keep polling **always on** as a safety net (decided) vs subscription-only (rejected — reconnect gaps + silent stalls).
+- Catch-up strategy: replay incrementally under `CATCHUP_REPLAY_MAX_BLOCKS`; snapshot fast-forward (merge) above it or on pruned-state errors. Threshold is a block count (simple proxy for cost); tune from measurements.
+- RPC node type: replaying old blocks needs their state — an archive node avoids pruned-state failures; the snapshot path removes that dependency for large gaps.
 - Default the subscription **on with fallback**, or off until proven on staging? (decide before rollout).
 - After the stream drives latency, likely raise `SYNC_INTERVAL_SECS` (e.g. to 60s) so the timer is purely a backstop.
 
