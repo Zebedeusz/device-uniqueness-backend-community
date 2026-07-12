@@ -19,8 +19,9 @@ jobs:
       - name: tests
         run: cargo test --workspace
 
-  # Detects whether anything deployable changed. Markdown-only pushes (docs,
-  # plans, README) are not deployable, so build+deploy below are skipped for them.
+  # Marks a push deployable only when a build/deploy-affecting path changed (an
+  # allow-list). Markdown-only pushes (docs, plans, README) match nothing, so
+  # build+deploy below are skipped for them.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -32,8 +33,18 @@ jobs:
         with:
           filters: |
             deployable:
-              - '**'
-              - '!**/*.md'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'docker-compose.yml'
+              - '.env.example'
+              - 'justfile'
+              - 'rust-toolchain.toml'
+              - 'deny.toml'
+              - '.github/workflows/**'
+              - 'docs/api-reference/**'
 
   build:
     needs: changes
