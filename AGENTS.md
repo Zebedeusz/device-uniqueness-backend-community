@@ -66,5 +66,6 @@ Non-obvious: `AUTH_ENABLED=false` is the current **M0 mode** — platform attest
 - **Don't scale `identity-chain-writer`** past one instance (nonce lane).
 - **Don't add `.sqlx` / `query!` compile-time SQL** — runtime-checked by design.
 - **Run `just check` before declaring done** — the same three-check gate CI runs on push/PR. `cargo-deny` is separate (`just deny`).
+- **Markdown-only pushes skip build/deploy** — docs/plans/README changes run `check` but don't rebuild the image or restart prod (CI uses a deployable-path allow-list).
 - **Don't push or deploy without explicit consent.** Full deploy steps live in `docs/deploy.md`.
 - **`identity-api` blocks on the People Chain RPC at startup** — no reachable RPC, no boot.
