@@ -1,8 +1,8 @@
 # Identity Backend V2 — Architecture & Naming Alignment
 
-> Alignment reference for humans and sub-agents. **Source of truth is `docs/design-doc.md`;**
-> this file distills its boundaries + fixes the naming convention so everyone stays consistent.
-> If this file and `design-doc.md` ever disagree, `design-doc.md` wins — fix this file.
+> Current architecture, scope, service boundaries, naming, and data-flow invariants for humans and
+> agents. Code and tests remain the source of truth; update this file in the same change whenever
+> implementation changes make it inaccurate.
 
 ## Vision
 
@@ -152,7 +152,7 @@ Operational invariants an agent must respect when touching the code.
 ## External references
 
 - **Canonical username-registration spec** (ground-truth for the `/usernames` write path + future
-  eligibility): Alberto's "New JWT / Integrity / PoUD / Username Claim Logic" —
+  eligibility): Mike's "New JWT / Integrity / PoUD / Username Claim Logic" —
   https://docs.google.com/document/d/1YQy0how-ItgThH5VfC1SR0yR6j_Xh9jLTOn35Oo9ubc — covers Android
   TEE attestation (`POST /auth/android/attestation`), PoUD (Android `{androidId, widevineId}` / iOS
   DeviceCheck), the INSTANT / PAYMENT_REQUIRED / QUEUED decision flow, the balance-priority queue

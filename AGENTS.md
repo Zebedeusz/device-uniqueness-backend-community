@@ -11,17 +11,17 @@ Identity Backend V2 — greenfield **Rust** rewrite of the Polkadot identity bac
 contracts) built as isolated services, on track to **retire the legacy TypeScript backend**. Context
 lives in docs, not here:
 
-- **Scope, rationale, carve-outs** → `docs/design-doc.md` (a living design doc — expect it to change).
-- **Architecture, service boundaries, naming, data-flow invariants** → `docs/architecture.md`
+- **Current architecture, scope, service boundaries, naming, and data-flow invariants** → `docs/architecture.md`
 - **Delivery index** → `docs/roadmap.md`; plans under `docs/plans/active/` and `docs/plans/done/`
+- **Public API reference** → `docs/api-reference/`
 - **Deploy / operations** → `docs/deploy.md`, `docs/runbook.md`
 
 ## Keeping docs current
 
 The **code is the source of truth**; the docs must be kept in sync with it. When a change alters behavior, architecture, service boundaries, naming, or invariants, update the matching doc in the **same change**, not later:
 
-- Architecture, service boundaries, naming, or data-flow invariants → `docs/architecture.md`.
-- Scope / carve-outs → `docs/design-doc.md`; delivery status → `docs/roadmap.md` + the plan under `docs/plans/`.
+- Architecture, scope, service boundaries, naming, or data-flow invariants → `docs/architecture.md`.
+- Delivery status → `docs/roadmap.md` + the plan under `docs/plans/`.
 - Commands, conventions, config, workspace layout, or gotchas → this file.
 
 If a change makes a doc wrong, fix the doc (or flag the drift) in the same change instead of leaving it stale.
