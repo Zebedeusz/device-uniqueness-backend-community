@@ -13,13 +13,11 @@ This file is the small index of work required to retire the legacy backend. It i
 ## Done
 
 - Identity Service MVP: `docs/plans/done/identity-service-mvp.md`.
+- Username read/search indexer: `docs/plans/done/username-indexer.md`.
 
 ## Active independent slices
 
-- Username read/search indexer: `docs/plans/active/username-indexer.md`.
 - Notification relay: `docs/plans/active/notify-relay.md`.
-
-These two slices can be assigned and implemented in parallel.
 
 ## Required later slices
 
