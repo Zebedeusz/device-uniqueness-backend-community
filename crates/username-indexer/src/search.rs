@@ -91,7 +91,7 @@ pub async fn search(pool: &PgPool, query: SearchQuery) -> Result<SearchResponse,
     let rows = sqlx::query(
         "SELECT account_id, account_id_ss58, display_username,
                 lower(display_username) COLLATE \"C\" AS display_key,
-                lite_base, lite_digits::text AS lite_digits,
+                lite_base, lite_digits::text AS lite_digits_text,
                 created_at, updated_at
          FROM assigned_usernames
          WHERE lower(display_username) COLLATE \"C\" LIKE $1 ESCAPE '\\'
@@ -204,7 +204,7 @@ fn row_from_db(row: sqlx::postgres::PgRow) -> Result<SearchRow, SearchError> {
     })?;
     let display_key = row.try_get("display_key")?;
     let lite_base = row.try_get("lite_base")?;
-    let lite_digits = row.try_get("lite_digits")?;
+    let lite_digits = row.try_get("lite_digits_text")?;
 
     Ok(SearchRow {
         item: SearchUsername {
