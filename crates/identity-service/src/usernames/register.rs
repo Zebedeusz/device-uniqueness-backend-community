@@ -1,7 +1,7 @@
 //! `POST /api/v1/usernames` — the username write path (registration intake).
 //!
-//! JWT-gated + rate-limited. Validates the request, enforces `who` == JWT
-//! subject (the beneficiary must be the authenticated account), selects the
+//! JWT-gated + rate-limited. Validates the request, verifies the
+//! `candidateSignature` proves control of the beneficiary account, selects the
 //! discriminator, and persists a `RESERVED` row in the reservation outbox before
 //! returning `202`. The `identity-chain-writer` binary drains the outbox onto People
 //! Chain; the app confirms the result on-chain (`UsernameOwnerOf`), so there is
@@ -84,15 +84,9 @@ pub async fn register(
         ));
     }
 
-    // Hard contract: the beneficiary must be the authenticated account.
+    // The beneficiary (candidate) account that will own the username.
     let candidate = subxt::utils::AccountId32::from_str(&req.candidate_account_id)
         .map_err(|_| AppError::bad_request("candidateAccountId is not a valid SS58 address"))?;
-    let candidate_hex = format!("0x{}", hex::encode(candidate.0));
-    if candidate_hex != account.account_id {
-        return Err(AppError::forbidden(
-            "candidateAccountId must equal the authenticated account",
-        ));
-    }
 
     // Relayed verbatim into the on-chain call; validate shape/length here.
     let candidate_signature = decode_hex("candidateSignature", &req.candidate_signature, Some(64))?;
@@ -104,6 +98,18 @@ pub async fn register(
         Some(64),
     )?;
     let identifier_key = decode_hex("identifierKey", &req.identifier_key, Some(65))?;
+
+    // Authorization: prove the caller controls the beneficiary account. The
+    // candidate key must have signed `pop:people-lite:register using ||
+    // candidatePubkey || ringVrfKey` — the same message the People Chain
+    // reconstructs for `PeopleLite.attest`. The JWT authenticates only the
+    // device/session (a separate per-install auth key), so the beneficiary is
+    // authorized by this signature, not by the JWT subject.
+    if !verify_candidate_signature(&candidate.0, &candidate_signature, &ring_vrf_key) {
+        return Err(AppError::forbidden(
+            "candidateSignature does not prove control of candidateAccountId",
+        ));
+    }
 
     let (dotns_signature, dotns_signed_at, reserved_username) = match req.dotns {
         Some(d) => (
@@ -176,6 +182,34 @@ fn decode_hex(name: &str, value: &str, expect_len: Option<usize>) -> AppResult<V
         }
     }
     Ok(bytes)
+}
+
+/// The message prefix the People Chain reconstructs for `PeopleLite.attest`;
+/// `candidateSignature` (and `proofOfOwnership`) cover
+/// `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey`.
+const POP_REGISTER_PREFIX: &[u8] = b"pop:people-lite:register using";
+
+/// Verify the caller controls `candidate_pubkey`: the candidate's sr25519 key
+/// must have signed `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey`. Uses
+/// `subxt_signer` (schnorrkel with the Substrate signing context), symmetric
+/// with the shipping Polkadot wallets and the on-chain verifier.
+fn verify_candidate_signature(
+    candidate_pubkey: &[u8; 32],
+    candidate_signature: &[u8],
+    ring_vrf_key: &[u8],
+) -> bool {
+    let Ok(signature) = <[u8; 64]>::try_from(candidate_signature) else {
+        return false;
+    };
+    let mut message = Vec::with_capacity(POP_REGISTER_PREFIX.len() + 32 + ring_vrf_key.len());
+    message.extend_from_slice(POP_REGISTER_PREFIX);
+    message.extend_from_slice(candidate_pubkey);
+    message.extend_from_slice(ring_vrf_key);
+    subxt_signer::sr25519::verify(
+        &subxt_signer::sr25519::Signature(signature),
+        message,
+        &subxt_signer::sr25519::PublicKey(*candidate_pubkey),
+    )
 }
 
 /// Choose the discriminator: the preferred one if free, else a random free one.
@@ -323,6 +357,50 @@ mod tests {
         assert!(matches!(
             select_digit(&taken, None),
             Err(AppError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn candidate_signature_verifies_control_of_beneficiary() {
+        use std::str::FromStr as _;
+        use subxt_signer::sr25519::Keypair;
+        use subxt_signer::SecretUri;
+
+        let keypair = Keypair::from_uri(&SecretUri::from_str("//Alice").unwrap()).unwrap();
+        let candidate = keypair.public_key().0;
+        let ring_vrf_key = [7u8; 32];
+
+        let mut message = Vec::new();
+        message.extend_from_slice(POP_REGISTER_PREFIX);
+        message.extend_from_slice(&candidate);
+        message.extend_from_slice(&ring_vrf_key);
+        let signature = keypair.sign(&message).0;
+
+        // A valid signature by the candidate over the exact message passes.
+        assert!(verify_candidate_signature(
+            &candidate,
+            &signature,
+            &ring_vrf_key
+        ));
+        // Tampering with the ring key (bound into the message) fails.
+        assert!(!verify_candidate_signature(
+            &candidate, &signature, &[9u8; 32]
+        ));
+        // A different account cannot be the beneficiary of this signature.
+        let other = Keypair::from_uri(&SecretUri::from_str("//Bob").unwrap())
+            .unwrap()
+            .public_key()
+            .0;
+        assert!(!verify_candidate_signature(
+            &other,
+            &signature,
+            &ring_vrf_key
+        ));
+        // A malformed (wrong-length) signature is rejected, not panicked.
+        assert!(!verify_candidate_signature(
+            &candidate,
+            &[0u8; 10],
+            &ring_vrf_key
         ));
     }
 }

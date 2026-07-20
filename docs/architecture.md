@@ -129,6 +129,13 @@ Operational invariants an agent must respect when touching the code.
   People Chain calls (`PeopleLite.attest` / `Resources.register_lite_person`), advancing
   `RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`. The DB row is source of truth;
   chain is reconciled to it. No service reads another service's tables.
+- **Registration is authorized by `candidateSignature`, not the JWT subject.** `POST
+  /api/v1/usernames` verifies the beneficiary's sr25519 signature over `pop:people-lite:register
+  using || candidatePubkey || ringVrfKey` (the message the chain reconstructs for `PeopleLite.attest`;
+  Substrate signing context) before enqueuing. The JWT authenticates only the device/session — a
+  separate per-install auth wallet — so `candidateAccountId` is deliberately **not** required to
+  equal the JWT subject. Stored `account_id` (JWT subject) is the abuse-control/rate-limit key;
+  `candidate_account_id` is the on-chain beneficiary the writer submits for.
 - **`identity-chain-writer` is single-instance by design** — one signer = one nonce lane. The
   `writer_lease` table is a best-effort deploy-overlap guard only; the chain nonce + outbox
   reconciliation is the real serializer. Never run two writers / never scale it.
