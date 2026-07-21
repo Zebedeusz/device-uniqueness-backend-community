@@ -12,6 +12,7 @@ pub mod config;
 pub mod db;
 pub mod http;
 pub mod jwt;
+pub mod openapi;
 mod usernames;
 
 pub use chain::ChainClient;

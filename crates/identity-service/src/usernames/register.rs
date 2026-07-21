@@ -19,6 +19,7 @@ use axum::Json;
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom as _;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::chain::outbox::{self, InsertError, NewReservation};
 use crate::http::error::{AppError, AppResult};
@@ -28,50 +29,108 @@ use crate::http::state::AppState;
 use super::{available_digits, is_valid_base};
 
 /// The flat registration request, matching the shipping clients verbatim.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct RegisterRequest {
+    /// SS58 beneficiary account that will own the username.
     #[serde(rename = "candidateAccountId")]
+    #[schema(
+        rename = "candidateAccountId",
+        example = "SS58 account matching JWT subject"
+    )]
     candidate_account_id: String,
+    /// Base username (lowercase ASCII, >= 6 chars).
+    #[schema(example = "tallesx")]
     username: String,
+    /// Optional two-digit suffix, e.g. `"07"`; random-free if omitted.
     #[serde(rename = "preferredDigits")]
+    #[schema(rename = "preferredDigits", example = "07")]
     preferred_digits: Option<String>,
+    /// `0x`-hex 64-byte sr25519 signature proving control of the candidate.
     #[serde(rename = "candidateSignature")]
+    #[schema(rename = "candidateSignature", example = "0x...64 bytes...")]
     candidate_signature: String,
+    /// `0x`-hex ring VRF key.
     #[serde(rename = "ringVrfKey")]
+    #[schema(rename = "ringVrfKey", example = "0x...")]
     ring_vrf_key: String,
+    /// `0x`-hex 64-byte ownership proof.
     #[serde(rename = "proofOfOwnership")]
+    #[schema(rename = "proofOfOwnership", example = "0x...64 bytes...")]
     proof_of_ownership: String,
+    /// `0x`-hex 64-byte consumer registration signature.
     #[serde(rename = "consumerRegistrationSignature")]
+    #[schema(rename = "consumerRegistrationSignature", example = "0x...64 bytes...")]
     consumer_registration_signature: String,
+    /// `0x`-hex 65-byte identifier key.
     #[serde(rename = "identifierKey")]
+    #[schema(rename = "identifierKey", example = "0x...65 bytes...")]
     identifier_key: String,
+    /// Optional DotNS reservation block.
     dotns: Option<Dotns>,
 }
 
 /// Optional DotNS reservation, parking a base label for later full-person use.
-#[derive(Deserialize)]
-struct Dotns {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct Dotns {
+    /// `0x`-hex 64-byte signature.
+    #[schema(example = "0x...64 bytes...")]
     signature: String,
+    /// Unix timestamp the reservation was signed at.
     #[serde(rename = "signedAt")]
+    #[schema(rename = "signedAt", example = 1780000000i64)]
     signed_at: i64,
+    /// Optional reserved-name override.
     #[serde(rename = "reservedUsername")]
+    #[schema(rename = "reservedUsername", example = "optional-name")]
     reserved_username: Option<String>,
 }
 
 /// `202` body: the reserved full username and its parts.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct RegisterResponse {
+    /// Reserved base username.
+    #[schema(example = "tallesx")]
     base_username: String,
+    /// Selected two-digit discriminator.
+    #[schema(example = "07")]
     digits: String,
+    /// Full `base.NN` username.
+    #[schema(example = "tallesx.07")]
     username: String,
+    /// Present only when the DeviceCheck free-slot gate applies (Slice 6).
     #[serde(
         rename = "device_check_available",
         skip_serializing_if = "Option::is_none"
     )]
+    #[schema(rename = "device_check_available")]
     device_check_available: Option<bool>,
 }
 
 /// Reserve a lite username and enqueue it for on-chain registration.
+#[utoipa::path(
+    post,
+    path = "/api/v1/usernames",
+    tag = "Usernames",
+    security(("bearer_jwt" = [])),
+    request_body = RegisterRequest,
+    responses(
+        (status = 202, description = "Reservation accepted into the outbox for on-chain registration.",
+         body = RegisterResponse,
+         example = json!({ "base_username": "tallesx", "digits": "07", "username": "tallesx.07" })),
+        (status = 400, description = "Invalid username or malformed proof/hex field.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "WRONG_DATA", "message": "username must be at least 6 lowercase letters" })),
+        (status = 401, description = "Missing or invalid bearer token.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "UNAUTHORIZED", "message": "unauthorized" })),
+        (status = 403, description = "candidateSignature does not prove control of candidateAccountId.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "FORBIDDEN", "message": "candidateSignature does not prove control of candidateAccountId" })),
+        (status = 409, description = "Preferred digits or username already taken.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "CONFLICT", "message": "username is already taken" }))
+    )
+)]
 pub async fn register(
     State(state): State<AppState>,
     account: AuthAccount,

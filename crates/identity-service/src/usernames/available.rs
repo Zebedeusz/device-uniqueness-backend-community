@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use axum::extract::State;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::http::error::{AppError, AppResult};
 use crate::http::extract::AuthAccount;
@@ -21,26 +22,60 @@ use super::{available_digits, is_valid_base};
 /// Max base names per request (matches the reference backend).
 const MAX_USERNAMES: usize = 100;
 
-#[derive(Deserialize)]
+/// `{ usernames: [base, ...] }` — bases to validate and check on chain.
+#[derive(Deserialize, ToSchema)]
 pub struct AvailableRequest {
+    /// Candidate base usernames to validate and check (max 100).
+    #[schema(example = json!(["tallesx", "abc"]))]
     usernames: Vec<String>,
 }
 
-#[derive(Serialize)]
+/// `{ _tag: "v1", value: { base: {status, availableDigits?} } }`.
+#[derive(Serialize, ToSchema)]
 pub struct AvailableResponse {
+    /// Response schema tag; always `v1`.
     #[serde(rename = "_tag")]
+    #[schema(rename = "_tag", example = "v1")]
     tag: &'static str,
+    /// Per-base availability, keyed by the requested base username.
     value: BTreeMap<String, NameAvailability>,
 }
 
-#[derive(Serialize)]
-struct NameAvailability {
+/// Availability of a single base username.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct NameAvailability {
+    /// `AVAILABLE`, `EXHAUSTED` (all 100 taken), or `INVALID` (fails base rules).
+    #[schema(example = "AVAILABLE")]
     status: &'static str,
+    /// Free discriminators (`1..=99`); present only when `AVAILABLE`.
     #[serde(rename = "availableDigits", skip_serializing_if = "Option::is_none")]
+    #[schema(rename = "availableDigits", example = json!([1, 2, 3]))]
     available_digits: Option<Vec<u8>>,
 }
 
 /// Availability for each requested base (JWT-gated).
+#[utoipa::path(
+    post,
+    path = "/api/v1/usernames/available",
+    tag = "Usernames",
+    security(("bearer_jwt" = [])),
+    params(("version" = Option<String>, Query, description = "Response schema tag selector, e.g. v1.")),
+    request_body = AvailableRequest,
+    responses(
+        (status = 200, description = "Per-base availability read from People Chain UsernameOwnerOf.",
+         body = AvailableResponse,
+         example = json!({ "_tag": "v1", "value": {
+             "tallesx": { "status": "AVAILABLE", "availableDigits": [1, 2, 3] },
+             "abc": { "status": "INVALID" }
+         } })),
+        (status = 400, description = "More than 100 usernames per request.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "WRONG_DATA", "message": "at most 100 usernames per request" })),
+        (status = 401, description = "Missing or invalid bearer token.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "UNAUTHORIZED", "message": "unauthorized" }))
+    )
+)]
 pub async fn check(
     State(state): State<AppState>,
     account: AuthAccount,

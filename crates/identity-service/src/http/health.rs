@@ -11,6 +11,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
 use super::state::AppState;
 
@@ -22,27 +23,64 @@ pub fn router() -> Router<AppState> {
         .route("/readyz", get(readyz))
 }
 
-#[derive(Serialize)]
-struct Status {
+/// A liveness/health status body: `{ status, service }`.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct Status {
+    /// Coarse status word, e.g. `ok`, `alive`, `ready`.
     status: &'static str,
+    /// Service name emitting the status.
     service: &'static str,
 }
 
-async fn healthcheck() -> Json<Status> {
+/// Process health probe. No dependencies checked.
+#[utoipa::path(
+    get,
+    path = "/healthcheck",
+    tag = "Liveness & Readiness",
+    responses(
+        (status = 200, description = "Process is up. No dependencies checked.", body = Status,
+         example = json!({ "status": "ok", "service": "identity-service" }))
+    )
+)]
+pub(crate) async fn healthcheck() -> Json<Status> {
     Json(Status {
         status: "ok",
         service: "identity-service",
     })
 }
 
-async fn livez() -> Json<Status> {
+/// Kubernetes liveness probe — "should this pod be restarted".
+#[utoipa::path(
+    get,
+    path = "/livez",
+    tag = "Liveness & Readiness",
+    responses(
+        (status = 200, description = "Process is alive.", body = Status,
+         example = json!({ "status": "alive", "service": "identity-service" }))
+    )
+)]
+pub(crate) async fn livez() -> Json<Status> {
     Json(Status {
         status: "alive",
         service: "identity-service",
     })
 }
 
-async fn readyz(State(state): State<AppState>) -> Response {
+/// Kubernetes readiness probe — checks `db` and `chain` subsystems.
+#[utoipa::path(
+    get,
+    path = "/readyz",
+    tag = "Liveness & Readiness",
+    responses(
+        (status = 200, description = "Instance can take traffic; db and chain reachable.",
+         body = serde_json::Value,
+         example = json!({ "status": "ready", "service": "identity-service", "db": "up", "chain": "up" })),
+        (status = 503, description = "A required subsystem is unavailable.",
+         body = serde_json::Value,
+         example = json!({ "status": "unavailable", "service": "identity-service", "db": "down" }))
+    )
+)]
+pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     if let Err(err) = sqlx::query("SELECT 1").execute(&state.pool).await {
         tracing::warn!(error = ?err, "readiness check failed: database unavailable");
         return (

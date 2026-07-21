@@ -34,6 +34,12 @@ test-live:
 deny:
     cargo deny check
 
+# Regenerate the committed API reference (docs/api-reference/openapi.json + index.html)
+# from the `#[utoipa::path]` annotations. The `committed_artifacts_are_in_sync` test
+# in `just check` fails if these are stale, so run this after changing any route/DTO.
+openapi:
+    cargo run -p apidoc-gen
+
 # Run the identity-api service.
 run:
     cargo run -p identity-service --bin identity-api

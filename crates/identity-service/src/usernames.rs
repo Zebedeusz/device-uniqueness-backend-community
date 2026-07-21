@@ -5,8 +5,8 @@
 //! the shipping clients call it. Public prefix search is owned by the separate
 //! `username-indexer` service.
 
-mod available;
-mod register;
+pub(crate) mod available;
+pub(crate) mod register;
 
 use std::collections::BTreeSet;
 
@@ -14,6 +14,7 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::http::state::AppState;
 
@@ -43,12 +44,24 @@ pub fn router(state: AppState) -> Router<AppState> {
         ))
 }
 
-#[derive(Serialize)]
+/// `{ attester }` — the on-chain attester authority public key.
+#[derive(Serialize, ToSchema)]
 pub struct AttesterResponse {
+    /// `0x`-hex sr25519 public key the backend writes registrations as.
+    #[schema(example = "0xe4cd20d6d1e0e119d63a943afd2d7496fbbb0ac8e7cd99c3c5f16b63a68e7432")]
     attester: String,
 }
 
 /// `GET /api/v1/attester` — the attester authority public key (`0x`+hex, public).
+#[utoipa::path(
+    get,
+    path = "/api/v1/attester",
+    tag = "Discovery",
+    responses(
+        (status = 200, description = "The on-chain attester account the backend writes as.", body = AttesterResponse,
+         example = json!({ "attester": "0xe4cd20d6d1e0e119d63a943afd2d7496fbbb0ac8e7cd99c3c5f16b63a68e7432" }))
+    )
+)]
 pub async fn attester(State(state): State<AppState>) -> Json<AttesterResponse> {
     Json(AttesterResponse {
         attester: state.config.attester_public_key.clone(),

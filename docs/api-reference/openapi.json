@@ -1,0 +1,1078 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Identity Backend V2",
+    "description": "**Prove the device and register the username on People Chain.** API-compatible with the shipping iOS/Android clients.\n\n### Validation flow\n\nThe iOS smoke drives this sequence end-to-end; each step gates the next:\n\n1. `POST /api/v1/auth/challenges` — mint a single-use challenge\n2. `POST /api/v1/auth/app-attest/attestations` — iOS App Attest (`202`, no-op in M0)\n3. `POST /api/v1/auth/token` — sr25519 proof exchanged for a JWT\n4. `POST /api/v1/usernames/available` — JWT-gated People Chain read\n5. `POST /api/v1/usernames` — `202` outbox reservation\n\n> **Attestation is disabled for M0.** Apple/Google verification is intentionally a no-op; the sr25519 account proof and People Chain reads still run end-to-end.\n\nAll non-2xx responses share the `ErrorResponse` envelope: `{ error, message }`.",
+    "license": {
+      "name": "GPL-3.0-only",
+      "identifier": "GPL-3.0-only"
+    },
+    "version": "2"
+  },
+  "servers": [
+    {
+      "url": "https://identity.dotspark.app",
+      "description": "Test deployment"
+    }
+  ],
+  "paths": {
+    "/.well-known/jwks.json": {
+      "get": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Publish the Ed25519 public key so siblings can verify tokens.",
+        "operationId": "jwks",
+        "responses": {
+          "200": {
+            "description": "JWT verification keyset (Ed25519 / OKP).",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "keys": [
+                    {
+                      "kty": "OKP",
+                      "crv": "Ed25519",
+                      "use": "sig",
+                      "alg": "EdDSA",
+                      "kid": "...",
+                      "x": "..."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attester": {
+      "get": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "`GET /api/v1/attester` — the attester authority public key (`0x`+hex, public).",
+        "operationId": "attester",
+        "responses": {
+          "200": {
+            "description": "The on-chain attester account the backend writes as.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttesterResponse"
+                },
+                "example": {
+                  "attester": "0xe4cd20d6d1e0e119d63a943afd2d7496fbbb0ac8e7cd99c3c5f16b63a68e7432"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/app-attest/attestations": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Accept the attestation payload and acknowledge with `202` (no-op for now).",
+        "operationId": "register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppAttestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted. No-op in M0 — payload is not verified against Apple/Google.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/challenges": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Issue a fresh single-use challenge (`201`).",
+        "operationId": "issue",
+        "responses": {
+          "201": {
+            "description": "A fresh single-use challenge. No body required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeResponse"
+                },
+                "example": {
+                  "challenge": "base64-32-byte-challenge"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/token": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Verify challenge + client proof and issue an access + refresh token pair.",
+        "operationId": "issue",
+        "parameters": [
+          {
+            "name": "Auth-ClientId",
+            "in": "header",
+            "description": "Base64 of the 32-byte sr25519 public key.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Auth-ClientProof",
+            "in": "header",
+            "description": "Base64 of the 64-byte sr25519 signature over the raw body.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Auth-Challenge",
+            "in": "header",
+            "description": "Challenge previously minted via /auth/challenges.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Auth-iOS-Package",
+            "in": "header",
+            "description": "Optional platform signal, e.g. io.pcf.polkadotapp.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Raw body covered by the proof; may be empty {}.",
+          "content": {
+            "application/json": {
+              "schema": {},
+              "example": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Verified. Access JWT + opaque refresh token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                },
+                "example": {
+                  "token": "jwt",
+                  "refreshToken": "opaque-base64-token"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bad or spent challenge, or invalid client proof.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "UNAUTHORIZED",
+                  "message": "unauthorized"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/token/refresh": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Rotate a refresh token, returning a fresh access + refresh pair.",
+        "operationId": "rotate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Rotated. New access JWT + new opaque refresh token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                },
+                "example": {
+                  "token": "jwt",
+                  "refreshToken": "new-opaque-base64-token"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unknown, expired, or already-spent refresh token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "UNAUTHORIZED",
+                  "message": "unauthorized"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usernames": {
+      "post": {
+        "tags": [
+          "Usernames"
+        ],
+        "summary": "Reserve a lite username and enqueue it for on-chain registration.",
+        "operationId": "register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Reservation accepted into the outbox for on-chain registration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResponse"
+                },
+                "example": {
+                  "base_username": "tallesx",
+                  "digits": "07",
+                  "username": "tallesx.07"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid username or malformed proof/hex field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "WRONG_DATA",
+                  "message": "username must be at least 6 lowercase letters"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "UNAUTHORIZED",
+                  "message": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "candidateSignature does not prove control of candidateAccountId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "FORBIDDEN",
+                  "message": "candidateSignature does not prove control of candidateAccountId"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Preferred digits or username already taken.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "CONFLICT",
+                  "message": "username is already taken"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/api/v1/usernames/available": {
+      "post": {
+        "tags": [
+          "Usernames"
+        ],
+        "summary": "Availability for each requested base (JWT-gated).",
+        "operationId": "check",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Response schema tag selector, e.g. v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AvailableRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Per-base availability read from People Chain UsernameOwnerOf.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailableResponse"
+                },
+                "example": {
+                  "_tag": "v1",
+                  "value": {
+                    "tallesx": {
+                      "status": "AVAILABLE",
+                      "availableDigits": [
+                        1,
+                        2,
+                        3
+                      ]
+                    },
+                    "abc": {
+                      "status": "INVALID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "More than 100 usernames per request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "WRONG_DATA",
+                  "message": "at most 100 usernames per request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "UNAUTHORIZED",
+                  "message": "unauthorized"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/healthcheck": {
+      "get": {
+        "tags": [
+          "Liveness & Readiness"
+        ],
+        "summary": "Process health probe. No dependencies checked.",
+        "operationId": "healthcheck",
+        "responses": {
+          "200": {
+            "description": "Process is up. No dependencies checked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                },
+                "example": {
+                  "status": "ok",
+                  "service": "identity-service"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/livez": {
+      "get": {
+        "tags": [
+          "Liveness & Readiness"
+        ],
+        "summary": "Kubernetes liveness probe — \"should this pod be restarted\".",
+        "operationId": "livez",
+        "responses": {
+          "200": {
+            "description": "Process is alive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                },
+                "example": {
+                  "status": "alive",
+                  "service": "identity-service"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "Liveness & Readiness"
+        ],
+        "summary": "Kubernetes readiness probe — checks `db` and `chain` subsystems.",
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "description": "Instance can take traffic; db and chain reachable.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "status": "ready",
+                  "service": "identity-service",
+                  "db": "up",
+                  "chain": "up"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A required subsystem is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "status": "unavailable",
+                  "service": "identity-service",
+                  "db": "down"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usernames/search": {
+      "get": {
+        "tags": [
+          "Usernames"
+        ],
+        "summary": "Public prefix search over the finalized username projection.",
+        "operationId": "search_usernames",
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "description": "Case-insensitive username prefix, from 1 through 64 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "ali"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Optional compatibility filter; only `ASSIGNED` is accepted.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "ASSIGNED"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Requested page size, defaulting to 100 and capped at 1,000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "example": 100
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation cursor from an earlier response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeOnchainData",
+            "in": "query",
+            "description": "Compatibility flag; indexed rows have no truthful event position.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching assigned usernames in continuation order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                },
+                "example": {
+                  "usernames": [],
+                  "nextCursor": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid prefix, status, limit, or cursor.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "WRONG_DATA",
+                  "message": "prefix must contain between 1 and 64 characters"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Public search rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "RATE_LIMITED",
+                  "message": "rate limited"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AppAttestRequest": {
+        "type": "object",
+        "description": "iOS Apple App Attest key-registration payload. Shape-preserving; not verified\nwhile `AUTH_ENABLED` is false.",
+        "required": [
+          "keyId",
+          "challenge",
+          "attestation"
+        ],
+        "properties": {
+          "keyId": {
+            "type": "string",
+            "description": "Client key identifier from App Attest enrollment.",
+            "example": "base64-or-client-key-id"
+          },
+          "challenge": {
+            "type": "string",
+            "description": "Challenge previously returned from `/auth/challenges`.",
+            "example": "challenge-from-/auth/challenges"
+          },
+          "attestation": {
+            "type": "string",
+            "description": "Base64 attestation object from the platform.",
+            "example": "base64-attestation-object"
+          }
+        }
+      },
+      "AttesterResponse": {
+        "type": "object",
+        "description": "`{ attester }` — the on-chain attester authority public key.",
+        "required": [
+          "attester"
+        ],
+        "properties": {
+          "attester": {
+            "type": "string",
+            "description": "`0x`-hex sr25519 public key the backend writes registrations as.",
+            "example": "0xe4cd20d6d1e0e119d63a943afd2d7496fbbb0ac8e7cd99c3c5f16b63a68e7432"
+          }
+        }
+      },
+      "AvailableRequest": {
+        "type": "object",
+        "description": "`{ usernames: [base, ...] }` — bases to validate and check on chain.",
+        "required": [
+          "usernames"
+        ],
+        "properties": {
+          "usernames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Candidate base usernames to validate and check (max 100).",
+            "example": [
+              "tallesx",
+              "abc"
+            ]
+          }
+        }
+      },
+      "AvailableResponse": {
+        "type": "object",
+        "description": "`{ _tag: \"v1\", value: { base: {status, availableDigits?} } }`.",
+        "required": [
+          "_tag",
+          "value"
+        ],
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "description": "Response schema tag; always `v1`.",
+            "example": "v1"
+          },
+          "value": {
+            "type": "object",
+            "description": "Per-base availability, keyed by the requested base username.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NameAvailability"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ChallengeResponse": {
+        "type": "object",
+        "description": "`201` body: a fresh single-use challenge for the sr25519 proof flow.",
+        "required": [
+          "challenge"
+        ],
+        "properties": {
+          "challenge": {
+            "type": "string",
+            "description": "Opaque base64 32-byte challenge; echoed back in the `Auth-Challenge` header.",
+            "example": "base64-32-byte-challenge"
+          }
+        }
+      },
+      "Dotns": {
+        "type": "object",
+        "description": "Optional DotNS reservation, parking a base label for later full-person use.",
+        "required": [
+          "signature",
+          "signedAt"
+        ],
+        "properties": {
+          "signature": {
+            "type": "string",
+            "description": "`0x`-hex 64-byte signature.",
+            "example": "0x...64 bytes..."
+          },
+          "signedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix timestamp the reservation was signed at.",
+            "example": 1780000000
+          },
+          "reservedUsername": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional reserved-name override.",
+            "example": "optional-name"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "The shared error envelope returned by every non-2xx response.\n\n`error` is a stable machine code (see [`AppError`]); `message` is a\nhuman-readable detail that may change. This type exists so the OpenAPI\ndocument can reference a single error schema across all endpoints.",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Stable machine code, e.g. `WRONG_DATA`, `UNAUTHORIZED`, `CONFLICT`.",
+            "example": "WRONG_DATA"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable detail; safe to log, not intended for programmatic use.",
+            "example": "human-readable detail"
+          }
+        }
+      },
+      "NameAvailability": {
+        "type": "object",
+        "description": "Availability of a single base username.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`AVAILABLE`, `EXHAUSTED` (all 100 taken), or `INVALID` (fails base rules).",
+            "example": "AVAILABLE"
+          },
+          "availableDigits": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Free discriminators (`1..=99`); present only when `AVAILABLE`.",
+            "example": [
+              1,
+              2,
+              3
+            ]
+          }
+        }
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "description": "`{ refreshToken }` — present a prior opaque refresh token to rotate it.",
+        "required": [
+          "refreshToken"
+        ],
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "description": "Opaque refresh token issued by `/auth/token` or a prior refresh.",
+            "example": "opaque-base64-token"
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "description": "The flat registration request, matching the shipping clients verbatim.",
+        "required": [
+          "candidateAccountId",
+          "username",
+          "candidateSignature",
+          "ringVrfKey",
+          "proofOfOwnership",
+          "consumerRegistrationSignature",
+          "identifierKey"
+        ],
+        "properties": {
+          "candidateAccountId": {
+            "type": "string",
+            "description": "SS58 beneficiary account that will own the username.",
+            "example": "SS58 account matching JWT subject"
+          },
+          "username": {
+            "type": "string",
+            "description": "Base username (lowercase ASCII, >= 6 chars).",
+            "example": "tallesx"
+          },
+          "preferredDigits": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional two-digit suffix, e.g. `\"07\"`; random-free if omitted.",
+            "example": "07"
+          },
+          "candidateSignature": {
+            "type": "string",
+            "description": "`0x`-hex 64-byte sr25519 signature proving control of the candidate.",
+            "example": "0x...64 bytes..."
+          },
+          "ringVrfKey": {
+            "type": "string",
+            "description": "`0x`-hex ring VRF key.",
+            "example": "0x..."
+          },
+          "proofOfOwnership": {
+            "type": "string",
+            "description": "`0x`-hex 64-byte ownership proof.",
+            "example": "0x...64 bytes..."
+          },
+          "consumerRegistrationSignature": {
+            "type": "string",
+            "description": "`0x`-hex 64-byte consumer registration signature.",
+            "example": "0x...64 bytes..."
+          },
+          "identifierKey": {
+            "type": "string",
+            "description": "`0x`-hex 65-byte identifier key.",
+            "example": "0x...65 bytes..."
+          },
+          "dotns": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Dotns",
+                "description": "Optional DotNS reservation block."
+              }
+            ]
+          }
+        }
+      },
+      "RegisterResponse": {
+        "type": "object",
+        "description": "`202` body: the reserved full username and its parts.",
+        "required": [
+          "base_username",
+          "digits",
+          "username"
+        ],
+        "properties": {
+          "base_username": {
+            "type": "string",
+            "description": "Reserved base username.",
+            "example": "tallesx"
+          },
+          "digits": {
+            "type": "string",
+            "description": "Selected two-digit discriminator.",
+            "example": "07"
+          },
+          "username": {
+            "type": "string",
+            "description": "Full `base.NN` username.",
+            "example": "tallesx.07"
+          },
+          "device_check_available": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Present only when the DeviceCheck free-slot gate applies (Slice 6)."
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "description": "A liveness/health status body: `{ status, service }`.",
+        "required": [
+          "status",
+          "service"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Coarse status word, e.g. `ok`, `alive`, `ready`."
+          },
+          "service": {
+            "type": "string",
+            "description": "Service name emitting the status."
+          }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "description": "`{ token, refreshToken }` — the shape both auth token routes return.",
+        "required": [
+          "token",
+          "refreshToken"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Signed access JWT (EdDSA).",
+            "example": "jwt"
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Opaque, single-use refresh token.",
+            "example": "opaque-base64-token"
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "description": "Public search response envelope.",
+        "required": [
+          "usernames"
+        ],
+        "properties": {
+          "usernames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchUsername"
+            },
+            "description": "Assigned usernames in deterministic continuation order."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the next page, or null when exhausted."
+          }
+        }
+      },
+      "SearchUsername": {
+        "type": "object",
+        "description": "One assigned username in the shipping mobile response shape.",
+        "required": [
+          "accountId",
+          "username",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "description": "People Chain account encoded as SS58.",
+            "example": "5Example"
+          },
+          "username": {
+            "type": "string",
+            "description": "Full username when present, otherwise the lite username.",
+            "example": "alice.12"
+          },
+          "status": {
+            "type": "string",
+            "description": "Assignment state, always `ASSIGNED` for this projection.",
+            "example": "ASSIGNED"
+          },
+          "onchainData": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "On-chain event position, always null because the snapshot has none."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the projection first observed the account.",
+            "example": "2026-07-11T10:00:00Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the projection last refreshed the account.",
+            "example": "2026-07-11T10:01:00Z"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer_jwt": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Access JWT issued by POST /api/v1/auth/token."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Liveness & Readiness",
+      "description": "Process, liveness, and readiness probes."
+    },
+    {
+      "name": "Discovery",
+      "description": "Public keyset and attester authority."
+    },
+    {
+      "name": "Authentication",
+      "description": "The attestation → JWT handshake."
+    },
+    {
+      "name": "Usernames",
+      "description": "Availability reads and registration intake."
+    }
+  ]
+}

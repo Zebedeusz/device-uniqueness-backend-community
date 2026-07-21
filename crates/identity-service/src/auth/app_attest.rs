@@ -9,18 +9,38 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+/// iOS Apple App Attest key-registration payload. Shape-preserving; not verified
+/// while `AUTH_ENABLED` is false.
+#[derive(Deserialize, ToSchema)]
 pub struct AppAttestRequest {
+    /// Client key identifier from App Attest enrollment.
     #[serde(rename = "keyId")]
+    #[schema(rename = "keyId", example = "base64-or-client-key-id")]
     _key_id: String,
+    /// Challenge previously returned from `/auth/challenges`.
     #[serde(rename = "challenge")]
+    #[schema(example = "challenge-from-/auth/challenges")]
     _challenge: String,
+    /// Base64 attestation object from the platform.
     #[serde(rename = "attestation")]
+    #[schema(example = "base64-attestation-object")]
     _attestation: String,
 }
 
 /// Accept the attestation payload and acknowledge with `202` (no-op for now).
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/app-attest/attestations",
+    tag = "Authentication",
+    request_body = AppAttestRequest,
+    responses(
+        (status = 202, description = "Accepted. No-op in M0 — payload is not verified against Apple/Google.",
+         body = serde_json::Value,
+         example = json!({}))
+    )
+)]
 pub async fn register(Json(_req): Json<AppAttestRequest>) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::ACCEPTED, Json(json!({})))
 }

@@ -7,7 +7,24 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
+
+/// The shared error envelope returned by every non-2xx response.
+///
+/// `error` is a stable machine code (see [`AppError`]); `message` is a
+/// human-readable detail that may change. This type exists so the OpenAPI
+/// document can reference a single error schema across all endpoints.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorResponse {
+    /// Stable machine code, e.g. `WRONG_DATA`, `UNAUTHORIZED`, `CONFLICT`.
+    #[schema(example = "WRONG_DATA")]
+    pub error: String,
+    /// Human-readable detail; safe to log, not intended for programmatic use.
+    #[schema(example = "human-readable detail")]
+    pub message: String,
+}
 
 /// A handler error mapped to an HTTP response.
 #[derive(Debug, thiserror::Error)]

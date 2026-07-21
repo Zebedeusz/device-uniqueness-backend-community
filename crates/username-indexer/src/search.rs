@@ -4,19 +4,24 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row as _};
 use time::OffsetDateTime;
+use utoipa::{IntoParams, ToSchema};
 
 const DEFAULT_LIMIT: u32 = 100;
 const MAX_LIMIT: u32 = 1000;
 
 /// Query parameters accepted by the public search endpoint.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     /// Case-insensitive username prefix, from 1 through 64 characters.
+    #[param(example = "ali")]
     pub prefix: String,
     /// Optional compatibility filter; only `ASSIGNED` is accepted.
+    #[param(example = "ASSIGNED")]
     pub status: Option<String>,
     /// Requested page size, defaulting to 100 and capped at 1,000.
+    #[param(example = 100)]
     pub limit: Option<u32>,
     /// Opaque continuation cursor from an earlier response.
     pub cursor: Option<String>,
@@ -25,27 +30,33 @@ pub struct SearchQuery {
 }
 
 /// One assigned username in the shipping mobile response shape.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchUsername {
     /// People Chain account encoded as SS58.
+    #[schema(example = "5Example")]
     pub account_id: String,
     /// Full username when present, otherwise the lite username.
+    #[schema(example = "alice.12")]
     pub username: String,
     /// Assignment state, always `ASSIGNED` for this projection.
+    #[schema(example = "ASSIGNED")]
     pub status: &'static str,
     /// On-chain event position, always null because the snapshot has none.
+    #[schema(value_type = Option<Object>)]
     pub onchain_data: Option<serde_json::Value>,
     /// Time the projection first observed the account.
     #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime, example = "2026-07-11T10:00:00Z")]
     pub created_at: OffsetDateTime,
     /// Time the projection last refreshed the account.
     #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime, example = "2026-07-11T10:01:00Z")]
     pub updated_at: OffsetDateTime,
 }
 
 /// Public search response envelope.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResponse {
     /// Assigned usernames in deterministic continuation order.

@@ -11,16 +11,21 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use super::{challenge, decode_header, decode_header_fixed, detect_platform, proof, refresh};
 use crate::http::error::{AppError, AppResult};
 use crate::http::state::AppState;
 
 /// `{ token, refreshToken }` — the shape both auth token routes return.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct TokenResponse {
+    /// Signed access JWT (EdDSA).
+    #[schema(example = "jwt")]
     token: String,
+    /// Opaque, single-use refresh token.
     #[serde(rename = "refreshToken")]
+    #[schema(example = "opaque-base64-token")]
     refresh_token: String,
 }
 
@@ -34,6 +39,26 @@ impl TokenResponse {
 }
 
 /// Verify challenge + client proof and issue an access + refresh token pair.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/token",
+    tag = "Authentication",
+    params(
+        ("Auth-ClientId" = String, Header, description = "Base64 of the 32-byte sr25519 public key."),
+        ("Auth-ClientProof" = String, Header, description = "Base64 of the 64-byte sr25519 signature over the raw body."),
+        ("Auth-Challenge" = String, Header, description = "Challenge previously minted via /auth/challenges."),
+        ("Auth-iOS-Package" = Option<String>, Header, description = "Optional platform signal, e.g. io.pcf.polkadotapp.")
+    ),
+    request_body(content = serde_json::Value, description = "Raw body covered by the proof; may be empty {}.",
+        example = json!({})),
+    responses(
+        (status = 200, description = "Verified. Access JWT + opaque refresh token.", body = TokenResponse,
+         example = json!({ "token": "jwt", "refreshToken": "opaque-base64-token" })),
+        (status = 401, description = "Bad or spent challenge, or invalid client proof.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "UNAUTHORIZED", "message": "unauthorized" }))
+    )
+)]
 pub async fn issue(
     State(state): State<AppState>,
     headers: HeaderMap,

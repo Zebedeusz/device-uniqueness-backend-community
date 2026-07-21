@@ -11,15 +11,19 @@ use rand::RngCore as _;
 use serde::Deserialize;
 use sqlx::{PgPool, Row as _};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
 use super::token::TokenResponse;
 use super::B64_STD;
 use crate::http::error::{AppError, AppResult};
 use crate::http::state::AppState;
 
-#[derive(Deserialize)]
+/// `{ refreshToken }` — present a prior opaque refresh token to rotate it.
+#[derive(Deserialize, ToSchema)]
 pub struct RefreshRequest {
+    /// Opaque refresh token issued by `/auth/token` or a prior refresh.
     #[serde(rename = "refreshToken")]
+    #[schema(rename = "refreshToken", example = "opaque-base64-token")]
     refresh_token: String,
 }
 
@@ -31,6 +35,19 @@ struct Session {
 }
 
 /// Rotate a refresh token, returning a fresh access + refresh pair.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/token/refresh",
+    tag = "Authentication",
+    request_body = RefreshRequest,
+    responses(
+        (status = 200, description = "Rotated. New access JWT + new opaque refresh token.", body = TokenResponse,
+         example = json!({ "token": "jwt", "refreshToken": "new-opaque-base64-token" })),
+        (status = 401, description = "Unknown, expired, or already-spent refresh token.",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "UNAUTHORIZED", "message": "unauthorized" }))
+    )
+)]
 pub async fn rotate(
     State(state): State<AppState>,
     Json(req): Json<RefreshRequest>,

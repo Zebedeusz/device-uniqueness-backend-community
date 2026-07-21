@@ -6,11 +6,11 @@
 //! always verified — that is what binds the JWT `accountId` to a key the caller
 //! controls.
 
-mod app_attest;
-mod challenge;
+pub(crate) mod app_attest;
+pub(crate) mod challenge;
 mod proof;
-mod refresh;
-mod token;
+pub(crate) mod refresh;
+pub(crate) mod token;
 
 use axum::http::HeaderMap;
 use axum::routing::post;

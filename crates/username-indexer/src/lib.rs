@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod http;
 pub mod incremental;
+pub mod openapi;
 pub mod projection;
 pub mod search;
 pub mod ss58;

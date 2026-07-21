@@ -51,7 +51,25 @@ pub fn routes(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn search_usernames(
+/// Public prefix search over the finalized username projection.
+#[utoipa::path(
+    get,
+    path = "/api/v1/usernames/search",
+    tag = "Usernames",
+    params(SearchQuery),
+    responses(
+        (status = 200, description = "Matching assigned usernames in continuation order.",
+         body = SearchResponse,
+         example = json!({ "usernames": [], "nextCursor": null })),
+        (status = 400, description = "Missing/invalid prefix, status, limit, or cursor.",
+         body = serde_json::Value,
+         example = json!({ "error": "WRONG_DATA", "message": "prefix must contain between 1 and 64 characters" })),
+        (status = 429, description = "Public search rate limit exceeded.",
+         body = serde_json::Value,
+         example = json!({ "error": "RATE_LIMITED", "message": "rate limited" }))
+    )
+)]
+pub(crate) async fn search_usernames(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> AppResult<Json<SearchResponse>> {

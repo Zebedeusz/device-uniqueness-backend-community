@@ -70,6 +70,19 @@ fn make_http_span(request: &axum::http::Request<axum::body::Body>) -> tracing::S
 }
 
 /// Publish the Ed25519 public key so siblings can verify tokens.
-async fn jwks(State(state): State<AppState>) -> Json<serde_json::Value> {
+#[utoipa::path(
+    get,
+    path = "/.well-known/jwks.json",
+    tag = "Discovery",
+    responses(
+        (status = 200, description = "JWT verification keyset (Ed25519 / OKP).",
+         body = serde_json::Value,
+         example = json!({ "keys": [ {
+             "kty": "OKP", "crv": "Ed25519", "use": "sig", "alg": "EdDSA",
+             "kid": "...", "x": "..."
+         } ] }))
+    )
+)]
+pub(crate) async fn jwks(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(state.jwt.jwks())
 }
