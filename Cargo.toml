@@ -13,6 +13,7 @@ publish = false
 chain-types = { path = "crates/chain-types" }
 chain-client = { path = "crates/chain-client" }
 jwt-verify = { path = "crates/jwt-verify" }
+http-common = { path = "crates/http-common" }
 
 subxt = { version = "0.50", default-features = false, features = ["native", "reconnecting-rpc-client"] }
 subxt-rpcs = { version = "0.50", default-features = false, features = ["native", "reconnecting-rpc-client"] }

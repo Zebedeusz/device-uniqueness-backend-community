@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use http_common::RateLimiter;
 use sqlx::PgPool;
 
-use super::middleware::RateLimiter;
 use crate::config::Config;
 
 /// Cheap-to-clone handle to the pool, verifier, and config.
@@ -34,5 +34,11 @@ impl AppState {
             config: Arc::new(config),
             limiter,
         }
+    }
+}
+
+impl http_common::HasJwtVerifier for AppState {
+    fn jwt_verifier(&self) -> &jwt_verify::Verifier {
+        &self.verifier
     }
 }

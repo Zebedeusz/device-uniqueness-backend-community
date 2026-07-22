@@ -14,6 +14,7 @@ pub mod chain;
 pub mod config;
 pub mod db;
 pub mod http;
+pub mod openapi;
 pub mod plan;
 pub mod tickets;
 pub mod writer;

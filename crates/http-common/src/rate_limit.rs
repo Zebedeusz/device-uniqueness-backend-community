@@ -1,4 +1,4 @@
-//! Per-subject rate limiting for the authenticated dim-ticket routes.
+//! Per-subject rate limiting for authenticated routes.
 //!
 //! Keyed on the **JWT subject**, never the client IP: a whole venue shares one
 //! public IP under CGNAT, so a per-IP bucket on an authenticated route is a

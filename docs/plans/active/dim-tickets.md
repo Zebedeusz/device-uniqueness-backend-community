@@ -145,8 +145,17 @@ the apps use the synchronous claim flow instead.)
   - [x] Fail-fast config: `DATABASE_URL`, `PEOPLE_RPC_URL`, `PEOPLE_NETWORK`, `INVITER_ADDRESS`, and
         JWT key material (`JWT_JWKS_JSON` or `JWT_ED25519_PUBLIC_KEY`) required with no defaults;
         timeout, rate-limit, rate-window, and writer-poll values must be positive.
-  - [ ] Golden legacy fixtures: capture real request/response pairs from the legacy route tests
-        (400 zod messages/pointers and the 500 body are best-effort approximations until then).
+  - [x] (2026-07-22) Golden legacy fixtures: 29 request/response pairs captured from the REAL
+        legacy route (commit `c8369d9`; harness + provenance in `tests/fixtures/`), replayed in
+        `tests/legacy_wire.rs` — 19 through the production router offline (dead lazy PG pool +
+        mock-RPC chain client), 10 against the response builders/renderers. The capture corrected
+        four pre-capture approximations: 400 messages are zod v4 (not the guessed v3 texts), the
+        500 body is the global hook's `Oops! Something went wrong.` (was `Internal Server Error`),
+        malformed JSON is the Hono plain-text 400 + missing JSON content-type is a 500 (was a
+        single problem-details 400), and unknown paths/methods are the Hono text `404 Not Found`
+        (was axum's default 404/405).
+  - [x] (2026-07-22) `#[utoipa::path]` on both handlers + doc-only schemas; crate registered in
+        `apidoc-gen`; API reference regenerated (dim routes now documented).
 - **✅ Demo (partial, 2026-07-16)**: against a local Postgres + live Paseo Next v2 RPC with a real
   EdDSA JWT: 401×3 problem-details variants, 404, 400 with field errors, live on-chain quota check
   → 422, SS58-quirk 500, and seeded-row GETs proving `SUBMITTING→SUBMITTED` + `registered` +

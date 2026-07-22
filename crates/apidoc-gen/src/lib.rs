@@ -1,7 +1,7 @@
 //! Renders the committed API reference from the service crates' OpenAPI docs.
 //!
 //! The merged OpenAPI document (identity-service + username-indexer +
-//! invite-tickets, all built
+//! invite-tickets + dim-tickets, all built
 //! from `#[utoipa::path]` annotations) is the single source of truth. This crate
 //! serializes it to `openapi.json` and renders `index.html` by filling the
 //! `<!--@NAV-->` and `<!--@ENDPOINTS-->` placeholders in `template.html` with the
@@ -30,7 +30,7 @@ pub fn index_html_path() -> String {
 }
 
 /// Build the merged OpenAPI document (identity-service + username-indexer +
-/// invite-tickets).
+/// invite-tickets + dim-tickets).
 pub fn merged_doc() -> Value {
     let mut base =
         serde_json::to_value(identity_service::openapi::ApiDoc::openapi()).expect("identity doc");
@@ -38,8 +38,9 @@ pub fn merged_doc() -> Value {
         serde_json::to_value(username_indexer::openapi::ApiDoc::openapi()).expect("indexer doc");
     let invites =
         serde_json::to_value(invite_tickets::openapi::ApiDoc::openapi()).expect("invites doc");
+    let dims = serde_json::to_value(dim_tickets::openapi::ApiDoc::openapi()).expect("dims doc");
 
-    for other in [&indexer, &invites] {
+    for other in [&indexer, &invites, &dims] {
         merge_object(&mut base, other, "/paths");
         merge_object(&mut base, other, "/components/schemas");
         merge_array(&mut base, other, "/tags");
@@ -758,6 +759,8 @@ mod tests {
             "/api/v1/usernames/available",
             "/api/v1/usernames/search",
             "/api/v1/invitation-ticket/claim",
+            "/api/v1/dim-ticket",
+            "/api/v1/dim-ticket/{who}",
         ] {
             assert!(paths.contains_key(route), "missing route {route}");
         }

@@ -236,3 +236,11 @@ limiter, the shared error dialects (401 trio / 429 / 400 problem details / Hono 
 that is the second-consumer condition met — extract the shared HTTP primitives into a small shared
 crate (the same rule that produced `jwt-verify`) instead of letting a third service clone them
 again. Neither service crate should import the other.
+
+**✅ Done (2026-07-22)**: extracted as `crates/http-common` — `problem` (the frozen dialects),
+`zod` (v4 message fragments), `auth` (`AuthSubject` over a `HasJwtVerifier` state trait),
+`rate_limit`, `health` (closure-based readiness probes), `layers` (the tower-http stack), and
+`config` (fail-fast env helpers + JWT verifier loading). Both service crates now consume it;
+neither imports the other; both golden-fixture replays stayed green through the swap. The
+dim-tickets golden capture (done the same day) folded the corrected dialects (Oops-500, Hono text
+400/404) into the shared crate, so a third service gets the captured behavior for free.

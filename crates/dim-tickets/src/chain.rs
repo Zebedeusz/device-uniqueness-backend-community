@@ -34,6 +34,13 @@ impl ChainClient {
         })
     }
 
+    /// Wrap an already-built [`OnlineClient`]. Production always goes through
+    /// [`Self::connect`]; this exists so tests can assemble a client offline
+    /// (vendored metadata + a dead mock backend).
+    pub fn from_online(client: OnlineClient<PeopleConfig>) -> Self {
+        Self { client }
+    }
+
     /// Liveness probe used by `/readyz`.
     pub async fn health(&self) -> anyhow::Result<()> {
         self.client

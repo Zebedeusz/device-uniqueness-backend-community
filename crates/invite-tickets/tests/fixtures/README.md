@@ -47,7 +47,7 @@ Notable captured facts:
   pinned by reading `middleware/rate-limit.middleware.ts` (`tooManyRequests`):
   problem details `too-many-requests` / `Too Many Requests` /
   `Rate limit exceeded. Please retry after {n} seconds.` + `Retry-After` —
-  which `http/error.rs` reproduces byte-for-byte.
+  which `http-common::problem` reproduces byte-for-byte.
 - **JWTs**: legacy verified HS256 tokens; this service verifies
   identity-service Ed25519 tokens. The three 401 *bodies* are
   algorithm-independent and captured; authenticated replays mint an EdDSA

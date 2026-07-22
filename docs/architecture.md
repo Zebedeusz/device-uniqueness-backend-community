@@ -52,6 +52,7 @@ create now. See "How the workspace grows" below.
 | config loading + fail-fast validation | `config` | module today |
 | telemetry (logs / metrics / tracing) | `telemetry` | not yet |
 | JWT + JWKS verification (for verify-only services) | `jwt-verify` | **exists** (crate; identity-service delegates its own verification to it; dim-tickets and invite-tickets consume it) |
+| frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | **exists** (crate; extracted 2026-07-22 when invite-tickets became the second consumer of dim-tickets' scaffolding; both consume it — the dialect bodies are golden-captured, change only with a fresh capture) |
 
 ### Deployable services (plain domain word)
 
@@ -113,6 +114,7 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 | *(future)* notifications / turn / invites | `notifications` / `turn` / `invites` | name on creation |
 | `jwt-verify` | `jwt-verify` | extracted (crate) |
 | `chain-client` | `chain-client` | extracted (crate) |
+| `http-common` | `http-common` | extracted (crate) |
 | *(future)* shared libs | `postgres` / `config` / `telemetry` | extract lazily, per above |
 | gateway | Caddy | path routing in `deploy.md`; `/usernames/search` already routed to `username-indexer` |
 

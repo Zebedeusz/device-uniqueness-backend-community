@@ -1,0 +1,26 @@
+# Shared axum primitives for the frozen legacy wire dialects, extracted when
+# invite-tickets became the second consumer of dim-tickets' HTTP scaffolding
+# (the same lazy-extraction rule that produced `jwt-verify`/`chain-client`).
+# Transport-shape only: no domain logic, no DB schema, no chain types.
+[package]
+name = "http-common"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+jwt-verify.workspace = true
+
+axum.workspace = true
+tower-http = { version = "0.6", features = ["trace", "timeout", "request-id"] }
+tracing.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+ed25519-dalek = "2"
+hex = "0.4"
+
+[lints]
+workspace = true

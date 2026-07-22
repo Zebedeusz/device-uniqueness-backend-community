@@ -15,32 +15,22 @@
 //!   known path was a 404, never a 405).
 
 pub mod error;
-pub mod extract;
-pub mod health;
-pub mod middleware;
 pub mod state;
 
 use std::str::FromStr as _;
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
+use http_common::problem::hono_not_found;
+use http_common::{health, layers, zod, AuthSubject};
 use time::OffsetDateTime;
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
-use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::{DefaultOnResponse, TraceLayer};
-use tracing::Level;
 
 use self::error::{AppError, AppResult, FieldError};
-use self::extract::AuthSubject;
 use self::state::AppState;
 use crate::sign::TicketKeypair;
 use crate::tickets::{self, Dim};
-
-/// Per-request timeout; a slow handler yields `408` instead of pinning a connection.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Transient-DB retry budget, mirroring the legacy shell's `dbRetry`
 /// (3 retries, 200ms base, ×2 back-off; the legacy jitter is dropped as an
@@ -51,51 +41,25 @@ const DB_RETRY_BASE: Duration = Duration::from_millis(200);
 /// Assemble the full router: health at root, the frozen claim route below,
 /// wrapped in the production middleware stack.
 pub fn routes(state: AppState) -> Router {
-    let api = Router::new().route("/claim", post(claim_ticket).fallback(not_found));
+    let api = Router::new().route("/claim", post(claim_ticket).fallback(hono_not_found));
 
-    Router::new()
-        .merge(health::router())
+    let router = Router::new()
+        .merge(health::router("invite-tickets", readiness))
         .nest("/api/v1/invitation-ticket", api)
-        .fallback(not_found)
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            REQUEST_TIMEOUT,
-        ))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(make_http_span)
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        )
-        .layer(PropagateRequestIdLayer::x_request_id())
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-        .with_state(state)
+        .fallback(hono_not_found)
+        .with_state(state);
+    layers::standard_layers(router)
 }
 
-/// The legacy (Hono) default not-found response, byte-for-byte.
-async fn not_found() -> impl axum::response::IntoResponse {
-    (
-        StatusCode::NOT_FOUND,
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/plain; charset=UTF-8",
-        )],
-        "404 Not Found",
-    )
-}
-
-/// Per-request tracing span carrying the request id, method, and path.
-fn make_http_span(request: &axum::http::Request<axum::body::Body>) -> tracing::Span {
-    let request_id = request
-        .headers()
-        .get("x-request-id")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("-");
-    tracing::info_span!(
-        "http_request",
-        request_id = %request_id,
-        method = %request.method(),
-        path = request.uri().path(),
-    )
+/// Readiness gates on Postgres only — the claim path never touches the People
+/// Chain (registration is the pool maintainer's job), so a chain outage must
+/// not take the API out of rotation.
+async fn readiness(state: AppState) -> health::Readiness {
+    if let Err(err) = sqlx::query("SELECT 1").execute(&state.pool).await {
+        tracing::warn!(error = ?err, "readiness check failed: database unavailable");
+        return Err("db");
+    }
+    Ok(&["db"])
 }
 
 /// Enforce the per-subject fixed window; `429` with `Retry-After` on excess.
@@ -142,19 +106,6 @@ struct ClaimRequest {
     dim: Dim,
 }
 
-/// The zod v4 name for a JSON value's type, as it appears inside the legacy
-/// `Invalid input: expected …, received …` messages.
-fn zod_type_name(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
-}
-
 /// Validate the request body against the frozen schema (`who`: non-empty
 /// valid-SS58 string, `dim`: `Game | ProofOfInk`), reproducing the legacy zod
 /// v4 messages and pointers. zod v4 checks are non-aborting, so an empty
@@ -162,10 +113,7 @@ fn zod_type_name(value: &serde_json::Value) -> &'static str {
 fn validate_body(body: &serde_json::Value) -> Result<ClaimRequest, Vec<FieldError>> {
     if !body.is_object() {
         return Err(vec![FieldError {
-            detail: format!(
-                "Invalid input: expected object, received {}",
-                zod_type_name(body)
-            ),
+            detail: zod::invalid_input("object", zod::type_name(body)),
             pointer: "#/".to_string(),
         }]);
     }
@@ -176,7 +124,7 @@ fn validate_body(body: &serde_json::Value) -> Result<ClaimRequest, Vec<FieldErro
         Some(serde_json::Value::String(s)) => {
             if s.is_empty() {
                 errors.push(FieldError {
-                    detail: "Too small: expected string to have >=1 characters".to_string(),
+                    detail: zod::TOO_SMALL_MIN1.to_string(),
                     pointer: "#/who".to_string(),
                 });
             }
@@ -192,9 +140,8 @@ fn validate_body(body: &serde_json::Value) -> Result<ClaimRequest, Vec<FieldErro
             }
         }
         other => {
-            let received = other.map_or("undefined", |value| zod_type_name(value));
             errors.push(FieldError {
-                detail: format!("Invalid input: expected string, received {received}"),
+                detail: zod::invalid_input("string", zod::received_name(other)),
                 pointer: "#/who".to_string(),
             });
             None

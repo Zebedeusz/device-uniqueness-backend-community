@@ -1,0 +1,709 @@
+[
+  {
+    "name": "post-401-missing-auth",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 401,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/missing-request-header",
+        "title": "Missing Authorization Header",
+        "detail": "Write requests with an Authorization header must include a valid Bearer token.",
+        "status": 401
+      }
+    }
+  },
+  {
+    "name": "post-401-non-bearer",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Basic abc"
+      },
+      "body": "{\"who\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 401,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-header-format",
+        "title": "Invalid Authorization Header",
+        "detail": "Authorization header must use Bearer scheme: \"Bearer <token>\".",
+        "status": 401
+      }
+    }
+  },
+  {
+    "name": "post-401-bad-token",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer not-a-jwt"
+      },
+      "body": "{\"who\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 401,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/unauthorized",
+        "title": "Invalid Token",
+        "detail": "Token verification failed. The token may be expired or malformed.",
+        "status": 401
+      }
+    }
+  },
+  {
+    "name": "get-401-missing-auth",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/missing-request-header",
+        "title": "Missing Authorization Header",
+        "detail": "Write requests with an Authorization header must include a valid Bearer token.",
+        "status": 401
+      }
+    }
+  },
+  {
+    "name": "post-400-empty-object",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected string, received undefined",
+            "pointer": "#/who"
+          },
+          {
+            "detail": "Invalid option: expected one of \"Game\"|\"ProofOfInk\"",
+            "pointer": "#/dim"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-null-fields",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":null,\"dim\":null}"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected string, received null",
+            "pointer": "#/who"
+          },
+          {
+            "detail": "Invalid option: expected one of \"Game\"|\"ProofOfInk\"",
+            "pointer": "#/dim"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-empty-who-unknown-dim",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"\",\"dim\":\"Chess\"}"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Too small: expected string to have >=1 characters",
+            "pointer": "#/who"
+          },
+          {
+            "detail": "Invalid option: expected one of \"Game\"|\"ProofOfInk\"",
+            "pointer": "#/dim"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-wrong-types",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":5,\"dim\":7}"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected string, received number",
+            "pointer": "#/who"
+          },
+          {
+            "detail": "Invalid option: expected one of \"Game\"|\"ProofOfInk\"",
+            "pointer": "#/dim"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-missing-dim",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\"}"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid option: expected one of \"Game\"|\"ProofOfInk\"",
+            "pointer": "#/dim"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-array-body",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "[1,2]"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected object, received array",
+            "pointer": "#/"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-string-body",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "\"nope\""
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected object, received string",
+            "pointer": "#/"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-malformed-json",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{not json"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "text/plain;charset=UTF-8",
+      "retryAfter": null,
+      "body": "Malformed JSON in request body"
+    }
+  },
+  {
+    "name": "post-500-missing-content-type",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": "{\"who\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 500,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "error": "Oops! Something went wrong."
+      }
+    }
+  },
+  {
+    "name": "post-200-create",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "ticket": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        "inviter": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+        "network": "paseo",
+        "dim": "Game",
+        "status": "PENDING",
+        "registered": false,
+        "createdAt": "2026-07-01T10:20:30.400Z",
+        "updatedAt": "2026-07-22T20:59:13.005Z",
+        "who": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+      }
+    }
+  },
+  {
+    "name": "post-200-create-proofofink",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\",\"dim\":\"ProofOfInk\"}"
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "ticket": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        "inviter": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+        "network": "paseo",
+        "dim": "ProofOfInk",
+        "status": "PENDING",
+        "registered": false,
+        "createdAt": "2026-07-01T10:20:30.400Z",
+        "updatedAt": "2026-07-22T20:59:13.007Z",
+        "who": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+      }
+    }
+  },
+  {
+    "name": "post-409-already-exists",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 409,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "error": "Ticket already exists"
+      }
+    }
+  },
+  {
+    "name": "post-422-quota-exceeded",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 422,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "error": "No available invites"
+      }
+    }
+  },
+  {
+    "name": "post-500-shell-defect",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 500,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "error": "Oops! Something went wrong."
+      }
+    }
+  },
+  {
+    "name": "post-500-invalid-ss58",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"who\":\"definitely-not-ss58\",\"dim\":\"Game\"}"
+    },
+    "response": {
+      "status": 500,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "error": "Oops! Something went wrong."
+      }
+    }
+  },
+  {
+    "name": "get-200-pending",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "ticket": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        "inviter": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+        "network": "paseo",
+        "dim": "Game",
+        "status": "PENDING",
+        "registered": false,
+        "onchainData": null,
+        "createdAt": "2026-07-01T10:20:30.400Z",
+        "updatedAt": "2026-07-22T20:59:13.013Z"
+      }
+    }
+  },
+  {
+    "name": "get-200-submitting",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "ticket": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+        "inviter": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+        "network": "paseo",
+        "dim": "Game",
+        "status": "SUBMITTED",
+        "registered": false,
+        "onchainData": null,
+        "createdAt": "2026-07-01T10:20:30.400Z",
+        "updatedAt": "2026-07-02T11:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-200-submitted",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "ticket": "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+        "inviter": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+        "network": "paseo",
+        "dim": "Game",
+        "status": "SUBMITTED",
+        "registered": false,
+        "onchainData": null,
+        "createdAt": "2026-07-01T10:20:30.400Z",
+        "updatedAt": "2026-07-02T11:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-200-registered",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "ticket": "5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy",
+        "inviter": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+        "network": "paseo",
+        "dim": "Game",
+        "status": "REGISTERED",
+        "registered": true,
+        "onchainData": {
+          "blockIndex": "12345-7",
+          "blockNumber": 12345,
+          "blockHash": "0xabababababababababababababababababababababababababababababababab",
+          "eventIndex": 7
+        },
+        "createdAt": "2026-07-01T10:20:30.400Z",
+        "updatedAt": "2026-07-02T11:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-200-failed",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5HpG9w8EBLe5XCrbczpwq5TSXvedjrBGCwqxK1iQ7qUsSWFc",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "ticket": "5HpG9w8EBLe5XCrbczpwq5TSXvedjrBGCwqxK1iQ7qUsSWFc",
+        "inviter": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+        "network": "paseo",
+        "dim": "Game",
+        "status": "FAILED",
+        "registered": false,
+        "onchainData": null,
+        "createdAt": "2026-07-01T10:20:30.400Z",
+        "updatedAt": "2026-07-02T11:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-404-not-found",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "error": "Ticket not found"
+      }
+    }
+  },
+  {
+    "name": "get-500-shell-defect",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket/5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 500,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "error": "Oops! Something went wrong."
+      }
+    }
+  },
+  {
+    "name": "get-404-collection-path",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "delete-404-wrong-method",
+    "request": {
+      "method": "DELETE",
+      "path": "/api/v1/dim-ticket",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "get-404-unknown-path",
+    "request": {
+      "method": "GET",
+      "path": "/nope",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "body": "404 Not Found"
+    }
+  }
+]
