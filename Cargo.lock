@@ -524,6 +524,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "chain-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chain-types",
+ "hex",
+ "jsonrpsee-core",
+ "jsonrpsee-server",
+ "schnorrkel",
+ "subxt",
+ "subxt-rpcs",
+ "subxt-signer",
+ "tokio",
+]
+
+[[package]]
 name = "chain-types"
 version = "0.1.0"
 dependencies = [
@@ -869,6 +885,29 @@ dependencies = [
  "const-oid",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "dim-tickets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chain-client",
+ "chain-types",
+ "ed25519-dalek",
+ "hex",
+ "jwt-verify",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "subxt",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1636,21 +1675,19 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "chain-client",
  "chain-types",
  "ed25519-dalek",
  "futures",
  "hex",
- "jsonrpsee-core",
- "jsonrpsee-server",
+ "jwt-verify",
  "rand 0.8.6",
  "reqwest",
- "schnorrkel",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
  "subxt",
- "subxt-rpcs",
  "subxt-signer",
  "thiserror 2.0.18",
  "time",
@@ -1919,6 +1956,18 @@ dependencies = [
  "jsonrpsee-core",
  "jsonrpsee-types",
  "url",
+]
+
+[[package]]
+name = "jwt-verify"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]

@@ -29,7 +29,7 @@
 ## JWT issuer and mobile contract
 - What exists: identity-service publishes Ed25519 JWKS at `/.well-known/jwks.json`; both shipping clients send `Authorization: Bearer <JWT>` to `/api/v1/notify`.
 - ✅ Demo: the Identity Service MVP issues a verifiable JWT, and the wire-contract tests lock the bearer-token convention.
-- Gaps: no verify-only sibling helper or notify route exists in the Rust workspace.
+- Gaps: no notify route exists in the Rust workspace. (The verify-only sibling helper now exists: `crates/jwt-verify`, extracted 2026-07-16 — consume it, don't build an inline copy.)
 
 ## Legacy provider behavior
 - What exists: the TypeScript reference is `paritytech/identity-backend`, under `apps/identity-backend/src/routes/v1/notify/` and `apps/identity-backend/src/infrastructure/adapters/notifications/`.
@@ -42,7 +42,7 @@
 - **Goal**: accept and validate existing mobile requests behind verify-only JWT auth.
 - **Scope checklist**:
   - [ ] Add an independently deployable notify crate/binary with liveness and readiness.
-  - [ ] Add verify-only Ed25519 JWT validation from configured public-key/JWKS material; no runtime call to identity-service is required after startup.
+  - [ ] Add verify-only Ed25519 JWT validation from configured public-key/JWKS material; no runtime call to identity-service is required after startup. Consume the shared `crates/jwt-verify` micro-slice (decided 2026-07-16: dim-tickets runs in parallel, so the second-consumer condition for extraction is already met — don't build an inline copy).
   - [ ] Accept `deviceToken`, `pushId`, `message`, `voip`, and optional `platform` / `bundlerId` exactly as the clients send them.
   - [ ] Preserve platform detection and request validation from the legacy route.
   - [ ] Preserve the response fields `success`, `platform`, `sent`, `failed`, `messageId`, and `errors`, including legacy provider-failure `200` responses.
@@ -99,7 +99,7 @@
 - Push secrets and provider outages must not affect auth or registration.
 
 # Key decisions (decide early)
-- JWT public-key distribution: pinned configured JWK/public key first, or startup JWKS fetch with a persisted last-known-good key.
+- JWT public-key distribution: pinned configured JWK/public key first, or startup JWKS fetch with a persisted last-known-good key. Whichever is chosen lives in the shared `jwt-verify` crate (see the dim-tickets plan, same decision date), so decide it once for both consumers.
 - APNs development/production routing and topic configuration for the first live smoke.
 - Whether one owner implements both providers or FCM and APNs become sequential sub-assignments within this plan.
 

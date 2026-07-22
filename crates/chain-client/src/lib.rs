@@ -1,27 +1,58 @@
-//! The chain-writer's signing key.
+//! People Chain connection + chain-writer signing key — the product-agnostic
+//! transport layer shared by the services that talk to People Chain.
+//!
+//! Owns exactly two concerns (extracted when dim-tickets became the second
+//! consumer, per the lazy-extraction rule in `docs/architecture.md`):
+//! - [`connect`]: an auto-reconnecting subxt [`OnlineClient`] over the
+//!   [`chain_types::PeopleConfig`] transaction-extension pipeline.
+//! - [`WriterSigner`]: the sr25519 signing key a single-instance chain writer
+//!   submits with.
+//!
+//! Product logic — which storage to read, which calls to build — stays in each
+//! service; generated chain types stay in `chain-types`.
 
 use std::str::FromStr as _;
 
 use anyhow::Context as _;
 use chain_types::PeopleConfig;
 use subxt::utils::{AccountId32, MultiSignature};
+use subxt::OnlineClient;
+use subxt_rpcs::client::{ReconnectingRpcClient, RpcClient};
 
-/// Signing key for the writer.
+/// Connect to a People Chain RPC with an auto-reconnecting transport and load
+/// its metadata.
+pub async fn connect(url: &str) -> anyhow::Result<OnlineClient<PeopleConfig>> {
+    OnlineClient::<PeopleConfig>::from_rpc_client(reconnecting_rpc_client(url).await?)
+        .await
+        .with_context(|| format!("connecting to People Chain at {url}"))
+}
+
+async fn reconnecting_rpc_client(url: &str) -> anyhow::Result<RpcClient> {
+    let rpc_client = ReconnectingRpcClient::builder()
+        .build(url)
+        .await
+        .with_context(|| format!("connecting to People Chain at {url}"))?;
+    Ok(RpcClient::new(rpc_client))
+}
+
+/// Signing key for a single-instance chain writer.
 ///
 /// Supports two secret forms so the same binary works for dev and prod:
 /// - a `SecretUri` (dev `//Alice`, a BIP-39 mnemonic, or a `0x`+64-hex 32-byte
 ///   seed), handled by `subxt-signer`; and
 /// - a `0x`+128-hex raw 64-byte sr25519 secret (the polkadot.js / sp-core
 ///   "expanded" secret the legacy backend stored), which `subxt-signer` cannot
-///   ingest through its public API. This is the format the shared attester key
-///   uses, so we build a `schnorrkel` keypair from it directly.
+///   ingest through its public API, so we build a `schnorrkel` keypair from it
+///   directly.
 pub enum WriterSigner {
+    /// Keypair derived from a `SecretUri` by `subxt-signer`.
     Uri(subxt_signer::sr25519::Keypair),
+    /// Keypair built directly from a raw 64-byte expanded secret.
     Raw(schnorrkel::Keypair),
 }
 
 impl WriterSigner {
-    /// Build a signer from a configured secret (`CHAIN_WRITER_SIGNER_SURI`).
+    /// Build a signer from a configured secret.
     pub fn from_secret(secret: &str) -> anyhow::Result<Self> {
         let trimmed = secret.trim();
         // A `0x`+128-hex value is a raw 64-byte sr25519 secret (polkadot.js
@@ -39,8 +70,8 @@ impl WriterSigner {
                 return Ok(Self::Raw(keypair));
             }
         }
-        let uri = subxt_signer::SecretUri::from_str(trimmed)
-            .context("parsing CHAIN_WRITER_SIGNER_SURI")?;
+        let uri =
+            subxt_signer::SecretUri::from_str(trimmed).context("parsing signer secret URI")?;
         let keypair = subxt_signer::sr25519::Keypair::from_uri(&uri)
             .context("building signer keypair from SURI")?;
         Ok(Self::Uri(keypair))
@@ -78,8 +109,64 @@ impl subxt::tx::Signer<PeopleConfig> for WriterSigner {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::time::Duration;
+
+    use jsonrpsee_core::server::RpcModule;
+    use jsonrpsee_server::{ServerBuilder, ServerHandle};
     use schnorrkel::{ExpansionMode, MiniSecretKey};
+    use subxt_rpcs::rpc_params;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn reconnecting_rpc_client_recovers_after_server_restart() -> anyhow::Result<()> {
+        let (server, url) = TestRpcServer::start(None).await?;
+        let rpc = reconnecting_rpc_client(&url).await?;
+
+        let first: String = rpc.request("ping", rpc_params![]).await?;
+        assert_eq!(first, "pong");
+
+        server.stop().await?;
+        let addr = url
+            .strip_prefix("ws://")
+            .context("test RPC URL should be ws://")?
+            .parse::<SocketAddr>()?;
+        let (_server, _) = TestRpcServer::start(Some(addr)).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let second = tokio::time::timeout(
+            Duration::from_secs(5),
+            rpc.request::<String>("ping", rpc_params![]),
+        )
+        .await??;
+        assert_eq!(second, "pong");
+
+        Ok(())
+    }
+
+    struct TestRpcServer {
+        handle: ServerHandle,
+    }
+
+    impl TestRpcServer {
+        async fn start(addr: Option<SocketAddr>) -> anyhow::Result<(Self, String)> {
+            let addr = addr.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into());
+            let server = ServerBuilder::default().build(addr).await?;
+            let addr = server.local_addr()?;
+            let mut module = RpcModule::new(());
+            module.register_async_method("ping", |_, _, _| async { "pong" })?;
+            let handle = server.start(module);
+
+            Ok((Self { handle }, format!("ws://{addr}")))
+        }
+
+        async fn stop(self) -> anyhow::Result<()> {
+            self.handle.stop()?;
+            self.handle.stopped().await;
+            Ok(())
+        }
+    }
 
     /// `//Alice` resolves through the `SecretUri` path to the well-known dev account.
     #[test]
@@ -94,8 +181,7 @@ mod tests {
 
     /// The same account, whether loaded from its 32-byte seed (subxt-signer path)
     /// or its expanded 64-byte secret (the polkadot.js format we build directly),
-    /// derives the identical public key. The 64-byte form is the one subxt-signer
-    /// cannot ingest through its public API.
+    /// derives the identical public key.
     #[test]
     fn raw_64_byte_secret_matches_seed_path() {
         let seed = [7u8; 32];

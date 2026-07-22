@@ -29,11 +29,14 @@ If a change makes a doc wrong, fix the doc (or flag the drift) in the same chang
 
 ## Workspace
 
-Three crates today (plans may add more independently-deployable service crates):
+Six crates today (plans may add more independently-deployable service crates):
 
 - `chain-types` — generated People Chain type surface (subxt codegen).
+- `chain-client` — reconnecting People Chain connection + the chain-writer signing key (`WriterSigner`); product-agnostic transport shared by the services.
+- `jwt-verify` — verify-only JWT validation (JWKS parsing, Ed25519 verification, claims); the cross-service auth contract consumed by every service that gates routes on identity-service tokens.
 - `identity-service` — the identity service (lib + bins `identity-api` and `identity-chain-writer`).
 - `username-indexer` — username indexer + search service.
+- `dim-tickets` — game/personhood invitation-credential service (lib + bins `dim-tickets-api` and `dim-tickets-writer`).
 - `apidoc-gen` — dev-only tool (not deployed) that renders the committed API reference from the service crates' `#[utoipa::path]` annotations. Run via `just openapi`.
 
 Each service's boundary, persistence, endpoints, and data-flow invariants are in `docs/architecture.md`.

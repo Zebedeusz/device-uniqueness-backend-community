@@ -1,9 +1,10 @@
-//! Typed People Chain surface for identity-service.
+//! Typed People Chain surface for the workspace's services.
 //!
 //! Static [`subxt`] codegen generated from vendored People Chain metadata. It is
 //! the single canonical chain-facing type surface for the workspace: the read
-//! path (`Resources::UsernameOwnerOf`, the reservation queue, `PeopleLite::AttestationAllowance`)
-//! and the identity-chain-writer's registration/attestation calls all build against it.
+//! path (`Resources::UsernameOwnerOf`, the reservation queue, `PeopleLite::AttestationAllowance`),
+//! the identity-chain-writer's registration/attestation calls, and the dim-tickets
+//! service's `Game`/`ProofOfInk` invite-ticket calls all build against it.
 //! The online transport and signing live in adapter crates, never here.
 //!
 //! # Vendored metadata provenance
@@ -11,11 +12,11 @@
 //! - Source: Paseo Next v2 People Chain — `wss://paseo-people-next-system-rpc.polkadot.io`
 //! - Runtime: `next-people-paseo`, specVersion `1000029`, transactionVersion `3`
 //! - Format: metadata V16, trimmed to pallets `System`, `Balances`, `Utility`,
-//!   `Proxy`, `People`, `PeopleLite`, `Resources`
+//!   `Proxy`, `People`, `PeopleLite`, `Resources`, `Game`, `ProofOfInk`
 //! - File: [`metadata/people.scale`](../metadata/people.scale)
 //!
 //! Refresh with:
-//! `subxt metadata --url <people-rpc> --pallets System,Balances,Utility,Proxy,People,PeopleLite,Resources -f bytes -o crates/chain-types/metadata/people.scale`
+//! `subxt metadata --url <people-rpc> --pallets System,Balances,Utility,Proxy,People,PeopleLite,Resources,Game,ProofOfInk -f bytes -o crates/chain-types/metadata/people.scale`
 
 /// Generated People Chain runtime API (calls, storage, constants, events).
 ///
@@ -257,5 +258,33 @@ mod tests {
             .register_lite_person([0u8; 65], username, None);
         assert_eq!(call.pallet_name(), "Resources");
         assert_eq!(call.call_name(), "register_lite_person");
+    }
+
+    /// The dim-tickets writer can construct both DIM variants of `set_invite_ticket`.
+    #[test]
+    fn builds_set_invite_ticket_calls() {
+        let ticket = subxt::utils::AccountId32([0u8; 32]);
+        let game = people::tx().game().set_invite_ticket(ticket);
+        assert_eq!(game.pallet_name(), "Game");
+        assert_eq!(game.call_name(), "set_invite_ticket");
+
+        let poi = people::tx().proof_of_ink().set_invite_ticket(ticket);
+        assert_eq!(poi.pallet_name(), "ProofOfInk");
+        assert_eq!(poi.call_name(), "set_invite_ticket");
+    }
+
+    /// The dim-tickets API can construct both DIM variants of the
+    /// `AvailableInvites` quota lookup (keyed by inviter at fetch time).
+    #[test]
+    fn builds_available_invites_queries() {
+        use subxt::storage::Address as _;
+
+        let game = people::storage().game().available_invites();
+        assert_eq!(game.pallet_name(), "Game");
+        assert_eq!(game.entry_name(), "AvailableInvites");
+
+        let poi = people::storage().proof_of_ink().available_invites();
+        assert_eq!(poi.pallet_name(), "ProofOfInk");
+        assert_eq!(poi.entry_name(), "AvailableInvites");
     }
 }

@@ -23,9 +23,10 @@ use subxt::tx::{DynamicPayload, TransactionStatus};
 use subxt::utils::AccountId32;
 use time::OffsetDateTime;
 
+use chain_client::WriterSigner;
+
 use super::client::ChainClient;
 use super::outbox::{self, Guard, Reservation};
-use super::signer::WriterSigner;
 
 /// Chain-writer configuration, loaded from the environment.
 #[derive(Debug, Clone)]
@@ -67,8 +68,10 @@ impl WriterConfig {
             Ok(v) if !v.trim().is_empty() => Some(parse_account(v.trim())?),
             _ => None,
         };
-        let holder_id = std::env::var("CHAIN_WRITER_HOLDER_ID")
-            .unwrap_or_else(|_| format!("writer-{}", std::process::id()));
+        let holder_id = match std::env::var("CHAIN_WRITER_HOLDER_ID") {
+            Ok(value) if !value.trim().is_empty() => value,
+            _ => format!("writer-{}", std::process::id()),
+        };
 
         Ok(Self {
             database_url,

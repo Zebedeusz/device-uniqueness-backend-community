@@ -46,12 +46,12 @@ create now. See "How the workspace grows" below.
 
 | Concept | Name | Status |
 |---|---|---|
-| generated People Chain (subxt) typed surface | `chain-types` | **exists** (shared by identity-service + username-indexer) |
-| chain connection / RPC transport | `chain-client` | module in identity-service today |
+| generated People Chain (subxt) typed surface | `chain-types` | **exists** (shared by identity-service + username-indexer + dim-tickets) |
+| chain connection / RPC transport + writer signing key | `chain-client` | **exists** (crate: reconnecting connect + `WriterSigner`; extracted when dim-tickets became the second consumer) |
 | Postgres connection + bootstrap | `postgres` | module in identity-service/username-indexer today |
 | config loading + fail-fast validation | `config` | module today |
 | telemetry (logs / metrics / tracing) | `telemetry` | not yet |
-| JWT + JWKS verification (for verify-only services) | `jwt-verify` | module today; the cross-service auth contract |
+| JWT + JWKS verification (for verify-only services) | `jwt-verify` | **exists** (crate; identity-service delegates its own verification to it) |
 
 ### Deployable services (plain domain word)
 
@@ -61,14 +61,15 @@ create now. See "How the workspace grows" below.
 | `username-indexer` | Finalized-chain username **indexer + public prefix search** (`GET /api/v1/usernames/search`). Read-only projection; can be down without affecting registration. | **exists** |
 | `notifications` | Thin `/api/v1/notify` relay. | future |
 | `turn` | JWT-gated `/api/v1/turn/issue` credential issuer (coturn relay = SRE infra). | future |
-| `invites` | `/api/v1/invitation-ticket/claim` — invite tickets + funding. No game/personhood backend. | future |
+| `invites` | JWT-gated `/api/v1/invitation-ticket/claim` — invite tickets + funding, backend-generated keypair pools, synchronous signature response. This is the route the shipping apps call for Game / ProofOfInk DIM claims. | future |
+| `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine; single-instance chain writer (`dim-tickets-writer`: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`). No known client consumer — the apps use the `invites` claim route (see the plan's correction note). Plan: `docs/plans/active/dim-tickets.md`. | **exists** |
 | gateway | Public-URL path routing via **Caddy** (reverse proxy): `/api/v1/usernames/search` → `username-indexer` (:8081), everything else → `identity-api` (:8080). See `docs/deploy.md`. | infra (Caddy) |
 
 ## How the workspace grows (lazy extraction)
 
 The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 
-- **Today there are 3 crates:** `chain-types`, `identity-service`, `username-indexer`.
+- **Today there are 6 crates:** `chain-types`, `chain-client`, `jwt-verify`, `identity-service`, `username-indexer`, `dim-tickets`.
 - **Services** become crates **when you build them** — `notifications`, `turn`, `invites` get a
   folder the day work starts, not before.
 - **Shared libs are extracted lazily — only when a *second* service needs the code.** Until then
@@ -77,10 +78,11 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 - **When you do extract, prefer a *few focused* crates, not extremes:**
   - ❌ 6 tiny crates scaffolded up front (premature boundaries, churn).
   - ❌ one `common`/`shared` grab-bag (every service recompiles + pulls everything).
-  - ✅ a handful (realistically **2–4** over time) that each do one clear thing. Likely order:
-    `chain-types` (already shared) → `jwt-verify` (first, it's the cross-service auth contract) →
-    optionally a small `platform` grouping of `config`+`telemetry`(+`postgres`) **only if** they
-    always travel together.
+  - ✅ a handful (realistically **3–4** over time) that each do one clear thing. `chain-types`,
+    `jwt-verify` (the cross-service auth contract), and `chain-client` (reconnecting transport +
+    writer signing key) are shared today — each extracted when dim-tickets became its second
+    consumer; next candidate is optionally a small `platform` grouping of
+    `config`+`telemetry`(+`postgres`) **only if** they always travel together.
 
 ## Classification quick-reference
 
@@ -91,6 +93,9 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 - **free-reg eligibility/queue** → `identity-service` product logic.
 - **chain-writer** → worker (`identity-chain-writer`) *inside* the `identity-service` boundary.
 - **notifications / turn / invites** → independent thin services (future).
+- **DIM tickets (game/personhood)** → the `/api/v1/dim-ticket` routes live in the `dim-tickets`
+  service — not `identity-service`. But the apps' game/personhood **claims** go through
+  `/api/v1/invitation-ticket/claim`, which is the `invites` service.
 - **gateway** → Caddy path routing (infra).
 
 ### Guardrails — do NOT create these as separate crates/services
@@ -106,7 +111,9 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 | `identity-service` (+ `identity-api`, `identity-chain-writer`) | unchanged | already correct |
 | `username-read` → `username-indexer` | done | renamed |
 | *(future)* notifications / turn / invites | `notifications` / `turn` / `invites` | name on creation |
-| *(future)* shared libs | `chain-client` / `postgres` / `config` / `telemetry` / `jwt-verify` | extract lazily, per above |
+| `jwt-verify` | `jwt-verify` | extracted (crate) |
+| `chain-client` | `chain-client` | extracted (crate) |
+| *(future)* shared libs | `postgres` / `config` / `telemetry` | extract lazily, per above |
 | gateway | Caddy | path routing in `deploy.md`; `/usernames/search` already routed to `username-indexer` |
 
 ## Open decisions (need the user)
@@ -150,6 +157,15 @@ Operational invariants an agent must respect when touching the code.
   a live Postgres `SELECT 1`), `/healthcheck`; JWKS at `/.well-known/jwks.json`. `AppState` =
   Postgres pool + `ChainClient` + `Jwt` + `Config`. `username-indexer` uses the same tower-http
   stack, but its `/readyz` also reports index freshness and it has no JWT/JWKS.
+- **DIM tickets are a per-row state machine, not an outbox copy.** `POST /api/v1/dim-ticket`
+  quota-checks the inviter's on-chain `AvailableInvites` synchronously, then inserts a `PENDING`
+  row (200); `dim-tickets-writer` batches due rows into one `Utility.force_batch` of
+  `set_invite_ticket` calls and splits the ordered `ItemCompleted`/`ItemFailed` events into
+  `REGISTERED` vs `PENDING` retries (backoff, cap → `FAILED`). The `retry_at` written at
+  `SUBMITTING` doubles as the in-flight lease: a crashed writer's rows come back as orphans and
+  are re-batched. `dim-tickets-writer` is **single-instance** (one inviter key = one nonce lane;
+  `writer_lease` is the deploy-overlap guard) — never scale it. The internal `SUBMITTING` status
+  is reported as `SUBMITTED` on the frozen wire.
 - **`username-indexer` serializes projection writes on one Postgres advisory lock.** Bootstrap and
   the incremental sync loop share one lock id; a full snapshot bootstrap runs **only when the
   `sync_state` checkpoint is empty**, and each sync pass takes the lock with `pg_try_advisory_lock`

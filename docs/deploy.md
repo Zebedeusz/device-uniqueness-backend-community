@@ -2,7 +2,11 @@
 
 From-zero setup of a server. Day-2 operations: [runbook.md](runbook.md).
 
-Topology: `identity-api` and `identity-chain-writer` share the identity Postgres; `username-indexer` owns a separate projection Postgres. Caddy routes the public API between the two HTTP services and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+Topology: `identity-api` and `identity-chain-writer` share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres. Caddy routes the public API between the three HTTP services and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+
+Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api` gets the **public** key (or JWKS) only. The inviter signing secret lives only in `dim-tickets-writer`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so neither identity service can read the inviter key nor vice versa.
+
+Postgres is reachable by sibling containers on the internal Compose network. The optional dim-tickets host port is bound to `127.0.0.1` only; set a URL-safe random `DIM_TICKETS_POSTGRES_PASSWORD` on deployments.
 
 ## Prerequisites
 
@@ -41,9 +45,16 @@ ENFORCE_AUTH=false
 RUST_LOG=info
 CHAIN_WRITER_SIGNER_SURI=<secret>        # mnemonic, 0x+64-hex seed, or 0x+128-hex raw sr25519
 CHAIN_WRITER_PROXY_FOR=<attester SS58 or empty>
+# dim-tickets (see .env.example for tunables and dev defaults)
+DIM_TICKETS_POSTGRES_PASSWORD=<URL-safe random password>
+PEOPLE_NETWORK=<westend2|paseo|polkadot>
+INVITER_ADDRESS=<inviter SS58>            # its on-chain AvailableInvites funds tickets
+JWT_ED25519_PUBLIC_KEY=0x<64-hex>         # PUBLIC half of JWT_ED25519_SECRET (or set JWT_JWKS_JSON)
+INVITER_SIGNER_SURI=<secret>              # same accepted formats as the chain writer
+INVITER_PROXY_FOR=<inviter primary SS58 or empty>
 ```
 
-The signer (or its proxy target) must be a registered attester authority with funds; the proxy relationship must already exist on-chain.
+The signer (or its proxy target) must be a registered attester authority with funds; the proxy relationship must already exist on-chain. Likewise the inviter (or the primary `INVITER_PROXY_FOR` points at) must hold `AvailableInvites` on the `Game` / `ProofOfInk` pallets and funds for fees. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
 
 ## 3. Run
 
@@ -62,6 +73,9 @@ identity.dotspark.app {
     handle /api/v1/usernames/search {
         reverse_proxy 127.0.0.1:8081
     }
+    handle /api/v1/dim-ticket* {
+        reverse_proxy 127.0.0.1:8082
+    }
     handle {
         reverse_proxy 127.0.0.1:8080
     }
@@ -78,9 +92,12 @@ sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```bash
 curl -fsS http://127.0.0.1:8080/readyz          # {"chain":"up","db":"up",...}
 curl -fsS http://127.0.0.1:8081/readyz          # projection freshness + dependencies
+curl -fsS http://127.0.0.1:8082/readyz          # dim-tickets: {"chain":"up","db":"up",...}
 curl -fsS https://<domain>/api/v1/attester
 curl -fsS 'https://<domain>/api/v1/usernames/search?prefix=alice'
+curl -sS https://<domain>/api/v1/dim-ticket/x   # 401 problem+json = routed + auth gate live
 sudo docker compose logs identity-chain-writer | tail -5   # "connected signer=…", "acquired writer lease"
+sudo docker compose logs dim-tickets-writer | tail -5      # "connected signer=…", "acquired writer lease"
 ```
 
 For CI deploys to reach this server, set the repo secrets `IBV2_SSH_KEY` (private key authorized for `ubuntu@server`) and `IBV2_HOST` (server IP), and add a read-only GitHub deploy key on the server.
@@ -92,6 +109,8 @@ For CI deploys to reach this server, set the repo secrets `IBV2_SSH_KEY` (privat
 | `migration N was previously applied but has been modified` | Volume holds an older schema. `sudo docker compose down && sudo docker volume rm identity-backend-v2_pgdata && sudo docker compose up -d` — destroys DB state, back up first ([runbook](runbook.md#database-backup-manual)). |
 | writer: `Cannot parse hex string` | Malformed `CHAIN_WRITER_SIGNER_SURI` (see accepted formats above). |
 | `identity-api` never healthy | It blocks on the People Chain RPC at startup — check connectivity to `PEOPLE_RPC_URL`. |
+| `dim-tickets-api` never healthy | Same startup shape as `identity-api` (Postgres + People RPC); also requires `INVITER_ADDRESS` + JWT public-key material — a missing var aborts boot loudly. |
+| dim tickets stuck `PENDING` | `dim-tickets-writer` down or inviter out of `AvailableInvites` — `sudo docker compose logs dim-tickets-writer`; the read path keeps serving either way. |
 | `username-indexer` never healthy | Check its Postgres, People Chain RPC, and bootstrap logs with `sudo docker compose logs username-indexer`. |
 | No TLS certificate | DNS not propagated or 80/443 blocked. `dig +short <domain>`, `journalctl -u caddy`. |
 | `/docs` returns 403/404 | Caddy can't traverse `/home/ubuntu` — re-run the `chmod o+x` line. |

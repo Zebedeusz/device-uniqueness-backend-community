@@ -36,11 +36,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    # Optional: full var set from a local .env (see .env.example). Values in
-    # `environment:` below override it (notably DATABASE_URL -> internal host).
-    env_file:
-      - path: .env
-        required: false
+    # Explicit allowlist: do not inject the shared .env wholesale because it
+    # also contains service-owned signing secrets.
     environment:
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity
@@ -49,6 +46,12 @@ services:
       JWT_ED25519_SECRET: ${JWT_ED25519_SECRET:-0x0101010101010101010101010101010101010101010101010101010101010101}
       # Dev default = //Alice's sr25519 public key (coherent with the writer SURI below).
       ATTESTER_PUBLIC_KEY: ${ATTESTER_PUBLIC_KEY:-0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d}
+      JWT_ISSUER: ${JWT_ISSUER:-polkadot-app}
+      ACCESS_TOKEN_TTL_SECS: ${ACCESS_TOKEN_TTL_SECS:-86400}
+      REFRESH_TOKEN_TTL_SECS: ${REFRESH_TOKEN_TTL_SECS:-2592000}
+      CHALLENGE_TTL_SECS: ${CHALLENGE_TTL_SECS:-300}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-30}
+      AUTH_RATE_WINDOW_SECS: ${AUTH_RATE_WINDOW_SECS:-60}
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       ENFORCE_AUTH: ${ENFORCE_AUTH:-false}
       RUST_LOG: ${RUST_LOG:-info}
@@ -74,11 +77,8 @@ services:
         condition: service_healthy
       identity-api:
         condition: service_started
-    # Optional: full var set from a local .env (see .env.example). Values in
-    # `environment:` below override it (notably DATABASE_URL -> internal host).
-    env_file:
-      - path: .env
-        required: false
+    # Explicit allowlist: do not inject the shared .env wholesale because it
+    # also contains service-owned signing secrets.
     environment:
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
@@ -86,6 +86,13 @@ services:
       # CHAIN_WRITER_PROXY_FOR to the cold attester primary it signs for.
       CHAIN_WRITER_SIGNER_SURI: ${CHAIN_WRITER_SIGNER_SURI:-//Alice}
       CHAIN_WRITER_PROXY_FOR: ${CHAIN_WRITER_PROXY_FOR:-}
+      CHAIN_WRITER_HOLDER_ID: ${CHAIN_WRITER_HOLDER_ID:-}
+      CHAIN_WRITER_LEASE_NAME: ${CHAIN_WRITER_LEASE_NAME:-people-chain-writer}
+      CHAIN_WRITER_LEASE_TTL_SECS: ${CHAIN_WRITER_LEASE_TTL_SECS:-30}
+      CHAIN_WRITER_POLL_SECS: ${CHAIN_WRITER_POLL_SECS:-2}
+      CHAIN_WRITER_BATCH_SIZE: ${CHAIN_WRITER_BATCH_SIZE:-25}
+      CHAIN_WRITER_FINALIZE_SECS: ${CHAIN_WRITER_FINALIZE_SECS:-120}
+      CHAIN_WRITER_MAX_ATTEMPTS: ${CHAIN_WRITER_MAX_ATTEMPTS:-8}
       RUST_LOG: ${RUST_LOG:-info}
     deploy:
       replicas: 1
@@ -120,15 +127,16 @@ services:
     depends_on:
       username-indexer-postgres:
         condition: service_healthy
-    # Optional: full var set from a local .env (see .env.example). Values in
-    # `environment:` below override it (notably DATABASE_URL -> internal host).
-    env_file:
-      - path: .env
-        required: false
+    # Explicit allowlist: do not inject the shared .env wholesale because it
+    # also contains service-owned signing secrets.
     environment:
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://username_indexer:username_indexer@username-indexer-postgres:5432/username_indexer
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      STORAGE_PAGE_SIZE: ${STORAGE_PAGE_SIZE:-1000}
+      SYNC_INTERVAL_SECS: ${SYNC_INTERVAL_SECS:-30}
+      SEARCH_RATE_LIMIT: ${SEARCH_RATE_LIMIT:-60}
+      SEARCH_RATE_LIMIT_WINDOW_SECS: ${SEARCH_RATE_LIMIT_WINDOW_SECS:-60}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8081:8080"
@@ -140,6 +148,97 @@ services:
       # Covers migrations + the finalized bootstrap scan + People Chain connect.
       start_period: 120s
 
+  # dim-tickets owns its persistence independently of the identity DB: the game
+  # ticket state machine can be wiped or rebuilt without touching auth state.
+  dim-tickets-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DIM_TICKETS_POSTGRES_USER:-dim_tickets}
+      POSTGRES_PASSWORD: ${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}
+      POSTGRES_DB: ${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
+    ports:
+      - "127.0.0.1:${DIM_TICKETS_POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - dim_tickets_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # N-replica HTTP API for the frozen /api/v1/dim-ticket surface. Verify-only:
+  # holds the identity JWT PUBLIC key only, never a signing secret. Runs on
+  # host port 8082. Applies embedded migrations on boot.
+  dim-tickets-api:
+    build: .
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["dim-tickets-api"]
+    depends_on:
+      dim-tickets-postgres:
+        condition: service_healthy
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
+      INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
+      # Dev default = the public key of identity-api's dev JWT_ED25519_SECRET,
+      # so tokens issued by the local identity-api verify here.
+      JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
+      JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
+      QUOTA_TIMEOUT_SECS: ${QUOTA_TIMEOUT_SECS:-15}
+      RATE_LIMIT: ${RATE_LIMIT:-30}
+      RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8082:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      # Covers migrations + the blocking People Chain connect at startup.
+      start_period: 40s
+
+  # Single-instance worker: registers pending DIM tickets on People Chain.
+  # Reuses the image built above. MUST stay at exactly one replica — one
+  # inviter key = one nonce lane. Do not `--scale` this service. The inviter
+  # signing secret lives ONLY here: not in dim-tickets-api, not in any
+  # identity service.
+  dim-tickets-writer:
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["dim-tickets-writer"]
+    depends_on:
+      dim-tickets-postgres:
+        condition: service_healthy
+      dim-tickets-api:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
+      INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
+      # Dev signer. In prod this is the hot inviter key (or its proxy); set
+      # INVITER_PROXY_FOR to the cold inviter primary it signs for.
+      INVITER_SIGNER_SURI: ${INVITER_SIGNER_SURI:-//Alice}
+      INVITER_PROXY_FOR: ${INVITER_PROXY_FOR:-}
+      WRITER_LEASE_NAME: ${WRITER_LEASE_NAME:-dim-tickets-writer}
+      WRITER_LEASE_TTL_SECS: ${WRITER_LEASE_TTL_SECS:-30}
+      WRITER_POLL_SECS: ${WRITER_POLL_SECS:-6}
+      WRITER_BATCH_SIZE: ${WRITER_BATCH_SIZE:-10}
+      WRITER_MAX_RETRIES: ${WRITER_MAX_RETRIES:-5}
+      WRITER_RETRY_BASE_MS: ${WRITER_RETRY_BASE_MS:-1000}
+      WRITER_RETRY_MAX_MS: ${WRITER_RETRY_MAX_MS:-60000}
+      WRITER_RETRY_MAX_EXPONENT: ${WRITER_RETRY_MAX_EXPONENT:-10}
+      WRITER_FINALIZE_SECS: ${WRITER_FINALIZE_SECS:-120}
+      RUST_LOG: ${RUST_LOG:-info}
+    deploy:
+      replicas: 1
+
 volumes:
   pgdata:
   username_indexer_pgdata:
+  dim_tickets_pgdata:

@@ -3,12 +3,15 @@
 //! identity-service is the **sole issuer**. Tokens are asymmetric (EdDSA/Ed25519)
 //! so every sibling service verifies with the public key via JWKS and can never
 //! mint tokens. This replaces the current backend's shared HS256 secret.
+//! Verification itself lives in the shared [`jwt_verify`] crate — the
+//! cross-service auth contract — which this issuer also uses on its own
+//! protected routes (pinned to its own key).
 
 use std::time::Duration;
 
 use base64::Engine as _;
-use ed25519_dalek::{Signer as _, SigningKey, Verifier as _};
-use serde::{Deserialize, Serialize};
+use ed25519_dalek::{Signer as _, SigningKey};
+use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 const B64: base64::engine::general_purpose::GeneralPurpose =
@@ -18,6 +21,7 @@ const B64: base64::engine::general_purpose::GeneralPurpose =
 #[derive(Clone)]
 pub struct Jwt {
     signing: SigningKey,
+    verifier: jwt_verify::Verifier,
     kid: String,
     issuer: String,
 }
@@ -56,6 +60,7 @@ impl Jwt {
         let digest = Sha256::digest(pubkey);
         let kid = hex::encode(&digest[..8]);
         Self {
+            verifier: jwt_verify::Verifier::from_verifying_key(signing.verifying_key()),
             signing,
             kid,
             issuer,
@@ -111,68 +116,33 @@ impl Jwt {
 
     /// Verify a bearer token this issuer signed and return its claims.
     ///
-    /// identity-service verifies its own tokens on protected routes; siblings do
-    /// the same via JWKS. Checks the EdDSA signature and `exp`.
+    /// Delegates to [`jwt_verify`] — the same verification siblings run via
+    /// JWKS — pinned to this issuer's own public key.
     pub fn verify(&self, token: &str) -> Result<VerifiedClaims, JwtError> {
-        let mut parts = token.split('.');
-        let (header, payload, signature) = match (parts.next(), parts.next(), parts.next()) {
-            (Some(h), Some(p), Some(s)) if parts.next().is_none() => (h, p, s),
-            _ => return Err(JwtError::Malformed),
-        };
-
-        let sig_bytes: [u8; 64] = B64
-            .decode(signature)
-            .ok()
-            .and_then(|b| b.try_into().ok())
-            .ok_or(JwtError::Malformed)?;
-        let signing_input = format!("{header}.{payload}");
-        self.signing
-            .verifying_key()
-            .verify(
-                signing_input.as_bytes(),
-                &ed25519_dalek::Signature::from_bytes(&sig_bytes),
-            )
-            .map_err(|_| JwtError::BadSignature)?;
-
-        let claims: VerifiedClaims = B64
-            .decode(payload)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .ok_or(JwtError::Malformed)?;
-        if claims.exp <= time::OffsetDateTime::now_utc().unix_timestamp() {
-            return Err(JwtError::Expired);
-        }
-        Ok(claims)
+        self.verifier.verify(token)
     }
 }
 
-/// Claims read back from a verified token.
-#[derive(Debug, Deserialize)]
-pub struct VerifiedClaims {
-    /// `0x`-hex sr25519 public key of the authenticated account.
-    #[serde(rename = "accountId")]
-    pub account_id: String,
-    /// Expiry (unix seconds).
-    pub exp: i64,
-}
-
-/// Why a bearer token was rejected.
-#[derive(Debug, thiserror::Error)]
-pub enum JwtError {
-    /// Not a well-formed `header.payload.signature` JWS.
-    #[error("malformed token")]
-    Malformed,
-    /// Signature did not verify against the issuer key.
-    #[error("bad signature")]
-    BadSignature,
-    /// Token is past its `exp`.
-    #[error("expired token")]
-    Expired,
-}
+pub use jwt_verify::{JwtError, VerifiedClaims};
 
 #[cfg(test)]
 mod tests {
+    use ed25519_dalek::Verifier as _;
+
     use super::*;
+
+    /// The issuer↔verifier contract: a sibling service loading the published
+    /// JWKS document verifies a freshly issued token, and the issuer's own
+    /// delegated `verify` agrees.
+    #[test]
+    fn siblings_verify_issued_tokens_via_jwks() {
+        let jwt = Jwt::new(&[7u8; 32], "polkadot-app".to_string());
+        let token = jwt.issue("0xabcdef", true, None, Duration::from_secs(3600));
+
+        let sibling = jwt_verify::Verifier::from_jwks(&jwt.jwks().to_string()).unwrap();
+        assert_eq!(sibling.verify(&token).unwrap().account_id, "0xabcdef");
+        assert_eq!(jwt.verify(&token).unwrap().account_id, "0xabcdef");
+    }
 
     #[test]
     fn issues_verifiable_token_with_account_id() {

@@ -18,13 +18,19 @@ This file is the small index of work required to retire the legacy backend. It i
 ## Active independent slices
 
 - Notification relay: `docs/plans/active/notify-relay.md`.
+- DIM tickets (game/personhood) for `/api/v1/dim-ticket`: `docs/plans/active/dim-tickets.md`.
+  Note (2026-07-22): this route has no known client consumer — the shipping apps obtain
+  Game/ProofOfInk credentials via `/api/v1/invitation-ticket/claim` (see the plan's correction
+  note), so the invite-claim slice below is the app-compatibility priority.
 
 ## Required later slices
 
 Create a focused ship-first plan when each item is ready to start:
 
 1. TURN compatibility for the shipping `/api/v1/turn/issue` route.
-2. Invite faucet compatibility for `/api/v1/invitation-ticket/claim`.
+2. Invite faucet compatibility for `/api/v1/invitation-ticket/claim` — the route the shipping
+   iOS/Android apps actually call (`POST` with `{who, dim}` for both Game and ProofOfInk;
+   synchronous signature response). App-compatibility priority among these slices.
 3. Single-URL gateway and per-service deployment integration.
 4. iOS App Attest and DeviceCheck verification.
 5. Android Play Integrity and TEE verification.

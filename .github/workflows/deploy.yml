@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: compose configuration boundaries
+        run: scripts/verify_compose_boundaries.sh
       - uses: Swatinem/rust-cache@v2
       - name: rustfmt
         run: cargo fmt --all -- --check
