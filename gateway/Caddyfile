@@ -1,0 +1,77 @@
+# The single-URL gateway: one public origin for the whole migration.
+#
+# This file is the committed source of truth for the route table (see the
+# ownership map in docs/plans/active/gateway.md). It is used verbatim in BOTH
+# deployments:
+#   - production host Caddy: every {$VAR:default} default matches the prod
+#     layout (domain, 127.0.0.1 upstream ports, docs path), so `sudo cp` into
+#     /etc/caddy/Caddyfile needs no environment at all;
+#   - the compose `gateway` service: docker-compose.yml overrides the vars
+#     with container DNS names and serves plain HTTP on :8000.
+#
+# Route-by-route cutover: the `legacy` blocks forward surfaces that have no
+# Rust owner yet to {$LEGACY_BACKEND_ORIGIN} (the deployed legacy TypeScript
+# backend). It DEFAULTS to the identity-api upstream, so with no legacy origin
+# configured those routes degrade to identity-api's 404 instead of a broken
+# gateway. Delete a route's block when its Rust owner ships; delete the whole
+# legacy section (and the env var) at legacy shutdown.
+#
+# No secrets live here or in the gateway process: it terminates TLS and
+# routes, nothing else.
+
+(legacy) {
+	# The Host header must name the upstream for an https:// legacy origin
+	# (TLS SNI + virtual hosting); harmless for plain host:port upstreams.
+	reverse_proxy {$LEGACY_BACKEND_ORIGIN:127.0.0.1:8080} {
+		header_up Host {upstream_hostport}
+	}
+}
+
+{$GATEWAY_ADDRESS:identity.dotspark.app} {
+	# Generated API reference (committed artifact; docs/api-reference).
+	handle_path /docs* {
+		root * {$GATEWAY_DOCS_ROOT:/home/ubuntu/identity-backend-v2/docs/api-reference}
+		file_server
+	}
+
+	# --- migrated routes: one handle per owning service -----------------
+	handle /api/v1/usernames/search {
+		reverse_proxy {$USERNAME_INDEXER_UPSTREAM:127.0.0.1:8081}
+	}
+	handle /api/v1/dim-ticket* {
+		reverse_proxy {$DIM_TICKETS_UPSTREAM:127.0.0.1:8082}
+	}
+	handle /api/v1/invitation-ticket/* {
+		reverse_proxy {$INVITE_TICKETS_UPSTREAM:127.0.0.1:8083}
+	}
+	handle /api/v1/turn/* {
+		reverse_proxy {$TURN_UPSTREAM:127.0.0.1:8084}
+	}
+
+	# --- cutover lane: no Rust owner yet --------------------------------
+	handle /api/v1/notify/* {
+		import legacy
+	}
+	handle /api/v1/poc* {
+		import legacy
+	}
+	handle /api/v1/schemas* {
+		import legacy
+	}
+	handle /api/v1/subscriptions* {
+		import legacy
+	}
+	# Legacy ops surfaces — never owned by a Rust service; die with legacy.
+	handle /admin* {
+		import legacy
+	}
+	handle /debug/* {
+		import legacy
+	}
+
+	# --- everything else: identity-api (auth, attester, usernames write,
+	# JWKS discovery, root health) ---------------------------------------
+	handle {
+		reverse_proxy {$IDENTITY_UPSTREAM:127.0.0.1:8080}
+	}
+}

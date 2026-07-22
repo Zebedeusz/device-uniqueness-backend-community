@@ -82,4 +82,10 @@ if ! service_block dim-tickets-postgres | grep -Fq "host_ip: 127.0.0.1"; then
   exit 1
 fi
 
+# The gateway terminates and routes only — it must never hold any secret.
+for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI TURN_SECRET \
+           DATABASE_URL JWT_JWKS_JSON JWT_ED25519_PUBLIC_KEY; do
+  forbid_key gateway "$key"
+done
+
 echo "compose configuration boundaries: ok"

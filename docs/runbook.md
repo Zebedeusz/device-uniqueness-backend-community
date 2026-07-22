@@ -69,8 +69,14 @@ gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres p
 
 ## Caddy / TLS / docs
 
-- Config `/etc/caddy/Caddyfile`; apply: `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
-- Caddy routes `/api/v1/usernames/search` to `username-indexer` on `127.0.0.1:8081` and `/api/v1/invitation-ticket/*` to `invite-tickets-api` on `127.0.0.1:8083`; all other API paths go to `identity-api` on `127.0.0.1:8080`.
+- The route table is the **committed** [`gateway/Caddyfile`](../gateway/Caddyfile) (ownership
+  map: `docs/plans/active/gateway.md`); CI validates and re-installs it into
+  `/etc/caddy/Caddyfile` on every deploy — never hand-edit the installed copy, change the repo
+  file. Manual apply: `sudo cp gateway/Caddyfile /etc/caddy/Caddyfile && sudo caddy validate
+  --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
+- Migrated routes go to their service on `127.0.0.1:8081–8084`; everything unhandled goes to
+  `identity-api` on `127.0.0.1:8080`; unmigrated legacy routes forward to
+  `LEGACY_BACKEND_ORIGIN` when configured (cutover lane).
 - Certificates renew automatically. `https://<domain>/docs` serves `docs/api-reference/` from the checkout — a `git pull` updates it, no rebuild.
 
 ## Failure modes

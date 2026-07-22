@@ -2,7 +2,7 @@
 
 From-zero setup of a server. Day-2 operations: [runbook.md](runbook.md).
 
-Topology: `identity-api` and `identity-chain-writer` share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a fourth, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). Caddy routes the public API between the four HTTP services and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+Topology: `identity-api` and `identity-chain-writer` share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a fourth, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). `turn-api` is stateless (no Postgres). Caddy routes the public API between the five HTTP services (route table: the committed [`gateway/Caddyfile`](../gateway/Caddyfile)) and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
 
 Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api`, `invite-tickets-api`, and `turn-api` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the dim inviter SURI lives only in `dim-tickets-writer`, the invite inviter SURI only in `invite-tickets-pool`. `turn-api` additionally holds `TURN_SECRET` — the HMAC key shared with the TURN relay (coturn `--use-auth-secret`); relay and issuer must be rotated together, and no other service sees it. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
 
@@ -68,36 +68,22 @@ The signer (or its proxy target) must be a registered attester authority with fu
 sudo docker compose up -d --build      # first build takes several minutes; migrations run on boot
 ```
 
-Configure `/etc/caddy/Caddyfile` (replace the domain):
-
-```caddy
-identity.dotspark.app {
-    handle_path /docs* {
-        root * /home/ubuntu/identity-backend-v2/docs/api-reference
-        file_server
-    }
-    handle /api/v1/usernames/search {
-        reverse_proxy 127.0.0.1:8081
-    }
-    handle /api/v1/dim-ticket* {
-        reverse_proxy 127.0.0.1:8082
-    }
-    handle /api/v1/invitation-ticket/* {
-        reverse_proxy 127.0.0.1:8083
-    }
-    handle /api/v1/turn/* {
-        reverse_proxy 127.0.0.1:8084
-    }
-    handle {
-        reverse_proxy 127.0.0.1:8080
-    }
-}
-```
+The route table lives in the repo: [`gateway/Caddyfile`](../gateway/Caddyfile) (see the
+ownership map in `docs/plans/active/gateway.md`). Its `{$VAR:default}` defaults match this
+layout exactly — domain `identity.dotspark.app`, upstreams on `127.0.0.1:8080–8084`, docs under
+`/home/ubuntu/identity-backend-v2` — so installing it needs no environment. For a different
+domain or paths, set the variables via a systemd drop-in for `caddy.service` instead of editing
+the file (edits would be overwritten: CI re-installs the file on every deploy).
 
 ```bash
 sudo chmod o+x /home/ubuntu
+sudo cp ~/identity-backend-v2/gateway/Caddyfile /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```
+
+Unmigrated legacy routes (`/api/v1/notify|poc|schemas|subscriptions`, `/admin`, `/debug`)
+forward to `{$LEGACY_BACKEND_ORIGIN}` when set (route-by-route cutover — point it at the
+deployed legacy backend); unset, they fall through to `identity-api`'s 404.
 
 ## 4. Verify
 

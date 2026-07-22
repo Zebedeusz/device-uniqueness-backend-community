@@ -362,6 +362,39 @@ services:
       timeout: 3s
       retries: 5
 
+  # The single-URL gateway: the same committed gateway/Caddyfile production's
+  # host Caddy installs, here serving plain HTTP on :8000 with upstreams
+  # pointed at the compose service names. Holds NO secrets (enforced by
+  # scripts/verify_compose_boundaries.sh) — it terminates and routes, nothing
+  # else. Per-service host ports (8080–8084) stay published for direct
+  # debugging; clients use the gateway.
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      GATEWAY_ADDRESS: ":8000"
+      GATEWAY_DOCS_ROOT: /srv/docs
+      IDENTITY_UPSTREAM: identity-api:8080
+      USERNAME_INDEXER_UPSTREAM: username-indexer:8080
+      DIM_TICKETS_UPSTREAM: dim-tickets-api:8080
+      INVITE_TICKETS_UPSTREAM: invite-tickets-api:8080
+      TURN_UPSTREAM: turn-api:8080
+      # Route-by-route cutover: point at the deployed legacy backend (e.g.
+      # https://legacy.example.com) to serve unmigrated routes through this
+      # single URL. Default = identity-api, whose 404 stands in for them.
+      LEGACY_BACKEND_ORIGIN: ${LEGACY_BACKEND_ORIGIN:-identity-api:8080}
+    volumes:
+      - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./docs/api-reference:/srv/docs:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - identity-api
+      - username-indexer
+      - dim-tickets-api
+      - invite-tickets-api
+      - turn-api
+
 volumes:
   pgdata:
   username_indexer_pgdata:

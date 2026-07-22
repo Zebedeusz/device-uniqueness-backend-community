@@ -47,6 +47,7 @@ jobs:
               - 'deny.toml'
               - '.github/workflows/**'
               - 'docs/api-reference/**'
+              - 'gateway/**'
 
   build:
     needs: changes
@@ -110,6 +111,11 @@ jobs:
             echo '$TOKEN' | sudo docker login ghcr.io -u '$ACTOR' --password-stdin
             sudo docker pull '$IMAGE'
             sudo IDENTITY_IMAGE='$IMAGE' docker compose up -d --wait --no-build
+            if ! cmp -s gateway/Caddyfile /etc/caddy/Caddyfile; then
+              sudo caddy validate --config gateway/Caddyfile --adapter caddyfile
+              sudo cp gateway/Caddyfile /etc/caddy/Caddyfile
+              sudo systemctl reload caddy
+            fi
             sudo docker logout ghcr.io
             sudo docker image prune -f >/dev/null"
 
