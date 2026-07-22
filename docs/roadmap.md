@@ -24,18 +24,19 @@ This file is the small index of work required to retire the legacy backend. It i
   below; see the plan's correction note).
 - Invite tickets (the route the shipping iOS/Android apps call for Game/ProofOfInk credentials —
   app-compatibility priority): `docs/plans/active/invite-claim.md`.
+- TURN credential issuer for the shipping `/api/v1/turn/issue` route:
+  `docs/plans/active/turn.md`.
 
 ## Required later slices
 
 Create a focused ship-first plan when each item is ready to start:
 
-1. TURN compatibility for the shipping `/api/v1/turn/issue` route.
-2. Single-URL gateway and per-service deployment integration.
-3. iOS App Attest and DeviceCheck verification.
-4. Android Play Integrity and TEE verification.
-5. Registration eligibility, queue, payment, and voucher behavior.
-6. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
-7. iOS and Android release-device validation.
-8. Data migration, rollback, route-by-route cutover, and legacy shutdown.
+1. Single-URL gateway and per-service deployment integration.
+2. iOS App Attest and DeviceCheck verification.
+3. Android Play Integrity and TEE verification.
+4. Registration eligibility, queue, payment, and voucher behavior.
+5. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
+6. iOS and Android release-device validation.
+7. Data migration, rollback, route-by-route cutover, and legacy shutdown.
 
 The legacy backend is retired only after every required route has an owner, the gateway is validated, parity gates pass, rollback is proven, and release-device smokes succeed.

@@ -1,0 +1,47 @@
+[package]
+name = "turn"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+# turn is a library (domain: coturn REST-API ephemeral credential minting) plus
+# one deployable binary: the stateless N-replica `turn-api`. No database, no
+# chain — the only secret is the HMAC key shared with the TURN relay.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "turn-api"
+path = "src/bin/turn_api.rs"
+
+[dependencies]
+jwt-verify.workspace = true
+http-common.workspace = true
+
+tokio.workspace = true
+axum.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+utoipa.workspace = true
+
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.8"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+ed25519-dalek = "2"
+
+[lints]
+workspace = true

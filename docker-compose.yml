@@ -327,6 +327,41 @@ services:
     deploy:
       replicas: 1
 
+  # TURN credential issuer: stateless (no DB, no chain) — the only secret is
+  # the HMAC key shared with the TURN relay (coturn `--use-auth-secret` mode
+  # must be configured with the SAME secret and algorithm, or minted
+  # credentials will not authenticate). Safe to scale. Host port 8084.
+  turn-api:
+    build: .
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["turn-api"]
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      # Dev secret (base64 of 32×0x42 — the golden-capture secret). In prod
+      # this MUST be the relay-shared secret; rotate by restarting relay and
+      # issuer together.
+      TURN_SECRET: ${TURN_SECRET:-QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=}
+      TURN_AUTH_ALGORITHM: ${TURN_AUTH_ALGORITHM:-SHA1}
+      TURN_TTL_SECS: ${TURN_TTL_SECS:-1800}
+      TURN_REALM: ${TURN_REALM:-example.org}
+      ICE_SERVERS: ${ICE_SERVERS:-stun:stun.example.com:3478,turn:turn.example.com:3478?transport=udp}
+      # Verifies identity-service JWTs. Dev default = the public half of
+      # identity-api's dev JWT_ED25519_SECRET above; in prod prefer
+      # JWT_JWKS_JSON from identity-service's /.well-known/jwks.json.
+      JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
+      JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
+      RATE_LIMIT: ${RATE_LIMIT:-30}
+      RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8084:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   pgdata:
   username_indexer_pgdata:

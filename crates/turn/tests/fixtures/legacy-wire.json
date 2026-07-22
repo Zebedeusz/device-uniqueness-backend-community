@@ -1,0 +1,426 @@
+[
+  {
+    "name": "post-401-missing-auth",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 401,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/missing-request-header",
+        "title": "Missing Authorization Header",
+        "detail": "Write requests with an Authorization header must include a valid Bearer token.",
+        "status": 401
+      }
+    }
+  },
+  {
+    "name": "post-401-non-bearer",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Basic abc"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 401,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-header-format",
+        "title": "Invalid Authorization Header",
+        "detail": "Authorization header must use Bearer scheme: \"Bearer <token>\".",
+        "status": 401
+      }
+    }
+  },
+  {
+    "name": "post-401-bad-token",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer not-a-jwt"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 401,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/unauthorized",
+        "title": "Invalid Token",
+        "detail": "Token verification failed. The token may be expired or malformed.",
+        "status": 401
+      }
+    }
+  },
+  {
+    "name": "post-400-wrong-type-region",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"regionHint\":5}"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected string, received number",
+            "pointer": "#/regionHint"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-array-body",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "[1,2]"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected object, received array",
+            "pointer": "#/"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-string-body",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "\"nope\""
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected object, received string",
+            "pointer": "#/"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-null-body",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "null"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+        "title": "Invalid Body Property Value",
+        "detail": "The request body contains an invalid body property value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected object, received null",
+            "pointer": "#/"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "post-400-malformed-json",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{not json"
+    },
+    "response": {
+      "status": 400,
+      "contentType": "text/plain;charset=UTF-8",
+      "retryAfter": null,
+      "body": "Malformed JSON in request body"
+    }
+  },
+  {
+    "name": "post-400-empty-body",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": ""
+    },
+    "response": {
+      "status": 400,
+      "contentType": "text/plain;charset=UTF-8",
+      "retryAfter": null,
+      "body": "Malformed JSON in request body"
+    }
+  },
+  {
+    "name": "post-missing-content-type",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 201,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "servers": [
+          "stun:stun.example.com:3478",
+          "turn:turn.example.com:3478?transport=udp"
+        ],
+        "username": "1784757652:0a79e3412921701a",
+        "password": "qmg5g7d1bXzY0qZkRUqtIPEIKjA=",
+        "ttl": 1800
+      }
+    }
+  },
+  {
+    "name": "post-no-body-at-all",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 201,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "servers": [
+          "stun:stun.example.com:3478",
+          "turn:turn.example.com:3478?transport=udp"
+        ],
+        "username": "1784757652:827ee2d9b8040b88",
+        "password": "t90QenCfKGFtyFd2ltwIyQdE8LU=",
+        "ttl": 1800
+      }
+    }
+  },
+  {
+    "name": "post-201-empty-object",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 201,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "servers": [
+          "stun:stun.example.com:3478",
+          "turn:turn.example.com:3478?transport=udp"
+        ],
+        "username": "1784757652:8209164dd0992c54",
+        "password": "hGKgn/5TeuXpRXe1adpWqtnwKOk=",
+        "ttl": 1800
+      }
+    }
+  },
+  {
+    "name": "post-201-region-hint",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"regionHint\":\"eu-west\"}"
+    },
+    "response": {
+      "status": 201,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "servers": [
+          "stun:stun.example.com:3478",
+          "turn:turn.example.com:3478?transport=udp"
+        ],
+        "username": "1784757652:a8df691c92380ada",
+        "password": "xWBgoEzWoCRUK6XR3AY04UGAMgY=",
+        "ttl": 1800
+      }
+    }
+  },
+  {
+    "name": "post-201-null-region",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"regionHint\":null}"
+    },
+    "response": {
+      "status": 201,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "servers": [
+          "stun:stun.example.com:3478",
+          "turn:turn.example.com:3478?transport=udp"
+        ],
+        "username": "1784757652:7fd9819a92ad2dd4",
+        "password": "8FdeP2qMv2hiStTL1u+Q1zeB4HU=",
+        "ttl": 1800
+      }
+    }
+  },
+  {
+    "name": "post-201-sha256",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 201,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "body": {
+        "servers": [
+          "stun:stun.example.com:3478",
+          "turn:turn.example.com:3478?transport=udp"
+        ],
+        "username": "1784757652:2e90c903293be377",
+        "password": "Cz/X1ghU+5k+or12Q2eaTg9Mk2238oHXDWOLRBCWM6Q=",
+        "ttl": 1800
+      }
+    }
+  },
+  {
+    "name": "get-404-issue-path",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/turn/issue",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "post-404-collection-path",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/turn",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.hmWQJpmjxuk4ZbS6eJYP_1rhZpXA3-Ruuy5ynywnZmU",
+        "Content-Type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "get-404-unknown-path",
+    "request": {
+      "method": "GET",
+      "path": "/nope",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "body": "404 Not Found"
+    }
+  }
+]

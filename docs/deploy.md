@@ -4,7 +4,7 @@ From-zero setup of a server. Day-2 operations: [runbook.md](runbook.md).
 
 Topology: `identity-api` and `identity-chain-writer` share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a fourth, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). Caddy routes the public API between the four HTTP services and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
 
-Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api` and `invite-tickets-api` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the dim inviter SURI lives only in `dim-tickets-writer`, the invite inviter SURI only in `invite-tickets-pool`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
+Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api`, `invite-tickets-api`, and `turn-api` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the dim inviter SURI lives only in `dim-tickets-writer`, the invite inviter SURI only in `invite-tickets-pool`. `turn-api` additionally holds `TURN_SECRET` — the HMAC key shared with the TURN relay (coturn `--use-auth-secret`); relay and issuer must be rotated together, and no other service sees it. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
 
 **Nonce lanes**: `dim-tickets-writer` and `invite-tickets-pool` each submit as "an inviter" and MUST NOT sign as the same account — two independent submitters on one account race nonces. Give each its own account (e.g. separate proxy delegates of one cold inviter primary); compose interpolates them from distinct `INVITER_*` (dim) and `INVITE_INVITER_*` (invite) host variables.
 
@@ -85,6 +85,9 @@ identity.dotspark.app {
     handle /api/v1/invitation-ticket/* {
         reverse_proxy 127.0.0.1:8083
     }
+    handle /api/v1/turn/* {
+        reverse_proxy 127.0.0.1:8084
+    }
     handle {
         reverse_proxy 127.0.0.1:8080
     }
@@ -102,6 +105,7 @@ sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
 curl -fsS http://127.0.0.1:8080/readyz          # {"chain":"up","db":"up",...}
 curl -fsS http://127.0.0.1:8081/readyz          # projection freshness + dependencies
 curl -fsS http://127.0.0.1:8082/readyz          # dim-tickets: {"chain":"up","db":"up",...}
+curl -fsS http://127.0.0.1:8084/readyz          # turn: {"service":"turn","status":"ready"} (stateless)
 curl -fsS https://<domain>/api/v1/attester
 curl -fsS 'https://<domain>/api/v1/usernames/search?prefix=alice'
 curl -sS https://<domain>/api/v1/dim-ticket/x   # 401 problem+json = routed + auth gate live

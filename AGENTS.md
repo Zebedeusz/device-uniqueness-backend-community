@@ -29,7 +29,7 @@ If a change makes a doc wrong, fix the doc (or flag the drift) in the same chang
 
 ## Workspace
 
-Nine crates today (plans may add more independently-deployable service crates):
+Ten crates today (plans may add more independently-deployable service crates):
 
 - `chain-types` — generated People Chain type surface (subxt codegen).
 - `chain-client` — reconnecting People Chain connection + the chain-writer signing key (`WriterSigner`); product-agnostic transport shared by the services.
@@ -39,6 +39,7 @@ Nine crates today (plans may add more independently-deployable service crates):
 - `username-indexer` — username indexer + search service.
 - `dim-tickets` — game/personhood invitation-credential service (lib + bins `dim-tickets-api` and `dim-tickets-writer`).
 - `invite-tickets` — synchronous invitation-credential claim service, the route the shipping apps call (lib + bins `invite-tickets-api` and `invite-tickets-pool`).
+- `turn` — stateless TURN credential issuer (coturn REST-API HMAC construction over a relay-shared secret; lib + bin `turn-api`). No DB, no chain.
 - `apidoc-gen` — dev-only tool (not deployed) that renders the committed API reference from the service crates' `#[utoipa::path]` annotations. Run via `just openapi`.
 
 Each service's boundary, persistence, endpoints, and data-flow invariants are in `docs/architecture.md`.

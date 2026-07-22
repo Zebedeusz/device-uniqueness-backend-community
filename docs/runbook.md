@@ -54,6 +54,8 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
 - Everything is in `~/identity-backend-v2/.env` (mode 600); apply changes with `sudo docker compose up -d`.
 - Rotating `JWT_ED25519_SECRET` invalidates outstanding JWTs (clients re-authenticate).
 - A new writer key must be an authorized attester (or proxy) with funds.
+- Rotating `TURN_SECRET` invalidates outstanding TURN credentials (≤ `TURN_TTL_SECS` old): update
+  the relay (coturn `--use-auth-secret`) and `turn-api` together, then `sudo docker compose up -d`.
 
 ## Database backup (manual)
 
@@ -81,4 +83,5 @@ gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres p
 | Rows stuck in `RETRY_AFTER` with wasm-trap errors | Invalid payload for `PeopleLite.attest`, or attester/proxy authorization missing on-chain. |
 | Writer exits at boot | Bad `CHAIN_WRITER_SIGNER_SURI` or DB unreachable. |
 | Username search fails while identity routes work | Check `curl -fsS http://127.0.0.1:8081/readyz`, indexer logs, and the dedicated Caddy route. |
+| TURN 201s minted but relay rejects the credentials | `TURN_SECRET`/`TURN_AUTH_ALGORITHM` drifted from the relay's coturn config — they must match exactly; rotate both together. `turn-api` itself is stateless (readyz never gates on anything). |
 | Down after reboot | Shouldn't happen (`restart: unless-stopped`); if it does: `sudo docker compose up -d`. |
