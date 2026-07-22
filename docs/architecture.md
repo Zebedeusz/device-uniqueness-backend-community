@@ -46,12 +46,12 @@ create now. See "How the workspace grows" below.
 
 | Concept | Name | Status |
 |---|---|---|
-| generated People Chain (subxt) typed surface | `chain-types` | **exists** (shared by identity-service + username-indexer + dim-tickets) |
-| chain connection / RPC transport + writer signing key | `chain-client` | **exists** (crate: reconnecting connect + `WriterSigner`; extracted when dim-tickets became the second consumer) |
+| generated People Chain (subxt) typed surface | `chain-types` | **exists** (shared by identity-service + username-indexer + dim-tickets + invite-tickets) |
+| chain connection / RPC transport + writer signing key | `chain-client` | **exists** (crate: reconnecting connect + `WriterSigner`; extracted when dim-tickets became the second consumer; invite-tickets is the third) |
 | Postgres connection + bootstrap | `postgres` | module in identity-service/username-indexer today |
 | config loading + fail-fast validation | `config` | module today |
 | telemetry (logs / metrics / tracing) | `telemetry` | not yet |
-| JWT + JWKS verification (for verify-only services) | `jwt-verify` | **exists** (crate; identity-service delegates its own verification to it) |
+| JWT + JWKS verification (for verify-only services) | `jwt-verify` | **exists** (crate; identity-service delegates its own verification to it; dim-tickets and invite-tickets consume it) |
 
 ### Deployable services (plain domain word)
 
@@ -61,8 +61,8 @@ create now. See "How the workspace grows" below.
 | `username-indexer` | Finalized-chain username **indexer + public prefix search** (`GET /api/v1/usernames/search`). Read-only projection; can be down without affecting registration. | **exists** |
 | `notifications` | Thin `/api/v1/notify` relay. | future |
 | `turn` | JWT-gated `/api/v1/turn/issue` credential issuer (coturn relay = SRE infra). | future |
-| `invites` | JWT-gated `/api/v1/invitation-ticket/claim` — invite tickets + funding, backend-generated keypair pools, synchronous signature response. This is the route the shipping apps call for Game / ProofOfInk DIM claims. | future |
-| `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine; single-instance chain writer (`dim-tickets-writer`: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`). No known client consumer — the apps use the `invites` claim route (see the plan's correction note). Plan: `docs/plans/active/dim-tickets.md`. | **exists** |
+| `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. Bins: `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar). Plan: `docs/plans/active/invite-claim.md`. | **exists** (pool refill demo pending a funded inviter) |
+| `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine; single-instance chain writer (`dim-tickets-writer`: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`). No known client consumer — the apps use the `invite-tickets` claim route (see the plan's correction note). Plan: `docs/plans/active/dim-tickets.md`. | **exists** |
 | gateway | Public-URL path routing via **Caddy** (reverse proxy): `/api/v1/usernames/search` → `username-indexer` (:8081), everything else → `identity-api` (:8080). See `docs/deploy.md`. | infra (Caddy) |
 
 ## How the workspace grows (lazy extraction)
@@ -157,6 +157,18 @@ Operational invariants an agent must respect when touching the code.
   a live Postgres `SELECT 1`), `/healthcheck`; JWKS at `/.well-known/jwks.json`. `AppState` =
   Postgres pool + `ChainClient` + `Jwt` + `Config`. `username-indexer` uses the same tower-http
   stack, but its `/readyz` also reports index freshness and it has no JWT/JWKS.
+- **invite-tickets: the pool has two states and the claim is one transaction.** A ticket row is
+  `available` (generated, registered on-chain) or `claimed` — nothing else; failed registrations
+  are never inserted. The claim is: pre-check count (`0` → 422 `Pool exhausted`) → one transaction
+  `SELECT … FOR UPDATE SKIP LOCKED ORDER BY created_at LIMIT 1` + flip to `claimed` (no row →
+  409 `Ticket race lost`) → sign → post-claim count as `remaining`. The signature is sr25519 by the
+  **ticket** key over the **decoded 32-byte account id** of `who` (substrate signing context), not
+  the address string. Pools are keyed `(dim, network)`; FIFO by `created_at`. The api bin never
+  touches the People Chain and holds no signing secret besides the pool rows it serves — chain
+  RPC and the inviter secret belong only to the single-instance `invite-tickets-pool` bin.
+  **`invite-tickets-pool` and `dim-tickets-writer` must not sign as the same account** — two
+  independent submitters on one account race nonces; give each its own inviter (e.g. separate
+  proxy delegates of one cold primary) before deploying both.
 - **DIM tickets are a per-row state machine, not an outbox copy.** `POST /api/v1/dim-ticket`
   quota-checks the inviter's on-chain `AvailableInvites` synchronously, then inserts a `PENDING`
   row (200); `dim-tickets-writer` batches due rows into one `Utility.force_batch` of

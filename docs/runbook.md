@@ -68,7 +68,7 @@ gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres p
 ## Caddy / TLS / docs
 
 - Config `/etc/caddy/Caddyfile`; apply: `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
-- Caddy routes `/api/v1/usernames/search` to `username-indexer` on `127.0.0.1:8081`; all other API paths go to `identity-api` on `127.0.0.1:8080`.
+- Caddy routes `/api/v1/usernames/search` to `username-indexer` on `127.0.0.1:8081` and `/api/v1/invitation-ticket/*` to `invite-tickets-api` on `127.0.0.1:8083`; all other API paths go to `identity-api` on `127.0.0.1:8080`.
 - Certificates renew automatically. `https://<domain>/docs` serves `docs/api-reference/` from the checkout — a `git pull` updates it, no rebuild.
 
 ## Failure modes
@@ -76,6 +76,8 @@ gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres p
 | Symptom | Action |
 |---|---|
 | `readyz`: `chain: down` | People Chain RPC unreachable/changed — check `PEOPLE_RPC_URL`. |
+| Claims returning 422 `Pool exhausted` | The ticket pool drained: check `invite-tickets-pool` logs (`ticket batch finalized … registered=0` = inviter out of `AvailableInvites` quota or unauthorized; `pool tick failed` = RPC/signer trouble). Pool size is logged each tick — treat sustained `available < ~10% of POOL_TARGET_SIZE` as the alert threshold; claims keep serving until depletion. |
+| `invite-tickets-pool` logs `another maintainer instance holds the pool lock` | A second replica or a stuck deploy overlap — scale back to exactly one. |
 | Rows stuck in `RETRY_AFTER` with wasm-trap errors | Invalid payload for `PeopleLite.attest`, or attester/proxy authorization missing on-chain. |
 | Writer exits at boot | Bad `CHAIN_WRITER_SIGNER_SURI` or DB unreachable. |
 | Username search fails while identity routes work | Check `curl -fsS http://127.0.0.1:8081/readyz`, indexer logs, and the dedicated Caddy route. |

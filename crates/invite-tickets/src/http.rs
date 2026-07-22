@@ -1,0 +1,444 @@
+//! HTTP surface for `invite-tickets-api`: the frozen claim route plus the
+//! shared axum primitives (state, errors, extractors, health).
+//!
+//! Route behavior — including its quirks — is the legacy contract:
+//! - `POST /api/v1/invitation-ticket/claim`: auth (401, the shared middleware
+//!   ran first in legacy too) → body-parse (unparseable JSON → the Hono
+//!   plain-text 400; **missing JSON content-type → 500**, because legacy
+//!   silently skipped validation and the handler then crashed) →
+//!   body-validate (400 problem details carrying zod v4 messages, including
+//!   the `Invalid SS58 address format` refine) → per-subject rate limit (429)
+//!   → pool pre-check (empty → 422 `Pool exhausted`) → transactional claim
+//!   (row race lost → 409 `Ticket race lost`) → sign → 200.
+//! - Unmatched paths and wrong methods: the Hono default `404 Not Found`
+//!   plain-text body (Hono routes are method-specific; a wrong method on a
+//!   known path was a 404, never a 405).
+
+pub mod error;
+pub mod extract;
+pub mod health;
+pub mod middleware;
+pub mod state;
+
+use std::str::FromStr as _;
+use std::time::Duration;
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::routing::post;
+use axum::{Json, Router};
+use time::OffsetDateTime;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tracing::Level;
+
+use self::error::{AppError, AppResult, FieldError};
+use self::extract::AuthSubject;
+use self::state::AppState;
+use crate::sign::TicketKeypair;
+use crate::tickets::{self, Dim};
+
+/// Per-request timeout; a slow handler yields `408` instead of pinning a connection.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Transient-DB retry budget, mirroring the legacy shell's `dbRetry`
+/// (3 retries, 200ms base, ×2 back-off; the legacy jitter is dropped as an
+/// implementation detail — it shaped load, not the wire contract).
+const DB_RETRIES: u32 = 3;
+const DB_RETRY_BASE: Duration = Duration::from_millis(200);
+
+/// Assemble the full router: health at root, the frozen claim route below,
+/// wrapped in the production middleware stack.
+pub fn routes(state: AppState) -> Router {
+    let api = Router::new().route("/claim", post(claim_ticket).fallback(not_found));
+
+    Router::new()
+        .merge(health::router())
+        .nest("/api/v1/invitation-ticket", api)
+        .fallback(not_found)
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_http_span)
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .with_state(state)
+}
+
+/// The legacy (Hono) default not-found response, byte-for-byte.
+async fn not_found() -> impl axum::response::IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=UTF-8",
+        )],
+        "404 Not Found",
+    )
+}
+
+/// Per-request tracing span carrying the request id, method, and path.
+fn make_http_span(request: &axum::http::Request<axum::body::Body>) -> tracing::Span {
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("-");
+    tracing::info_span!(
+        "http_request",
+        request_id = %request_id,
+        method = %request.method(),
+        path = request.uri().path(),
+    )
+}
+
+/// Enforce the per-subject fixed window; `429` with `Retry-After` on excess.
+fn check_rate_limit(state: &AppState, subject: &str) -> Result<(), AppError> {
+    if state.limiter.allow(subject) {
+        Ok(())
+    } else {
+        Err(AppError::RateLimited {
+            retry_after_secs: state.limiter.window_secs(),
+        })
+    }
+}
+
+/// Retry a transient-failure-prone DB operation with exponential back-off,
+/// mirroring the legacy shell's `dbRetry` posture: infra errors are retried
+/// then surfaced as a 500; domain outcomes (`Ok`) are never retried.
+async fn retry_db<T, F, Fut>(mut op: F) -> Result<T, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    let mut delay = DB_RETRY_BASE;
+    let mut attempt = 0;
+    loop {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(err) if attempt < DB_RETRIES => {
+                tracing::warn!(error = ?err, attempt, "transient DB failure; retrying");
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+                attempt += 1;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Validated `POST /api/v1/invitation-ticket/claim` body.
+#[derive(Debug)]
+struct ClaimRequest {
+    who: String,
+    /// The decoded 32-byte account id of `who` — the exact signature payload.
+    who_account: subxt::utils::AccountId32,
+    dim: Dim,
+}
+
+/// The zod v4 name for a JSON value's type, as it appears inside the legacy
+/// `Invalid input: expected …, received …` messages.
+fn zod_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+/// Validate the request body against the frozen schema (`who`: non-empty
+/// valid-SS58 string, `dim`: `Game | ProofOfInk`), reproducing the legacy zod
+/// v4 messages and pointers. zod v4 checks are non-aborting, so an empty
+/// `who` reports both the min-length failure and the SS58 refine failure.
+fn validate_body(body: &serde_json::Value) -> Result<ClaimRequest, Vec<FieldError>> {
+    if !body.is_object() {
+        return Err(vec![FieldError {
+            detail: format!(
+                "Invalid input: expected object, received {}",
+                zod_type_name(body)
+            ),
+            pointer: "#/".to_string(),
+        }]);
+    }
+
+    let mut errors = Vec::new();
+
+    let who = match body.get("who") {
+        Some(serde_json::Value::String(s)) => {
+            if s.is_empty() {
+                errors.push(FieldError {
+                    detail: "Too small: expected string to have >=1 characters".to_string(),
+                    pointer: "#/who".to_string(),
+                });
+            }
+            match subxt::utils::AccountId32::from_str(s) {
+                Ok(account) => Some((s.clone(), account)),
+                Err(_) => {
+                    errors.push(FieldError {
+                        detail: "Invalid SS58 address format".to_string(),
+                        pointer: "#/who".to_string(),
+                    });
+                    None
+                }
+            }
+        }
+        other => {
+            let received = other.map_or("undefined", |value| zod_type_name(value));
+            errors.push(FieldError {
+                detail: format!("Invalid input: expected string, received {received}"),
+                pointer: "#/who".to_string(),
+            });
+            None
+        }
+    };
+
+    // zod emits one uniform message for every bad `dim` — missing, null,
+    // wrong type, or an unknown literal.
+    let dim = match body.get("dim") {
+        Some(serde_json::Value::String(s)) => Dim::from_str(s).ok(),
+        _ => None,
+    };
+    if dim.is_none() {
+        errors.push(FieldError {
+            detail: "Invalid option: expected one of \"Game\"|\"ProofOfInk\"".to_string(),
+            pointer: "#/dim".to_string(),
+        });
+    }
+
+    match (who, dim) {
+        (Some((who, who_account)), Some(dim)) if errors.is_empty() => Ok(ClaimRequest {
+            who,
+            who_account,
+            dim,
+        }),
+        _ => Err(errors),
+    }
+}
+
+/// Claim an invitation ticket for a DIM, returning a signature (JWT-gated).
+#[utoipa::path(
+    post,
+    path = "/api/v1/invitation-ticket/claim",
+    tag = "Invitation Tickets",
+    security(("bearer_jwt" = [])),
+    request_body = crate::openapi::ClaimRequest,
+    responses(
+        (status = 200, description = "Ticket claimed: the oldest `available` ticket of the \
+`(dim, network)` pool, atomically flipped to `claimed`, with an sr25519 signature by the \
+ticket key over the claimant's decoded 32-byte account id.",
+         body = crate::openapi::ClaimResponse),
+        (status = 400, description = "Body validation failed (RFC 9457 problem details with \
+per-field `errors`); or plain-text `Malformed JSON in request body` when the body is not JSON.",
+         example = json!({
+             "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+             "title": "Invalid Body Property Value",
+             "detail": "The request body contains an invalid body property value.",
+             "status": 400,
+             "errors": [{ "detail": "Invalid SS58 address format", "pointer": "#/who" }]
+         })),
+        (status = 401, description = "Missing/malformed `Authorization` header or failed token \
+verification (RFC 9457 problem details).",
+         example = json!({
+             "type": "https://problems-registry.smartbear.com/unauthorized",
+             "title": "Invalid Token",
+             "detail": "Token verification failed. The token may be expired or malformed.",
+             "status": 401
+         })),
+        (status = 409, description = "Ticket race lost — a concurrent request claimed the \
+contended ticket.",
+         example = json!({ "error": "Ticket race lost" })),
+        (status = 422, description = "Pool exhausted — no `available` ticket in the \
+`(dim, network)` pool.",
+         example = json!({ "error": "Pool exhausted" })),
+        (status = 429, description = "Per-subject rate limit exceeded (RFC 9457 problem \
+details, with `Retry-After`).",
+         example = json!({
+             "type": "https://problems-registry.smartbear.com/too-many-requests",
+             "title": "Too Many Requests",
+             "detail": "Rate limit exceeded. Please retry after 60 seconds.",
+             "status": 429
+         })),
+        (status = 500, description = "Unexpected internal failure (opaque legacy body).",
+         example = json!({ "error": "Oops! Something went wrong." })),
+    )
+)]
+pub(crate) async fn claim_ticket(
+    State(state): State<AppState>,
+    auth: AuthSubject,
+    body: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
+) -> AppResult<Json<serde_json::Value>> {
+    let Json(body) = body.map_err(|rejection| match rejection {
+        // Legacy quirk: without a JSON content-type, Hono skipped validation
+        // entirely and the handler then crashed on the missing body — a 500,
+        // not a 400.
+        axum::extract::rejection::JsonRejection::MissingJsonContentType(_) => AppError::Internal(
+            anyhow::anyhow!("request without JSON content-type (legacy 500)"),
+        ),
+        // An unparseable body is the Hono plain-text 400.
+        _ => AppError::MalformedJson,
+    })?;
+    let request = validate_body(&body).map_err(AppError::InvalidBody)?;
+
+    check_rate_limit(&state, &auth.subject)?;
+
+    let dim = request.dim;
+    let network = state.config.network;
+    let now = OffsetDateTime::now_utc();
+
+    // Legacy order: a cheap pre-check first — an empty pool is 422 before any
+    // locking is attempted.
+    let available = retry_db(|| tickets::count_available(&state.pool, dim, network)).await?;
+    if available == 0 {
+        tracing::debug!(
+            dim = dim.as_str(),
+            network = network.as_str(),
+            "pool exhausted — no available tickets"
+        );
+        return Err(AppError::PoolExhausted);
+    }
+
+    // The atomic grab. `None` after a non-empty pre-check is the ticket race
+    // (even if the pool has actually drained in between — frozen quirk).
+    let ticket =
+        retry_db(|| tickets::claim_oldest(&state.pool, dim, network, &request.who, now)).await?;
+    let Some(ticket) = ticket else {
+        tracing::debug!(
+            dim = dim.as_str(),
+            network = network.as_str(),
+            "ticket claimed by concurrent request"
+        );
+        return Err(AppError::TicketRaceLost);
+    };
+
+    // A stored secret that fails to load is a data defect — the legacy shell
+    // `orDie`d here too (500), never a 4xx.
+    let keypair = TicketKeypair::from_stored_secret(&ticket.private_key)
+        .map_err(|e| AppError::Internal(e.into()))?;
+    let signature = keypair.sign(&request.who_account.0);
+
+    let remaining = retry_db(|| tickets::count_available(&state.pool, dim, network)).await?;
+
+    tracing::info!(
+        dim = dim.as_str(),
+        network = network.as_str(),
+        remaining,
+        "ticket claimed successfully"
+    );
+    Ok(Json(tickets::claim_response(
+        &ticket,
+        &signature,
+        dim,
+        network,
+        &request.who,
+        now,
+        remaining,
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    const VALID_WHO: &str = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty";
+
+    #[test]
+    fn accepts_valid_body() {
+        let body = json!({ "who": VALID_WHO, "dim": "Game" });
+        let parsed = validate_body(&body).expect("valid");
+        assert_eq!(parsed.dim, Dim::Game);
+        assert_eq!(parsed.who, VALID_WHO);
+        // The signature payload is the decoded account id, not the string.
+        assert_eq!(
+            parsed.who_account,
+            subxt::utils::AccountId32::from_str(VALID_WHO).expect("valid")
+        );
+    }
+
+    #[test]
+    fn rejects_missing_fields_with_pointers() {
+        let errors = validate_body(&json!({})).unwrap_err();
+        let pointers: Vec<&str> = errors.iter().map(|e| e.pointer.as_str()).collect();
+        assert_eq!(pointers, vec!["#/who", "#/dim"]);
+        assert_eq!(
+            errors[0].detail,
+            "Invalid input: expected string, received undefined"
+        );
+        assert_eq!(
+            errors[1].detail,
+            "Invalid option: expected one of \"Game\"|\"ProofOfInk\""
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_ss58_with_the_refine_message() {
+        let errors = validate_body(&json!({ "who": "not-an-address", "dim": "Game" })).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].detail, "Invalid SS58 address format");
+        assert_eq!(errors[0].pointer, "#/who");
+    }
+
+    #[test]
+    fn rejects_ss58_with_a_corrupted_checksum() {
+        // Flip the last character of a valid address: base58-valid, checksum-invalid.
+        let corrupted = format!("{}z", &VALID_WHO[..VALID_WHO.len() - 1]);
+        let errors = validate_body(&json!({ "who": corrupted, "dim": "Game" })).unwrap_err();
+        assert_eq!(errors[0].detail, "Invalid SS58 address format");
+    }
+
+    #[test]
+    fn empty_who_reports_both_min_length_and_ss58_failures() {
+        // zod v4 checks are non-aborting: min(1) and the SS58 refine both run.
+        let errors = validate_body(&json!({ "who": "", "dim": "Game" })).unwrap_err();
+        let details: Vec<&str> = errors.iter().map(|e| e.detail.as_str()).collect();
+        assert_eq!(
+            details,
+            vec![
+                "Too small: expected string to have >=1 characters",
+                "Invalid SS58 address format",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_dim_with_the_uniform_option_message() {
+        let errors = validate_body(&json!({ "who": VALID_WHO, "dim": "Chess" })).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].detail,
+            "Invalid option: expected one of \"Game\"|\"ProofOfInk\""
+        );
+        assert_eq!(errors[0].pointer, "#/dim");
+    }
+
+    #[test]
+    fn rejects_wrong_types() {
+        let errors = validate_body(&json!({ "who": 5, "dim": 7 })).unwrap_err();
+        assert_eq!(errors.len(), 2);
+        assert_eq!(
+            errors[0].detail,
+            "Invalid input: expected string, received number"
+        );
+    }
+
+    #[test]
+    fn rejects_non_object_bodies_at_the_root_pointer() {
+        let errors = validate_body(&json!([1, 2])).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].pointer, "#/");
+        assert_eq!(
+            errors[0].detail,
+            "Invalid input: expected object, received array"
+        );
+    }
+}

@@ -1,6 +1,7 @@
 //! Renders the committed API reference from the service crates' OpenAPI docs.
 //!
-//! The merged OpenAPI document (identity-service + username-indexer, both built
+//! The merged OpenAPI document (identity-service + username-indexer +
+//! invite-tickets, all built
 //! from `#[utoipa::path]` annotations) is the single source of truth. This crate
 //! serializes it to `openapi.json` and renders `index.html` by filling the
 //! `<!--@NAV-->` and `<!--@ENDPOINTS-->` placeholders in `template.html` with the
@@ -28,15 +29,21 @@ pub fn index_html_path() -> String {
     format!("{DOCS_DIR}/index.html")
 }
 
-/// Build the merged OpenAPI document (identity-service + username-indexer).
+/// Build the merged OpenAPI document (identity-service + username-indexer +
+/// invite-tickets).
 pub fn merged_doc() -> Value {
     let mut base =
         serde_json::to_value(identity_service::openapi::ApiDoc::openapi()).expect("identity doc");
     let indexer =
         serde_json::to_value(username_indexer::openapi::ApiDoc::openapi()).expect("indexer doc");
+    let invites =
+        serde_json::to_value(invite_tickets::openapi::ApiDoc::openapi()).expect("invites doc");
 
-    merge_object(&mut base, &indexer, "/paths");
-    merge_object(&mut base, &indexer, "/components/schemas");
+    for other in [&indexer, &invites] {
+        merge_object(&mut base, other, "/paths");
+        merge_object(&mut base, other, "/components/schemas");
+        merge_array(&mut base, other, "/tags");
+    }
     base
 }
 
@@ -72,6 +79,23 @@ fn merge_object(base: &mut Value, other: &Value, path: &str) {
     base.pointer_mut(path)
         .and_then(Value::as_object_mut)
         .expect("merge target is an object")
+        .extend(src);
+}
+
+/// Append the array at `path` from `other` into `base` (tag declarations from
+/// sibling docs land after the base doc's own, preserving section order).
+fn merge_array(base: &mut Value, other: &Value, path: &str) {
+    let src = other
+        .pointer(path)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if src.is_empty() {
+        return;
+    }
+    base.pointer_mut(path)
+        .and_then(Value::as_array_mut)
+        .expect("merge target is an array")
         .extend(src);
 }
 
@@ -733,6 +757,7 @@ mod tests {
             "/api/v1/usernames",
             "/api/v1/usernames/available",
             "/api/v1/usernames/search",
+            "/api/v1/invitation-ticket/claim",
         ] {
             assert!(paths.contains_key(route), "missing route {route}");
         }

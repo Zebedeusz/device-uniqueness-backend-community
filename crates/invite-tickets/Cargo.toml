@@ -1,0 +1,63 @@
+[package]
+name = "invite-tickets"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+# invite-tickets is a library (domain: the invitation-ticket keypair pool +
+# frozen claim wire mapping) plus two deployable binaries: the N-replica
+# `invite-tickets-api` and the single-instance `invite-tickets-pool` that
+# generates keypairs and registers them on People Chain (Phase 2).
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "invite-tickets-api"
+path = "src/bin/invite_tickets_api.rs"
+
+[[bin]]
+name = "invite-tickets-pool"
+path = "src/bin/invite_tickets_pool.rs"
+
+[dependencies]
+jwt-verify.workspace = true
+chain-types.workspace = true
+chain-client.workspace = true
+subxt = { workspace = true, features = ["jsonrpsee"] }
+subxt-signer.workspace = true
+schnorrkel = "0.11"
+
+tokio.workspace = true
+axum = { workspace = true }
+tower-http = { version = "0.6", features = ["trace", "timeout", "request-id"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+utoipa.workspace = true
+
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "time",
+] }
+ed25519-dalek = "2"
+hex = "0.4"
+time = "0.3"
+rand = "0.8"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+base64 = "0.22"
+
+[lints]
+workspace = true

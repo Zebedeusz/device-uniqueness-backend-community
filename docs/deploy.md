@@ -2,9 +2,11 @@
 
 From-zero setup of a server. Day-2 operations: [runbook.md](runbook.md).
 
-Topology: `identity-api` and `identity-chain-writer` share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres. Caddy routes the public API between the three HTTP services and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+Topology: `identity-api` and `identity-chain-writer` share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a fourth, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). Caddy routes the public API between the four HTTP services and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
 
-Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api` gets the **public** key (or JWKS) only. The inviter signing secret lives only in `dim-tickets-writer`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so neither identity service can read the inviter key nor vice versa.
+Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api` and `invite-tickets-api` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the dim inviter SURI lives only in `dim-tickets-writer`, the invite inviter SURI only in `invite-tickets-pool`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
+
+**Nonce lanes**: `dim-tickets-writer` and `invite-tickets-pool` each submit as "an inviter" and MUST NOT sign as the same account — two independent submitters on one account race nonces. Give each its own account (e.g. separate proxy delegates of one cold inviter primary); compose interpolates them from distinct `INVITER_*` (dim) and `INVITE_INVITER_*` (invite) host variables.
 
 Postgres is reachable by sibling containers on the internal Compose network. The optional dim-tickets host port is bound to `127.0.0.1` only; set a URL-safe random `DIM_TICKETS_POSTGRES_PASSWORD` on deployments.
 
@@ -48,13 +50,17 @@ CHAIN_WRITER_PROXY_FOR=<attester SS58 or empty>
 # dim-tickets (see .env.example for tunables and dev defaults)
 DIM_TICKETS_POSTGRES_PASSWORD=<URL-safe random password>
 PEOPLE_NETWORK=<westend2|paseo|polkadot>
-INVITER_ADDRESS=<inviter SS58>            # its on-chain AvailableInvites funds tickets
+INVITER_ADDRESS=<dim inviter SS58>        # its on-chain AvailableInvites funds dim tickets
 JWT_ED25519_PUBLIC_KEY=0x<64-hex>         # PUBLIC half of JWT_ED25519_SECRET (or set JWT_JWKS_JSON)
 INVITER_SIGNER_SURI=<secret>              # same accepted formats as the chain writer
 INVITER_PROXY_FOR=<inviter primary SS58 or empty>
+# invite-tickets (distinct account from the dim inviter — see Nonce lanes above)
+INVITE_INVITER_ADDRESS=<invite inviter SS58>   # funds set_invite_ticket; stamped into ticket rows
+INVITE_INVITER_SIGNER_SURI=<secret>            # hot invite inviter key (or its proxy delegate)
+INVITE_INVITER_PROXY_FOR=<inviter primary SS58 or empty>
 ```
 
-The signer (or its proxy target) must be a registered attester authority with funds; the proxy relationship must already exist on-chain. Likewise the inviter (or the primary `INVITER_PROXY_FOR` points at) must hold `AvailableInvites` on the `Game` / `ProofOfInk` pallets and funds for fees. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
+The signer (or its proxy target) must be a registered attester authority with funds; the proxy relationship must already exist on-chain. Likewise each inviter (or the primary its `…PROXY_FOR` points at) must hold `AvailableInvites` on the `Game` / `ProofOfInk` pallets and funds for fees. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
 
 ## 3. Run
 
@@ -75,6 +81,9 @@ identity.dotspark.app {
     }
     handle /api/v1/dim-ticket* {
         reverse_proxy 127.0.0.1:8082
+    }
+    handle /api/v1/invitation-ticket/* {
+        reverse_proxy 127.0.0.1:8083
     }
     handle {
         reverse_proxy 127.0.0.1:8080

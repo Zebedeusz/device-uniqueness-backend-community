@@ -238,7 +238,97 @@ services:
     deploy:
       replicas: 1
 
+  # invite-tickets owns its persistence independently: the ticket-pool table
+  # holds private keys and must share nothing with the identity DB.
+  # Host port 5435 (5434 is dim-tickets').
+  invite-tickets-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: invite_tickets
+      POSTGRES_PASSWORD: invite_tickets
+      POSTGRES_DB: invite_tickets
+    ports:
+      - "5435:5432"
+    volumes:
+      - invite_tickets_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invite_tickets -d invite_tickets"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # N-replica claim API for the frozen /api/v1/invitation-ticket/claim route.
+  # DB-only (never touches the People Chain) and holds no signing secret —
+  # explicit environment, no .env pass-through. Host port 8083 (8082 is
+  # dim-tickets-api's).
+  invite-tickets-api:
+    build: .
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["invite-tickets-api"]
+    depends_on:
+      invite-tickets-postgres:
+        condition: service_healthy
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
+      PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
+      # Verifies identity-service JWTs. Dev default = the public half of
+      # identity-api's dev JWT_ED25519_SECRET above; in prod prefer
+      # JWT_JWKS_JSON from identity-service's /.well-known/jwks.json.
+      JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
+      JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
+      RATE_LIMIT: ${RATE_LIMIT:-30}
+      RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8083:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      # Covers migrations (no chain connect on this bin).
+      start_period: 20s
+
+  # Single-instance pool maintainer: registers generated keypairs on People
+  # Chain as the inviter. MUST stay at exactly one replica — one inviter = one
+  # nonce lane (a Postgres advisory lock guards deploy overlaps). The inviter
+  # secret lives only in this service's environment; NOTE it must NOT be the
+  # same signing account as dim-tickets-writer (nonce lane conflict — see
+  # docs/deploy.md). Do not `--scale` this.
+  invite-tickets-pool:
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["invite-tickets-pool"]
+    depends_on:
+      invite-tickets-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
+      # Dev signer (unfunded: batches finalize with ItemFailed and no tickets
+      # insert). In prod: the hot invite-inviter key, or a proxy delegate with
+      # …PROXY_FOR set to the cold inviter primary (= …ADDRESS).
+      # Interpolated from INVITE_INVITER_* so the invite pool can never share
+      # the dim writer's signing account by default (nonce lanes — deploy.md).
+      # Dev default = //Bob (dim's writer defaults to //Alice).
+      INVITER_ADDRESS: ${INVITE_INVITER_ADDRESS:-5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty}
+      INVITER_SIGNER_SURI: ${INVITE_INVITER_SIGNER_SURI:-//Bob}
+      INVITER_PROXY_FOR: ${INVITE_INVITER_PROXY_FOR:-}
+      POOL_DIMS: ${POOL_DIMS:-Game,ProofOfInk}
+      POOL_TARGET_SIZE: ${POOL_TARGET_SIZE:-10000}
+      POOL_BATCH_MAX: ${POOL_BATCH_MAX:-100}
+      POOL_INTERVAL_SECS: ${POOL_INTERVAL_SECS:-6}
+      POOL_FINALIZE_SECS: ${POOL_FINALIZE_SECS:-60}
+      RUST_LOG: ${RUST_LOG:-info}
+    deploy:
+      replicas: 1
+
 volumes:
   pgdata:
   username_indexer_pgdata:
   dim_tickets_pgdata:
+  invite_tickets_pgdata:
