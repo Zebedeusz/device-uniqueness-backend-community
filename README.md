@@ -8,7 +8,7 @@ Three binaries with service-owned Postgres databases:
 - **`identity-chain-writer`** — single-instance worker that drains the reservation outbox onto the chain.
 - **`username-indexer`** — finalized-chain username projection and public prefix search.
 
-Current architecture and scope: [docs/architecture.md](docs/architecture.md) · Delivery status: [docs/roadmap.md](docs/roadmap.md)
+Current architecture and scope: [docs/architecture.md](docs/architecture.md) · Delivery status: plans under [docs/plans/](docs/plans/)
 
 ## Run locally
 

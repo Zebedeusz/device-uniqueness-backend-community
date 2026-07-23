@@ -12,7 +12,7 @@ contracts) built as isolated services, on track to **retire the legacy TypeScrip
 lives in docs, not here:
 
 - **Current architecture, scope, service boundaries, naming, and data-flow invariants** → `docs/architecture.md`
-- **Delivery index** → `docs/roadmap.md`; plans under `docs/plans/active/` and `docs/plans/done/`
+- **Delivery status** → the plans themselves: `docs/plans/active/` (in flight) and `docs/plans/done/` (shipped). **Remaining scope + legacy-retirement bar** → `docs/architecture.md`
 - **Public API reference** → `docs/api-reference/`
 - **Deploy / operations** → `docs/deploy.md`, `docs/runbook.md`
 
@@ -21,11 +21,18 @@ lives in docs, not here:
 The **code is the source of truth**; the docs must be kept in sync with it. When a change alters behavior, architecture, service boundaries, naming, or invariants, update the matching doc in the **same change**, not later:
 
 - Architecture, scope, service boundaries, naming, or data-flow invariants → `docs/architecture.md`.
-- Delivery status → `docs/roadmap.md` + the plan under `docs/plans/`.
+- Delivery status → the plan under `docs/plans/` (move it `active/` → `done/` when it ships). Remaining/not-yet-started scope + the legacy-retirement bar → `docs/architecture.md`.
 - Commands, conventions, config, workspace layout, or gotchas → this file.
 - **Public HTTP surface** (routes, request/response fields, status codes, examples) → the API reference is **generated from the code**, not hand-written. Annotate the handler with `#[utoipa::path(...)]` and its bodies with `#[derive(ToSchema)]`; register new handlers in the `paths(...)` list and new types in `components(schemas(...))` in `crates/<service>/src/openapi.rs`; then run `just openapi` and commit the regenerated `docs/api-reference/{openapi.json,index.html}` in the same change. Never hand-edit those two files (a test enforces this — see Gotchas). Edit the page **design** in `docs/api-reference/template.html` (the `<!--@NAV-->` / `<!--@ENDPOINTS-->` placeholders are filled by the generator).
 
 If a change makes a doc wrong, fix the doc (or flag the drift) in the same change instead of leaving it stale.
+
+## Planning
+
+Each substantial slice gets its own ship-first plan under `docs/plans/` (`active/` while in flight, `done/` once shipped), following the vendored `ship-first-plan` skill's template (`.claude/skills/ship-first-plan/SKILL.md` — Goals, Non-goals, demoable phases with ✅ demos, Testing, Later):
+
+- **One independently deployable service or bounded capability per plan** — so one owner can deliver it without editing another service's plan.
+- **Correctness and security belong in every MVP; measured optimization and cross-service hardening wait until before cutover.**
 
 ## Workspace
 
@@ -40,6 +47,7 @@ Ten crates today (plans may add more independently-deployable service crates):
 - `dim-tickets` — game/personhood invitation-credential service (lib + bins `dim-tickets-api` and `dim-tickets-writer`).
 - `invite-tickets` — synchronous invitation-credential claim service, the route the shipping apps call (lib + bins `invite-tickets-api` and `invite-tickets-pool`).
 - `turn` — stateless TURN credential issuer (coturn REST-API HMAC construction over a relay-shared secret; lib + bin `turn-api`). No DB, no chain.
+- `notifications` — thin `/api/v1/notify` relay (verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited; bin `notify-relay`) with optional iOS APNs + Android FCM providers.
 - `apidoc-gen` — dev-only tool (not deployed) that renders the committed API reference from the service crates' `#[utoipa::path]` annotations. Run via `just openapi`.
 
 Each service's boundary, persistence, endpoints, and data-flow invariants are in `docs/architecture.md`.

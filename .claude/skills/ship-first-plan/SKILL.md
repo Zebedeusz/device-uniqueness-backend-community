@@ -1,0 +1,153 @@
+---
+name: ship-first-plan
+description: Create a ship-first (ship-shaped) implementation plan with demoable MVP phases. Use when a user asks for an implementation plan, MVP plan, shipping plan, or wants to break down a feature into incremental, demoable phases. Emphasizes user journey order and daily-usable increments over polished completeness.
+metadata:
+  short-description: Create a ship-shaped MVP plan
+---
+
+# Ship-First Plan
+
+## Goal
+
+Create a **ship-first (ship-shaped) implementation plan** that unlocks the user journey as early as possible with demoable, incremental phases.
+
+## Hard constraints
+
+- **User journey drives order**: derive the primary user journey from the Inputs and order work to unlock that journey as early as possible.
+- **Ship-first**: prioritize a "daily-usable" MVP early; iterate and refine after.
+- **Demoable phases**: every phase must produce a runnable, testable increment and include ✅ Demo criteria.
+- **Scope discipline**: keep phases small; avoid big rewrites before there's something to dogfood.
+- **Reuse before rebuild**: before proposing any new module, config, schema, or abstraction, explore the codebase for existing functionality/patterns that already do it (or most of it). Prefer extending/reusing what exists over introducing a parallel implementation. New scaffolding must be justified against what already exists.
+
+## Important
+
+- Do NOT introduce feature ideas not explicitly present in the Inputs.
+- Do NOT add illustrative examples unless the Inputs include them.
+- Keep wording generic (avoid project-specific technical assumptions).
+
+## Workflow
+
+Operate read-only while researching and drafting — do not modify project files. The only file you create is the saved plan itself (step 6).
+
+1. **Gather Inputs**
+   - Project/feature: (1–3 sentences from user)
+   - Existing state: (what already exists)
+   - Constraints: (platforms, requirements, no-go's)
+   - Success looks like: (what "usable" means — must be measurable or binary; see Goal-quality gate below)
+
+   **Goal-quality gate (blocking):** before moving on, "Success looks like" must answer:
+   - What concrete user-visible thing will be true when this is done?
+   - What demo or command proves it (pass/fail or threshold)?
+   - What is explicitly out of scope?
+
+   If the success criterion is a pure activity description ("make X better", "improve Y", "work on Z") or has no observable validator, stop and sharpen it inline with one focused clarification question before proceeding.
+
+   Do not proceed to phasing until the goal passes this gate. Phases inherit their `✅ Demo` rigor from this criterion — a vague goal produces vague demos.
+
+2. **Deep context gathering**
+   - Gather codebase facts relevant to the feature: directory structure, existing patterns, related modules, test conventions, and likely touchpoints. If your agent supports delegating read-only exploration to a subagent, use it here.
+   - Read `README.md`, `AGENTS.md`, and obvious docs (`docs/`, `ARCHITECTURE.md`).
+   - Ground the plan in real code — do not guess about patterns, file locations, or APIs that can be looked up.
+
+3. **Ask follow-ups only if blocking**
+   - At most 1–2 questions; prefer multiple-choice.
+   - If unsure but not blocked, make reasonable assumptions and proceed.
+   - **Question classification**: before asking the user anything, check if it is a codebase fact (file locations, patterns, APIs) or a user preference (priority, scope, constraints). For codebase facts, look it up in the code first — never ask the user about things you can find yourself.
+
+4. **Create the plan using the template below**
+   - Output only the plan—no meta explanations.
+   - 80%+ claims should cite specific files or code locations found during context gathering.
+
+5. **Optional: review pass**
+   - If the plan touches architecture, security, or multiple subsystems, do a dedicated review pass before presenting it (self-review against the constraints above, or a second reviewer if available).
+   - Include the review's findings (risks, blind spots, suggestions) as a brief addendum after the plan.
+
+6. **Save the plan**
+   - Plans live under `docs/plans/` with a simple stage-based lifecycle:
+     - `drafts/` — exploratory, not yet green-lit (may be revised or dropped)
+     - `active/` — committed, being built
+     - `done/` — completed
+     - `archived/` — abandoned or superseded
+   - Save an exploratory / not-yet-approved plan to `docs/plans/drafts/<slug>.md`; save a committed plan to `docs/plans/active/<slug>.md`.
+   - If a plan with that slug already exists in any stage, confirm with the user before overwriting.
+
+## Plan template (follow exactly)
+
+```markdown
+> Stage: drafts | active | done | archived. Keep this plan current while working: when a scope item is finished, check its box `[ ]`→`[x]`; when a phase's ✅ demo passes, mark the phase done (with date). The plan file is the source of truth, not memory.
+
+# Goals
+- (tight list of user-visible outcomes)
+
+# Non-goals
+- (explicitly deferred scope)
+
+# Design principles
+- User journey drives order
+- (add only principles that clearly follow from Inputs)
+
+# User journey
+1. (core journey as numbered steps from the user's point of view)
+2. (only include steps implied by the Inputs)
+
+# Foundations / Already shipped (✅)
+List capabilities that already exist and should not be rebuilt.
+
+## <Capability name>
+- What exists: ...
+- ✅ Demo: (how to verify quickly)
+- Gaps: (only if any)
+
+# MVP phases (ship-shaped, demoable)
+Define Phase 1..N in user-journey order.
+
+## Phase 1: <name>
+- **Goal**: ...
+- **Scope checklist**:
+  - [ ] ...
+  - [ ] ...
+- **✅ Demo**: ...
+- **Risks / failure modes**:
+  - ...
+
+## Phase 2: <name>
+...
+
+# Contracts (guardrails)
+List non-negotiable behaviors that must not regress (derived from Inputs and existing behavior).
+- ...
+
+# Key decisions (decide early)
+List only decisions that would cause rework if postponed (derived from Inputs).
+- ...
+
+# Testing
+- Manual smoke demos per phase
+- Minimal regression tests only for contracts
+
+# Polish rounds (after MVP)
+Group improvements into rounds, each with a ✅ check-in demo.
+Limited strictly to scope present in Inputs.
+
+## Polish round 1: <name>
+- ...
+- ✅ Check-in demo: ...
+
+# Later / Deferred
+Explicit list of "not now" items + what would trigger revisiting them.
+- ...
+```
+
+## Phase guidance
+
+**Good phases:**
+- Unlock a step in the user journey
+- Are runnable and testable
+- Have clear ✅ Demo criteria
+- "Ugly but functional" over "polished but incomplete"
+
+**Avoid:**
+- Phases that don't produce user-visible value
+- Big rewrites before something to dogfood
+- Adding complexity without paying rent in user value
+- Phases too large to finish and demo quickly

@@ -1,4 +1,4 @@
-> Stage: done. Keep this plan as the completion record for the Identity Service MVP. New services and release work have separate plans indexed by `docs/roadmap.md`.
+> Stage: done. Keep this plan as the completion record for the Identity Service MVP. New services and release work have separate plans under `docs/plans/`.
 
 # Goals
 - Let a mobile-compatible client obtain a JWT, check lite-username discriminators, and register a username on Paseo Next v2.
@@ -106,4 +106,4 @@
 - Future acceptance gate: parity benchmarks and operational gates must pass before cutover.
 
 # Later / Deferred
-- See `docs/roadmap.md` for independent service plans and required release work.
+- See `docs/plans/` for independent service plans, and `docs/architecture.md` → Remaining scope for required release work.

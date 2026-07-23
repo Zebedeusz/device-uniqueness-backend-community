@@ -60,7 +60,7 @@ create now. See "How the workspace grows" below.
 |---|---|---|
 | `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. Bins: `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker). | **exists** |
 | `username-indexer` | Finalized-chain username **indexer + public prefix search** (`GET /api/v1/usernames/search`). Read-only projection; can be down without affecting registration. | **exists** |
-| `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. Independently deployable (own process/secrets, no `depends_on`). Bin: `notify-relay`. Real iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | **building** (Phases 1–4 shipped; live device smokes pending) |
+| `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. Independently deployable (own process/secrets, no `depends_on`). Bin: `notify-relay`. Real iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | **exists** (live device smokes pending) |
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. Bin: `turn-api`. Plan: `docs/plans/active/turn.md`. | **exists** |
 | `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. Bins: `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar). Plan: `docs/plans/active/invite-claim.md`. | **exists** (pool refill demo pending a funded inviter) |
 | `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine; single-instance chain writer (`dim-tickets-writer`: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`). No known client consumer — the apps use the `invite-tickets` claim route (see the plan's correction note). Plan: `docs/plans/active/dim-tickets.md`. | **exists** |
@@ -71,9 +71,9 @@ create now. See "How the workspace grows" below.
 
 The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 
-- **Today there are 10 crates:** `chain-types`, `chain-client`, `jwt-verify`, `http-common`,
-  `identity-service`, `username-indexer`, `dim-tickets`, `invite-tickets`, `turn`, and
-  `notifications`.
+- **Today there are 11 crates:** `chain-types`, `chain-client`, `jwt-verify`, `http-common`,
+  `identity-service`, `username-indexer`, `dim-tickets`, `invite-tickets`, `turn`,
+  `notifications`, and `apidoc-gen`.
 - **Services** become crates **when you build them** — a service gets a folder the day work
   starts, not before.
 - **Shared libs are extracted lazily — only when a *second* service needs the code.** Until then
@@ -129,6 +129,19 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
    with the writer later. Does not change ownership.
 2. **Database topology** — separate instances vs databases vs schemas. ("No shared tables" already decided.)
 3. **Migration/cutover** — migrate V1 data or start fresh, then route-by-route cutover + V1 shutdown.
+
+## Remaining scope & legacy retirement
+
+Not-yet-started slices. Each gets its own ship-first plan under `docs/plans/` when work begins:
+
+1. iOS App Attest and DeviceCheck verification.
+2. Android Play Integrity and TEE verification.
+3. Registration eligibility, queue, payment, and voucher behavior.
+4. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
+5. iOS and Android release-device validation.
+6. Data migration, rollback, route-by-route cutover, and legacy shutdown.
+
+The legacy backend is retired only after every required route has an owner, the gateway is validated, parity gates pass, rollback is proven, and release-device smokes succeed.
 
 ## Follow-up
 

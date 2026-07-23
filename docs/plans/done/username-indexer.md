@@ -1,4 +1,4 @@
-> Stage: done (2026-07-14). Completion record for the username read/search indexer. All three MVP phases were demoed live against Paseo Next v2; open decisions are resolved below. Follow-on latency work lives in `docs/plans/drafts/username-indexer-live-sync.md`; gateway routing and cutover are separate roadmap slices.
+> Stage: done (2026-07-14). Completion record for the username read/search indexer. All three MVP phases were demoed live against Paseo Next v2; open decisions are resolved below. Follow-on latency work lives in `docs/plans/drafts/username-indexer-live-sync.md`; gateway routing and cutover are separate slices.
 
 # Goals
 - Make `GET /api/v1/usernames/search` return assigned People Chain usernames in the exact shipping iOS and Android shape.
