@@ -47,11 +47,11 @@
 	handle /api/v1/turn/* {
 		reverse_proxy {$TURN_UPSTREAM:127.0.0.1:8084}
 	}
+	handle /api/v1/notify* {
+		reverse_proxy {$NOTIFY_UPSTREAM:127.0.0.1:8085}
+	}
 
 	# --- cutover lane: no Rust owner yet --------------------------------
-	handle /api/v1/notify/* {
-		import legacy
-	}
 	handle /api/v1/poc* {
 		import legacy
 	}

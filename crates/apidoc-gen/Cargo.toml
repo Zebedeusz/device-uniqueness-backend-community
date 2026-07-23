@@ -18,6 +18,7 @@ username-indexer = { path = "../username-indexer" }
 invite-tickets = { path = "../invite-tickets" }
 dim-tickets = { path = "../dim-tickets" }
 turn = { path = "../turn" }
+notifications = { path = "../notifications" }
 utoipa.workspace = true
 # preserve_order keeps object key order stable across the doc + rendered examples.
 serde_json = { version = "1", features = ["preserve_order"] }

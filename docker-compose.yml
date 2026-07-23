@@ -362,11 +362,51 @@ services:
       timeout: 3s
       retries: 5
 
+  # Independent, stateless, DB-free `/api/v1/notify` push relay. No depends_on:
+  # stopping it or giving it invalid provider secrets can only fail
+  # `/api/v1/notify`. Verify-only: holds the JWT public key, never a signing key.
+  # Push secrets are service-owned (from the server's chmod-600 .env); absent
+  # providers report per-request failure without affecting readiness. Host port
+  # 8085 (8083 is invite-tickets', 8084 is turn's).
+  notify-relay:
+    build: .
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["notify-relay"]
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      # Verifies identity-service JWTs. Dev default = the public half of
+      # identity-api's dev JWT_ED25519_SECRET above; in prod prefer JWT_JWKS_JSON.
+      JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
+      JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
+      NOTIFY_RATE_LIMIT: ${NOTIFY_RATE_LIMIT:-60}
+      NOTIFY_RATE_LIMIT_WINDOW_SECS: ${NOTIFY_RATE_LIMIT_WINDOW_SECS:-60}
+      # APNs: point APNS_KEY_FILE at your .p8 (see the volume); unset -> stub.
+      APNS_PRIVATE_KEY_FILE: /run/secrets/notify/apns.p8
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-}
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    # APNs key, read-only from wherever the operator keeps it. Unset -> /dev/null
+    # -> stub. Must exist before deploy, readable by uid 10001; see docs/deploy.md.
+    volumes:
+      - ${APNS_KEY_FILE:-/dev/null}:/run/secrets/notify/apns.p8:ro
+    ports:
+      - "8085:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   # The single-URL gateway: the same committed gateway/Caddyfile production's
   # host Caddy installs, here serving plain HTTP on :8000 with upstreams
   # pointed at the compose service names. Holds NO secrets (enforced by
   # scripts/verify_compose_boundaries.sh) — it terminates and routes, nothing
-  # else. Per-service host ports (8080–8084) stay published for direct
+  # else. Per-service host ports (8080–8085) stay published for direct
   # debugging; clients use the gateway.
   gateway:
     image: caddy:2-alpine
@@ -379,6 +419,7 @@ services:
       DIM_TICKETS_UPSTREAM: dim-tickets-api:8080
       INVITE_TICKETS_UPSTREAM: invite-tickets-api:8080
       TURN_UPSTREAM: turn-api:8080
+      NOTIFY_UPSTREAM: notify-relay:8080
       # Route-by-route cutover: point at the deployed legacy backend (e.g.
       # https://legacy.example.com) to serve unmigrated routes through this
       # single URL. Default = identity-api, whose 404 stands in for them.
@@ -394,9 +435,11 @@ services:
       - dim-tickets-api
       - invite-tickets-api
       - turn-api
+      - notify-relay
 
 volumes:
   pgdata:
   username_indexer_pgdata:
   dim_tickets_pgdata:
   invite_tickets_pgdata:
+

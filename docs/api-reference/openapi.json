@@ -842,6 +842,52 @@
           }
         ]
       }
+    },
+    "/api/v1/notify": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Handle `POST /api/v1/notify`.",
+        "description": "Order mirrors the sibling services: verified JWT (`401` problem details) →\nbody parse (`400` plain text on malformed JSON) → body validation (`400`\nproblem details with per-field `errors`) → per-subject rate limit (`429`\nwith `Retry-After`). Beyond that the relay always answers `200`: on provider\nfailure it preserves the legacy `success: false` body instead of an error\nstatus.",
+        "operationId": "handle",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotifyRequestDoc"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Relay accepted the request. The push result is echoed verbatim from the provider — including the legacy behavior of returning `200` with `success: false` on provider failure, so a non-200 status never signals a delivery failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifyResponseDoc"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Body validation failed (RFC 9457 problem details with per-field `errors`); or plain-text `Malformed JSON in request body` when the body is not JSON."
+          },
+          "401": {
+            "description": "Missing/malformed `Authorization` header or failed token verification (RFC 9457 problem details)."
+          },
+          "429": {
+            "description": "Per-subject rate limit exceeded (RFC 9457 problem details, with `Retry-After`)."
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -1576,6 +1622,139 @@
             "minimum": 0
           }
         }
+      },
+      "NotifyErrorDoc": {
+        "type": "object",
+        "description": "One per-device push error inside the `200` response.",
+        "required": [
+          "device"
+        ],
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "Device token the error is about."
+          },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "APNs environment, when the provider distinguishes dev/prod."
+          },
+          "status": {
+            "description": "Provider status (string or number), when present."
+          },
+          "response": {
+            "description": "Raw provider response, when present."
+          }
+        }
+      },
+      "NotifyRequestDoc": {
+        "type": "object",
+        "description": "The frozen `POST /api/v1/notify` request body.",
+        "required": [
+          "deviceToken",
+          "pushId",
+          "message"
+        ],
+        "properties": {
+          "deviceToken": {
+            "type": "string",
+            "description": "Recipient device token (APNs hex or FCM token); platform is auto-detected.",
+            "example": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+          },
+          "pushId": {
+            "type": "string",
+            "description": "Opaque push id echoed to the client app (32 or 64 hex chars).",
+            "example": "5d41402abc4b2a76b9719d911017c592"
+          },
+          "message": {
+            "type": "string",
+            "description": "Hex-encoded, already-encrypted message body (optional `0x` prefix).",
+            "example": "0x1234567890abcdef"
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit platform override; auto-detected from the token when omitted.",
+            "example": "ios"
+          },
+          "bundlerId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "APNs topic override (the app bundle id); VoIP derives `<topic>.voip`.",
+            "example": "io.parity.brevity"
+          },
+          "voip": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Enable the iOS VoIP push type for a call.",
+            "example": false
+          }
+        }
+      },
+      "NotifyResponseDoc": {
+        "type": "object",
+        "description": "The frozen `200` push-result body (echoed from the provider).",
+        "required": [
+          "success",
+          "platform"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the provider accepted the push.",
+            "example": true
+          },
+          "platform": {
+            "type": "string",
+            "description": "Platform the notification was routed to.",
+            "example": "ios"
+          },
+          "sent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Number of notifications sent, when the provider reports it (APNs/FCM).",
+            "example": 1,
+            "minimum": 0
+          },
+          "failed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Number of failed notifications, when the provider reports it (APNs).",
+            "example": 0,
+            "minimum": 0
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider message id, when returned (FCM)."
+          },
+          "errors": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/NotifyErrorDoc"
+            },
+            "description": "Per-device errors, on partial or full provider failure."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -1615,6 +1794,10 @@
     {
       "name": "TURN",
       "description": "Short-lived TURN credentials for WebRTC ICE negotiation: the coturn REST-API construction (username = expiry:id, password = HMAC over the username) minted against a secret shared with the TURN relay. Stateless — nothing is stored."
+    },
+    {
+      "name": "Notifications",
+      "description": "Send a push notification to an iOS (APNs) or Android (FCM) device. Stateless verify-only relay: it authenticates the JWT and forwards the frozen mobile payload, returning the provider's result — including the legacy `200 success:false` on provider failure."
     }
   ]
 }

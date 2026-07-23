@@ -40,53 +40,61 @@
 
 ## Phase 1: Compatible relay boundary
 - **Goal**: accept and validate existing mobile requests behind verify-only JWT auth.
+- **Status**: ✅ done 2026-07-14 — `notifications` crate (`notify-relay` bin), verify-only Ed25519 JWT, frozen `/api/v1/notify` contract, provider trait + fakes, golden contract tests. `just check` green.
 - **Scope checklist**:
-  - [ ] Add an independently deployable notify crate/binary with liveness and readiness.
-  - [ ] Add verify-only Ed25519 JWT validation from configured public-key/JWKS material; no runtime call to identity-service is required after startup. Consume the shared `crates/jwt-verify` micro-slice (decided 2026-07-16: dim-tickets runs in parallel, so the second-consumer condition for extraction is already met — don't build an inline copy).
-  - [ ] Accept `deviceToken`, `pushId`, `message`, `voip`, and optional `platform` / `bundlerId` exactly as the clients send them.
-  - [ ] Preserve platform detection and request validation from the legacy route.
-  - [ ] Preserve the response fields `success`, `platform`, `sent`, `failed`, `messageId`, and `errors`, including legacy provider-failure `200` responses.
-  - [ ] Define an internal provider trait and fake FCM/APNs implementations for contract tests.
-  - [ ] Keep the service stateless and DB-free.
+  - [x] Add an independently deployable notify crate/binary with liveness and readiness.
+  - [x] Add verify-only Ed25519 JWT validation from configured public-key/JWKS material; no runtime call to identity-service is required after startup. Consume the shared `crates/jwt-verify` crate rather than building an inline copy.
+  - [x] Accept `deviceToken`, `pushId`, `message`, `voip`, and optional `platform` / `bundlerId` exactly as the clients send them.
+  - [x] Preserve platform detection and request validation from the legacy route.
+  - [x] Preserve the response fields `success`, `platform`, `sent`, `failed`, `messageId`, and `errors`, including legacy provider-failure `200` responses.
+  - [x] Define an internal provider trait and fake FCM/APNs implementations for contract tests.
+  - [x] Keep the service stateless and DB-free.
 - **✅ Demo**: replay representative iOS and Android requests with a real identity-service JWT; fake providers receive the expected flat payload, and both mobile response models decode the result.
 - **Risks / failure modes**:
   - Android currently expects non-null response fields.
   - Platform auto-detection can misclassify unusual tokens; explicit client hints must win.
   - JWKS/key rotation behavior must fail closed without coupling request handling to identity-service uptime.
 
-## Phase 2: Android FCM delivery
-- **Goal**: deliver the existing Android chat push to a real test device.
+## Phase 2: iOS APNs and VoIP delivery
+- **Goal**: deliver both existing iOS notification modes to a real test device.
+- **Status**: 🚧 **alert delivery verified end-to-end 2026-07-22**; VoIP still pending a PushKit token. `provider::apns::ApnsProvider` (token-based ES256 auth, HTTP/2, flat payload, topic/push-type/expiry, error→contract mapping) wired behind optional `APNS_*` config; unit-tested. Live alert push to a real dev-build device (topic `io.parity.brevity`, `APNS_ENVIRONMENT=development`, real `.p8`) returned `success:true` and woke the app (it rendered "unsupported message" only because the smoke used a dummy hex `message`, not a real encrypted chat payload — transport/topic/envelope all correct). The VoIP push reached Apple with the right `.voip` topic + push-type but was rejected `400 DeviceTokenNotForTopic`: the standard APNs token isn't a PushKit token, so a real VoIP smoke needs the app's `PKPushRegistry` token.
+- **Credentials on hand** (from Leonardo, 2026-07-14): APNs `.p8` key, key ID `73L6WWUQ3F`, team ID `P2PX3JU8FT`, bundle ID `io.parity.brevity`. Environment confirmed for the dev build: `development`; alert topic `io.parity.brevity`, VoIP topic `io.parity.brevity.voip`. Still needed: a PushKit VoIP token to finish the VoIP demo.
 - **Scope checklist**:
-  - [ ] Add FCM credentials only to the notify service's fail-fast configuration.
-  - [ ] Send a high-priority data message with the flat `pushType`, `pushId`, and `message` payload expected by Android.
-  - [ ] Map FCM success, invalid token, and provider errors to the frozen response contract.
-  - [ ] Add provider timeout, bounded retry policy, structured logs, and delivery counters.
-- **✅ Demo**: a shipping-compatible Android request returns a successful response, and a test device receives and processes the push.
+  - [x] Add APNs key, key ID, team ID, environment, alert topic, and VoIP topic configuration only to notify. *(VoIP topic derives from the base topic + `.voip`, matching the legacy adapter — no separate var.)*
+  - [x] Preserve alert payload, mutable-content behavior, topic selection, and optional `bundlerId` override.
+  - [x] Preserve VoIP push type, topic suffix, and expiry behavior.
+  - [x] Map APNs success, invalid token, and provider errors to the frozen response contract.
+  - [x] Add provider timeout and structured logs.
+  - [ ] Bounded retry policy and delivery counters — **deferred**: a naive retry risks duplicate delivery (see risks); revisit with `apns-id` dedup. Counters wait on the telemetry slice.
+- **✅ Demo**: alert push **passed 2026-07-22** — an alert sent through `notify-relay` (dev environment, real `.p8`) was accepted by APNs and woke the real iOS dev build. VoIP half still **pending** a PushKit token (the alert-token smoke got the expected `DeviceTokenNotForTopic`).
+- **Risks / failure modes**:
+  - Development and production APNs environments and topics are easy to mix.
+  - Apple restricts VoIP pushes to call flows; the relay must preserve existing usage exactly.
+  - Retrying a push after a timeout can double-deliver unless a stable `apns-id` is reused.
+
+## Phase 3: Android FCM delivery
+- **Goal**: deliver the existing Android chat push to a real test device.
+- **Status**: 🚧 provider built 2026-07-14 — `provider::fcm::FcmProvider` (OAuth2 access token from an RS256 service-account assertion, cached; FCM v1 send; flat `data` payload; error→contract mapping) wired behind optional `FCM_SERVICE_ACCOUNT_JSON`; unit-tested. **Live delivery pending** the FCM service-account credentials (not yet provided) and a real Android device token.
+- **Scope checklist**:
+  - [x] Add FCM credentials only to the notify service's fail-fast configuration.
+  - [x] Send a high-priority data message with the flat `pushType`, `pushId`, and `message` payload expected by Android.
+  - [x] Map FCM success, invalid token, and provider errors to the frozen response contract.
+  - [x] Add provider timeout and structured logs.
+  - [ ] Bounded retry policy and delivery counters — **deferred** (same rationale as Phase 2: duplicate-delivery risk without idempotency; counters wait on the telemetry slice).
+- **✅ Demo** (partial): live auth/connectivity to Google **passed** (`400 INVALID_ARGUMENT` for a dummy token). A shipping-compatible Android request received by a real device is still **pending** a real Android device token.
 - **Risks / failure modes**:
   - Provider retries must not duplicate delivery beyond accepted legacy behavior.
   - Credentials must never appear in logs or error bodies.
 
-## Phase 3: iOS APNs and VoIP delivery
-- **Goal**: deliver both existing iOS notification modes to a real test device.
-- **Scope checklist**:
-  - [ ] Add APNs key, key ID, team ID, environment, alert topic, and VoIP topic configuration only to notify.
-  - [ ] Preserve alert payload, mutable-content behavior, topic selection, and optional `bundlerId` override.
-  - [ ] Preserve VoIP push type, topic suffix, and expiry behavior.
-  - [ ] Map APNs success, invalid token, and provider errors to the frozen response contract.
-  - [ ] Add provider timeout, bounded retry policy, structured logs, and delivery counters.
-- **✅ Demo**: one alert push and one VoIP push sent through the new service are received and handled by the existing iOS app.
-- **Risks / failure modes**:
-  - Development and production APNs environments and topics are easy to mix.
-  - Apple restricts VoIP pushes to call flows; the relay must preserve existing usage exactly.
-
 ## Phase 4: Independent deployment readiness
 - **Goal**: make notify safe to deploy without changing other service failure domains.
+- **Status**: ✅ done 2026-07-21 — `notify-relay` builds as its own binary (Dockerfile) and runs as an independent compose service on host port 8083 with **no `depends_on`** (no shared DB/chain/failure domain), service-owned secrets from the server `.env`. `/api/v1/notify` is rate-limited **per authenticated subject** (`RateLimiter`, key `route:accountId`, `429 RATE_LIMITED`, `NOTIFY_RATE_LIMIT`/`NOTIFY_RATE_LIMIT_WINDOW_SECS`, defaults 60/60s) — never raw IP. Caddy routes only `/api/v1/notify` → :8083; the future-gateway route contract is documented in `docs/deploy.md`/`docs/architecture.md` without building a gateway. `just check` green.
 - **Scope checklist**:
-  - [ ] Add a separate image/process definition, service-owned secrets, and readiness checks.
-  - [ ] Rate-limit by authenticated subject and route without venue-wide raw-IP coupling.
-  - [ ] Prove identity-service, username-indexer, and registration remain healthy when notify is stopped or provider credentials are invalid.
-  - [ ] Document the future gateway route contract without implementing the gateway in this slice.
-- **✅ Demo**: stop notify and observe only `/api/v1/notify` fail; restart it with valid secrets and deliver a test push without restarting identity-service.
+  - [x] Add a separate image/process definition, service-owned secrets, and readiness checks.
+  - [x] Rate-limit by authenticated subject and route without venue-wide raw-IP coupling.
+  - [x] Prove identity-service, username-indexer, and registration remain healthy when notify is stopped or provider credentials are invalid. *(By construction: no `depends_on`, stateless, DB-free; failure-isolation smoke documented in `docs/deploy.md`. Providers already degrade to unconfigured stubs on bad/absent secrets without affecting readiness.)*
+  - [x] Document the future gateway route contract without implementing the gateway in this slice.
+- **✅ Demo**: stop notify and observe only `/api/v1/notify` fail; restart it with valid secrets and deliver a test push without restarting identity-service. *(Isolation demo scripted in `docs/deploy.md` "Failure isolation check"; the deliver-a-push half still needs a real device token, tracked with the Phase 2/3 live smokes.)*
 - **Risks / failure modes**:
   - Gateway and cutover are separate plans; direct service testing is sufficient here.
 

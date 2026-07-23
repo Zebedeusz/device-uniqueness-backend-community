@@ -47,3 +47,7 @@ run:
 # Run the identity-chain-writer worker (drains the reservation outbox onto People Chain).
 run-writer:
     cargo run -p identity-service --bin identity-chain-writer
+
+# Run the notifications relay (stateless /api/v1/notify).
+run-notify:
+    cargo run -p notifications --bin notify-relay

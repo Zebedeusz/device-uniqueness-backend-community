@@ -831,6 +831,11 @@ table.params td.desc code{
     </div>
 
     <div class="nav-section">
+      <div class="nav-section-title">Notifications</div>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-api-v1-notify"><span class="method-mini">POST</span><span class="path">/notify</span></a>
+    </div>
+
+    <div class="nav-section">
       <div class="nav-section-title">Errors</div>
       <a class="nav-item" href="javascript:void(0)" data-scroll-to="errors"><span style="flex:1">Error Model</span></a>
       <a class="nav-item" href="javascript:void(0)" data-scroll-to="curl"><span style="flex:1">Smoke Commands</span></a>
@@ -2169,6 +2174,116 @@ legacy quirk).</td></tr>
                 <span class="sc-label">WRONG_DATA</span>
               </div>
               <div class="sc-desc">Body validation failed (RFC 9457 problem details with per-field <code>errors</code>); or plain-text <code>Malformed JSON in request body</code> when the body is present but not JSON. A request with no JSON content-type skips validation entirely and succeeds (legacy quirk).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c401">401</span>
+                <span class="sc-label">UNAUTHORIZED</span>
+              </div>
+              <div class="sc-desc">Missing/malformed <code>Authorization</code> header or failed token verification (RFC 9457 problem details).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c429">429</span>
+                <span class="sc-label">RATE_LIMITED</span>
+              </div>
+              <div class="sc-desc">Per-subject rate limit exceeded (RFC 9457 problem details, with <code>Retry-After</code>).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">09</span>
+        <h2>Notifications</h2>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="ep-api-v1-notify">#</a>
+      </div>
+
+      <div class="endpoint" id="ep-api-v1-notify">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/notify</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip red">400</span>
+            <span class="chip red">401</span>
+            <span class="chip yellow">429</span>
+            <span class="chip blue">bearer JWT</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Order mirrors the sibling services: verified JWT (<code>401</code> problem details) →
+body parse (<code>400</code> plain text on malformed JSON) → body validation (<code>400</code>
+problem details with per-field <code>errors</code>) → per-subject rate limit (<code>429</code>
+with <code>Retry-After</code>). Beyond that the relay always answers <code>200</code>: on provider
+failure it preserves the legacy <code>success: false</code> body instead of an error
+status.</p>
+          <div class="auth-note">
+            <span class="auth-label">Auth</span>
+            <span class="auth-text">Bearer JWT required in the <code>Authorization</code> header.</span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">deviceToken</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Recipient device token (APNs hex or FCM token); platform is auto-detected.</td></tr>
+                <tr><td class="name">pushId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Opaque push id echoed to the client app (32 or 64 hex chars).</td></tr>
+                <tr><td class="name">message</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Hex-encoded, already-encrypted message body (optional <code>0x</code> prefix).</td></tr>
+                <tr><td class="name">platform</td><td class="type">string</td><td class="req">no</td><td class="desc">Explicit platform override; auto-detected from the token when omitted.</td></tr>
+                <tr><td class="name">bundlerId</td><td class="type">string</td><td class="req">no</td><td class="desc">APNs topic override (the app bundle id); VoIP derives <code>&lt;topic&gt;.voip</code>.</td></tr>
+                <tr><td class="name">voip</td><td class="type">boolean</td><td class="req">no</td><td class="desc">Enable the iOS VoIP push type for a call.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Request Body</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"deviceToken"</span><span class="p">:</span> <span class="s">"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"</span><span class="p">,</span>
+  <span class="s">"pushId"</span><span class="p">:</span> <span class="s">"5d41402abc4b2a76b9719d911017c592"</span><span class="p">,</span>
+  <span class="s">"message"</span><span class="p">:</span> <span class="s">"0x1234567890abcdef"</span><span class="p">,</span>
+  <span class="s">"platform"</span><span class="p">:</span> <span class="s">"ios"</span><span class="p">,</span>
+  <span class="s">"bundlerId"</span><span class="p">:</span> <span class="s">"io.parity.brevity"</span><span class="p">,</span>
+  <span class="s">"voip"</span><span class="p">:</span> <span class="k">false</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"success"</span><span class="p">:</span> <span class="k">true</span><span class="p">,</span>
+  <span class="s">"platform"</span><span class="p">:</span> <span class="s">"ios"</span><span class="p">,</span>
+  <span class="s">"sent"</span><span class="p">:</span> <span class="n">1</span><span class="p">,</span>
+  <span class="s">"failed"</span><span class="p">:</span> <span class="n">0</span><span class="p">,</span>
+  <span class="s">"messageId"</span><span class="p">:</span> <span class="k">null</span><span class="p">,</span>
+  <span class="s">"errors"</span><span class="p">:</span> <span class="k">null</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="status-grid">
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c200">200</span>
+                <span class="sc-label">OK</span>
+              </div>
+              <div class="sc-desc">Relay accepted the request. The push result is echoed verbatim from the provider — including the legacy behavior of returning <code>200</code> with <code>success: false</code> on provider failure, so a non-200 status never signals a delivery failure.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c400">400</span>
+                <span class="sc-label">WRONG_DATA</span>
+              </div>
+              <div class="sc-desc">Body validation failed (RFC 9457 problem details with per-field <code>errors</code>); or plain-text <code>Malformed JSON in request body</code> when the body is not JSON.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">

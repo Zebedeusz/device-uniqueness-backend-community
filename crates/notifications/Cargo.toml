@@ -1,0 +1,43 @@
+[package]
+name = "notifications"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+# notifications is a thin, stateless, DB-free `/api/v1/notify` relay: it verifies
+# an identity-service JWT with public-key material only, preserves the frozen
+# mobile request/response contract, and hands the flat payload to a push provider.
+# The iOS (APNs) provider is real; the Android (FCM) provider lands in a later phase.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "notify-relay"
+path = "src/bin/notify_relay.rs"
+
+[dependencies]
+jwt-verify.workspace = true
+http-common.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+utoipa.workspace = true
+time = "0.3"
+# APNs HTTP/2 transport + ES256 provider-token signing from the .p8 key.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+jsonwebtoken = "9"
+
+[dev-dependencies]
+base64 = "0.22"
+ed25519-dalek = "2"
+
+[lints]
+workspace = true

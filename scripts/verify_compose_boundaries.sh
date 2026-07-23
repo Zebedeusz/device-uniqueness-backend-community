@@ -82,9 +82,21 @@ if ! service_block dim-tickets-postgres | grep -Fq "host_ip: 127.0.0.1"; then
   exit 1
 fi
 
+# notify-relay is verify-only and holds its own push secrets, but never another
+# service's signing/DB secrets.
+for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
+           INVITE_INVITER_SIGNER_SURI TURN_SECRET DATABASE_URL; do
+  forbid_key notify-relay "$key"
+done
+require_key notify-relay JWT_ED25519_PUBLIC_KEY
+require_key notify-relay NOTIFY_RATE_LIMIT
+require_key notify-relay NOTIFY_RATE_LIMIT_WINDOW_SECS
+
 # The gateway terminates and routes only — it must never hold any secret.
-for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI TURN_SECRET \
-           DATABASE_URL JWT_JWKS_JSON JWT_ED25519_PUBLIC_KEY; do
+for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
+           INVITE_INVITER_SIGNER_SURI TURN_SECRET DATABASE_URL JWT_JWKS_JSON \
+           JWT_ED25519_PUBLIC_KEY APNS_PRIVATE_KEY APNS_PRIVATE_KEY_FILE \
+           FCM_SERVICE_ACCOUNT_JSON; do
   forbid_key gateway "$key"
 done
 

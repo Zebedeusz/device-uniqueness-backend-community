@@ -51,8 +51,8 @@ create now. See "How the workspace grows" below.
 | Postgres connection + bootstrap | `postgres` | module in identity-service/username-indexer today |
 | config loading + fail-fast validation | `config` | module today |
 | telemetry (logs / metrics / tracing) | `telemetry` | not yet |
-| JWT + JWKS verification (for verify-only services) | `jwt-verify` | **exists** (crate; identity-service delegates its own verification to it; dim-tickets and invite-tickets consume it) |
-| frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | **exists** (crate; extracted 2026-07-22 when invite-tickets became the second consumer of dim-tickets' scaffolding; both consume it — the dialect bodies are golden-captured, change only with a fresh capture) |
+| JWT + JWKS verification (for verify-only services) | `jwt-verify` | **exists** (crate; identity-service delegates its own verification to it; dim-tickets, invite-tickets, and notifications consume it) |
+| frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | **exists** (crate; extracted 2026-07-22 when invite-tickets became the second consumer of dim-tickets' scaffolding; dim-tickets, invite-tickets, turn, and notifications consume it — the dialect bodies are golden-captured, change only with a fresh capture) |
 
 ### Deployable services (plain domain word)
 
@@ -60,22 +60,26 @@ create now. See "How the workspace grows" below.
 |---|---|---|
 | `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. Bins: `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker). | **exists** |
 | `username-indexer` | Finalized-chain username **indexer + public prefix search** (`GET /api/v1/usernames/search`). Read-only projection; can be down without affecting registration. | **exists** |
-| `notifications` | Thin `/api/v1/notify` relay. | future |
+| `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. Independently deployable (own process/secrets, no `depends_on`). Bin: `notify-relay`. Real iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | **building** (Phases 1–4 shipped; live device smokes pending) |
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. Bin: `turn-api`. Plan: `docs/plans/active/turn.md`. | **exists** |
 | `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. Bins: `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar). Plan: `docs/plans/active/invite-claim.md`. | **exists** (pool refill demo pending a funded inviter) |
 | `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine; single-instance chain writer (`dim-tickets-writer`: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`). No known client consumer — the apps use the `invite-tickets` claim route (see the plan's correction note). Plan: `docs/plans/active/dim-tickets.md`. | **exists** |
-| gateway | Public-URL path routing via **Caddy** (reverse proxy). The route table is the committed `gateway/Caddyfile` (env-parameterized; used by prod's host Caddy AND the compose `gateway` service on :8000): migrated routes → their service (:8081–8084), unmigrated legacy routes → `LEGACY_BACKEND_ORIGIN` (route-by-route cutover lane), everything else → `identity-api` (:8080). Holds no secrets (enforced by the compose boundary script). Plan: `docs/plans/active/gateway.md`. | **exists** (committed artifact + compose service) |
+| gateway | Public-URL path routing via **Caddy** (reverse proxy). The route table is the committed `gateway/Caddyfile` (env-parameterized; used by prod's host Caddy AND the compose `gateway` service on :8000): migrated routes → their service (:8081–8085), unmigrated legacy routes → `LEGACY_BACKEND_ORIGIN` (route-by-route cutover lane), everything else → `identity-api` (:8080). Holds no secrets (enforced by the compose boundary script). Plan: `docs/plans/active/gateway.md`. | **exists** (committed artifact + compose service) |
+
 
 ## How the workspace grows (lazy extraction)
 
 The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 
-- **Today there are 6 crates:** `chain-types`, `chain-client`, `jwt-verify`, `identity-service`, `username-indexer`, `dim-tickets`.
-- **Services** become crates **when you build them** — `notifications`, `turn`, `invites` get a
-  folder the day work starts, not before.
+- **Today there are 10 crates:** `chain-types`, `chain-client`, `jwt-verify`, `http-common`,
+  `identity-service`, `username-indexer`, `dim-tickets`, `invite-tickets`, `turn`, and
+  `notifications`.
+- **Services** become crates **when you build them** — a service gets a folder the day work
+  starts, not before.
 - **Shared libs are extracted lazily — only when a *second* service needs the code.** Until then
-  the logic lives as **modules inside** the owning service (today: `identity-service/src/{config,db,chain,jwt}.rs`).
-  Don't create a shared crate speculatively.
+  the logic lives as **modules inside** the owning service (today: `identity-service/src/{config,db,chain}.rs`).
+  `jwt-verify` was the first such extraction — pulled out the day `notifications` became the second
+  verify consumer. Don't create a shared crate speculatively.
 - **When you do extract, prefer a *few focused* crates, not extremes:**
   - ❌ 6 tiny crates scaffolded up front (premature boundaries, churn).
   - ❌ one `common`/`shared` grab-bag (every service recompiles + pulls everything).
@@ -93,7 +97,7 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 - **username read/search** → `username-indexer` — true carve-out.
 - **free-reg eligibility/queue** → `identity-service` product logic.
 - **chain-writer** → worker (`identity-chain-writer`) *inside* the `identity-service` boundary.
-- **notifications / turn / invites** → independent thin services (future).
+- **notifications** → independent thin service; **turn / invites** → future independent services.
 - **DIM tickets (game/personhood)** → the `/api/v1/dim-ticket` routes live in the `dim-tickets`
   service — not `identity-service`. But the apps' game/personhood **claims** go through
   `/api/v1/invitation-ticket/claim`, which is the `invites` service.
@@ -111,12 +115,13 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 | `chain-types` | `chain-types` | unchanged |
 | `identity-service` (+ `identity-api`, `identity-chain-writer`) | unchanged | already correct |
 | `username-read` → `username-indexer` | done | renamed |
-| *(future)* notifications / turn / invites | `notifications` / `turn` / `invites` | name on creation |
+| `notifications` | `notifications` | created; bin `notify-relay` |
+| *(future)* turn / invites | `turn` / `invites` | name on creation |
 | `jwt-verify` | `jwt-verify` | extracted (crate) |
 | `chain-client` | `chain-client` | extracted (crate) |
 | `http-common` | `http-common` | extracted (crate) |
 | *(future)* shared libs | `postgres` / `config` / `telemetry` | extract lazily, per above |
-| gateway | Caddy | path routing in `deploy.md`; `/usernames/search` already routed to `username-indexer` |
+| gateway | Caddy | routes search → :8081, DIM tickets → :8082, notify → :8083, else identity-api → :8080 |
 
 ## Open decisions (need the user)
 
@@ -185,6 +190,13 @@ Operational invariants an agent must respect when touching the code.
   `sync_state` checkpoint is empty**, and each sync pass takes the lock with `pg_try_advisory_lock`
   (skips the pass if another instance holds it). So the service is safe as N replicas on one shared
   Postgres, and restarts resume incrementally from the checkpoint (no full re-scan).
+- **`notifications` is an isolated failure domain.** It is stateless, DB-free, and shares no
+  `depends_on` with any other service, so `/readyz` needs no external probe (readiness = the bound
+  listener; provider outages are per-request `200 success:false`, never unreadiness) and stopping it
+  or feeding it bad provider secrets can only fail `/api/v1/notify`. Its `/api/v1/notify` route is
+  rate-limited **per authenticated subject** (JWT `accountId`) keyed on `route:subject` — never raw
+  client IP — enforced after JWT verification, `429 RATE_LIMITED` on exceed. It holds only the JWT
+  **public** key (verify-only); push secrets (`APNS_*`/`FCM_*`) are service-owned.
 
 ## External references
 

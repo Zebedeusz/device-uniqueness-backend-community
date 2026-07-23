@@ -22,7 +22,7 @@ this gateway before the migration is complete.
 | `/api/v1/dim-ticket*` | `dim-tickets-api` (:8082) | migrated |
 | `/api/v1/invitation-ticket/*` | `invite-tickets-api` (:8083) | migrated |
 | `/api/v1/turn/*` | `turn-api` (:8084) | migrated |
-| `/api/v1/notify/*` | **legacy origin** | awaiting notify-relay |
+| `/api/v1/notify*` | `notify-relay` (:8085) | migrated |
 | `/api/v1/poc*` | **legacy origin** | unowned — needs an in/out ruling |
 | `/api/v1/schemas*` | **legacy origin** | unowned — needs an in/out ruling |
 | `/api/v1/subscriptions*` | **legacy origin** | unowned — needs an in/out ruling |
