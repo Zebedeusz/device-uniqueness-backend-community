@@ -128,6 +128,36 @@ sudo docker compose start notify-relay                                          
 
 For CI deploys to reach this server, set the repo secrets `IBV2_SSH_KEY` (private key authorized for `ubuntu@server`) and `IBV2_HOST` (server IP), and add a read-only GitHub deploy key on the server.
 
+## Release images
+
+Pushing a `v*` tag publishes a multi-arch (`linux/amd64` + `linux/arm64`) image to
+`ghcr.io/paritytech/identity-backend-rust`, tagged `1.2.3`, `v1.2.3`, `1.2`, and `1`.
+This is independent of the `main` deploy above: tagging never restarts production, and
+`latest` continues to track `main`. arm64 is cross-built under QEMU, so a release build
+takes tens of minutes.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The package inherits the repo's private visibility, so external consumers need a GitHub
+token with `read:packages` (SSO-authorized for `paritytech`) to pull. Make the package
+public only as a deliberate decision — it publishes binaries of a private repo.
+
+To run a release image rather than build one, set `IDENTITY_IMAGE` to the tag and pass
+`--no-build`; otherwise compose rebuilds from source, because every application service
+declares `build: .`. The services each fail fast on missing configuration:
+
+| Service | Required |
+|---|---|
+| `identity-api` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `JWT_ED25519_SECRET`, `ATTESTER_PUBLIC_KEY` |
+| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI` |
+| `username-indexer` | `DATABASE_URL`, `PEOPLE_RPC_URL` |
+
+`identity-api` and `username-indexer` need **separate databases**: each applies its own
+`sqlx::migrate!` set and they would collide on a shared `_sqlx_migrations` table. Dev-only
+defaults for every variable are in `.env.example`.
+
 ## Troubleshooting
 
 | You see | Fix |
