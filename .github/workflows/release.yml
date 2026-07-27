@@ -1,0 +1,93 @@
+name: Release
+
+# Publishes a tagged, multi-arch image for external consumers. Independent of
+# the `main` deploy pipeline in deploy.yml: tagging never restarts production,
+# and `latest` keeps tracking `main`.
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # Builds one architecture per native runner, pushing by digest only (no tags).
+  # `manifest` joins the digests into the tagged image. Native runners replace
+  # QEMU emulation, which took over an hour for arm64 alone.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          # Per-arch scope: one shared scope would have each architecture evict
+          # the other's layers on every release.
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest='${{ steps.build.outputs.digest }}'
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Joins the per-arch digests into one tagged manifest list, so a single tag
+  # serves both architectures and Docker picks the right one per host.
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Exact version only. No `latest` (it tracks `main`) and no moving major /
+      # minor tags, which would jump across breaking changes while pre-1.0.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
+      - name: Create and push manifest list
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.target."docker-metadata-action".tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+      - name: Verify both architectures are present
+        run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"

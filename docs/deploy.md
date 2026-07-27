@@ -130,11 +130,13 @@ For CI deploys to reach this server, set the repo secrets `IBV2_SSH_KEY` (privat
 
 ## Release images
 
-Pushing a `v*` tag publishes a multi-arch (`linux/amd64` + `linux/arm64`) image to
-`ghcr.io/paritytech/identity-backend-rust`, tagged `1.2.3`, `v1.2.3`, `1.2`, and `1`.
-This is independent of the `main` deploy above: tagging never restarts production, and
-`latest` continues to track `main`. arm64 is cross-built under QEMU, so a release build
-takes tens of minutes.
+Pushing a `v*` tag runs [`release.yml`](../.github/workflows/release.yml), publishing a
+multi-arch (`linux/amd64` + `linux/arm64`) image to
+`ghcr.io/paritytech/identity-backend-rust` tagged `1.2.3` and `v1.2.3`. Each architecture
+builds on its own native runner and the two are joined into one manifest list, so a single
+tag serves both. Releases are independent of the `main` deploy above: tagging never
+restarts production, and `latest` keeps tracking `main`. Tag a commit that already passed
+CI on `main` — the release workflow builds and publishes without re-running the test gate.
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
