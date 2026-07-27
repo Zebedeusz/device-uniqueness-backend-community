@@ -80,6 +80,10 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
+          # `latest=false`: that tag tracks `main` from deploy.yml and must not
+          # jump to a release. metadata-action would otherwise add it for any
+          # semver tag.
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
@@ -87,7 +91,9 @@ jobs:
         working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
-            $(jq -cr '.target."docker-metadata-action".tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+      - name: Verify both architectures are present
+        run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"
       - name: Verify both architectures are present
         run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"
