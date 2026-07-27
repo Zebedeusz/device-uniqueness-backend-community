@@ -1,4 +1,8 @@
 //! Runtime configuration for username-indexer.
+//!
+//! Uses the shared `http-common` [`ConfigError`], but keeps getter-based
+//! parsing so config tests stay deterministic under parallel execution
+//! (no process-environment mutation).
 
 use std::net::SocketAddr;
 
@@ -29,21 +33,7 @@ pub struct Config {
     pub search_rate_limit_window_secs: u32,
 }
 
-/// A missing or malformed configuration value.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ConfigError {
-    /// A required environment variable was not set or was empty.
-    #[error("required environment variable {0} is not set")]
-    Missing(&'static str),
-    /// An environment variable held an invalid value.
-    #[error("environment variable {key} is invalid: {reason}")]
-    Invalid {
-        /// The offending variable name.
-        key: &'static str,
-        /// Why the value is invalid.
-        reason: String,
-    },
-}
+pub use http_common::config::ConfigError;
 
 impl Config {
     /// Read and validate configuration from the process environment.
@@ -159,11 +149,14 @@ mod tests {
 
     #[test]
     fn requires_database_and_people_rpc_urls() {
-        assert_eq!(config(&[]), Err(ConfigError::Missing("DATABASE_URL")));
-        assert_eq!(
+        assert!(matches!(
+            config(&[]),
+            Err(ConfigError::Missing("DATABASE_URL"))
+        ));
+        assert!(matches!(
             config(&[("DATABASE_URL", "postgres://localhost/read")]),
             Err(ConfigError::Missing("PEOPLE_RPC_URL"))
-        );
+        ));
     }
 
     #[test]

@@ -46,6 +46,13 @@ pub struct Config {
     pub auth_enabled: bool,
     /// Hard gate (`true`) vs soft/advisory gate (`false`).
     pub enforce_auth: bool,
+    /// Whether registration accepts the optional `dotns` block (mirrors the
+    /// legacy `DOTNS_GATEWAY_ENABLED` gate and its captured 400 message).
+    pub dotns_gateway_enabled: bool,
+    /// Max age, in seconds, of `dotns.signedAt` (the intake freshness bound).
+    pub dotns_intake_freshness_max_age_secs: u32,
+    /// Max future skew, in seconds, tolerated on `dotns.signedAt`.
+    pub dotns_max_future_skew_secs: u32,
 }
 
 /// A required or malformed configuration value; surfaced at startup.
@@ -90,7 +97,36 @@ impl Config {
             auth_rate_window: Duration::from_secs(parse_var("AUTH_RATE_WINDOW_SECS", "60")?),
             auth_enabled: env_bool("AUTH_ENABLED", false),
             enforce_auth: env_bool("ENFORCE_AUTH", false),
+            dotns_gateway_enabled: env_bool("DOTNS_GATEWAY_ENABLED", true),
+            dotns_intake_freshness_max_age_secs: parse_var(
+                "DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS",
+                "600",
+            )?,
+            dotns_max_future_skew_secs: parse_var("DOTNS_MAX_FUTURE_SKEW_SECS", "600")?,
         })
+    }
+
+    /// A fully-populated config for unit tests (no environment access).
+    #[doc(hidden)]
+    pub fn test_default() -> Self {
+        Self {
+            bind_addr: "127.0.0.1:0".parse().expect("valid addr"),
+            database_url: "unused".to_string(),
+            jwt_secret: [7u8; 32],
+            jwt_issuer: "polkadot-app".to_string(),
+            people_rpc_url: "unused".to_string(),
+            attester_public_key: format!("0x{}", "aa".repeat(32)),
+            access_ttl: Duration::from_secs(86_400),
+            refresh_ttl: Duration::from_secs(2_592_000),
+            challenge_ttl: Duration::from_secs(300),
+            auth_rate_limit: 1_000,
+            auth_rate_window: Duration::from_secs(60),
+            auth_enabled: false,
+            enforce_auth: false,
+            dotns_gateway_enabled: true,
+            dotns_intake_freshness_max_age_secs: 600,
+            dotns_max_future_skew_secs: 600,
+        }
     }
 
     /// Human-readable attestation posture for startup logs and `/readyz` detail.

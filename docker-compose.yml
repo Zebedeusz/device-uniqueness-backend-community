@@ -17,7 +17,7 @@ services:
       POSTGRES_PASSWORD: identity
       POSTGRES_DB: identity
     ports:
-      - "5432:5432"
+      - "${IDENTITY_POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -54,6 +54,9 @@ services:
       AUTH_RATE_WINDOW_SECS: ${AUTH_RATE_WINDOW_SECS:-60}
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       ENFORCE_AUTH: ${ENFORCE_AUTH:-false}
+      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-true}
+      DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: ${DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS:-600}
+      DOTNS_MAX_FUTURE_SKEW_SECS: ${DOTNS_MAX_FUTURE_SKEW_SECS:-600}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8080:8080"
@@ -116,8 +119,8 @@ services:
       timeout: 3s
       retries: 10
 
-  # Independent public search service. Bootstraps a finalized username projection
-  # from People Chain on boot, then serves rate-limited `GET /api/v1/usernames/search`.
+  # Independent public username-read service. Bootstraps a finalized projection
+  # from People Chain, then serves rate-limited search and single-name lookup.
   # Reuses the image built by identity-api. Runs on host port 8081.
   username-indexer:
     build: .
@@ -442,4 +445,3 @@ volumes:
   username_indexer_pgdata:
   dim_tickets_pgdata:
   invite_tickets_pgdata:
-

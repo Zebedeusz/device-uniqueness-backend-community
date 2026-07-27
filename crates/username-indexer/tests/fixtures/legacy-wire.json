@@ -1,0 +1,1653 @@
+[
+  {
+    "name": "search-200-empty",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=zzz",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-200-mixed-order",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-200-include-onchain-true",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&includeOnchainData=true",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": {
+              "blockHash": "0xabababababababababababababababababababababababababababababababab",
+              "blockNumber": 12345,
+              "blockIndex": 3,
+              "eventIndex": 7
+            },
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": {
+              "blockHash": "0xabababababababababababababababababababababababababababababababab",
+              "blockNumber": 12345,
+              "blockIndex": 3,
+              "eventIndex": 7
+            },
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-200-include-onchain-false-string",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&includeOnchainData=false",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": {
+              "blockHash": "0xabababababababababababababababababababababababababababababababab",
+              "blockNumber": 12345,
+              "blockIndex": 3,
+              "eventIndex": 7
+            },
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": {
+              "blockHash": "0xabababababababababababababababababababababababababababababababab",
+              "blockNumber": 12345,
+              "blockIndex": 3,
+              "eventIndex": 7
+            },
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-200-uppercase-prefix",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=ALICE",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-200-lite-only-dotted-prefix",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alicea.",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-200-limit-clamped",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=5000",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-200-page1-limit1",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=1",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          }
+        ],
+        "nextCursor": "eyJrZXkiOiJhbGljZV9zbWl0aCIsInVzZXJuYW1lIjoic21pdGh5IiwiZGlnaXRzIjoxMjMsInRpbWVzdGFtcCI6IjE5NzAtMDEtMDFUMDA6MDA6MDAuMDAwWiJ9"
+      }
+    }
+  },
+  {
+    "name": "search-200-page2-limit1",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=1&cursor=eyJrZXkiOiJhbGljZV9zbWl0aCIsInVzZXJuYW1lIjoic21pdGh5IiwiZGlnaXRzIjoxMjMsInRpbWVzdGFtcCI6IjE5NzAtMDEtMDFUMDA6MDA6MDAuMDAwWiJ9",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          }
+        ],
+        "nextCursor": "eyJrZXkiOiJhbGljZWEuMDEiLCJ1c2VybmFtZSI6ImFsaWNlYSIsImRpZ2l0cyI6MSwidGltZXN0YW1wIjoiMTk3MC0wMS0wMVQwMDowMDowMC4wMDBaIn0"
+      }
+    }
+  },
+  {
+    "name": "search-200-page3-limit2-final",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=2&cursor=eyJrZXkiOiJhbGljZWEuMDEiLCJ1c2VybmFtZSI6ImFsaWNlYSIsImRpZ2l0cyI6MSwidGltZXN0YW1wIjoiMTk3MC0wMS0wMVQwMDowMDowMC4wMDBaIn0",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-400-limit-zero",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=0",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Too small: expected number to be >0",
+            "pointer": "#/limit"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-limit-negative",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=-1",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Too small: expected number to be >0",
+            "pointer": "#/limit"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-limit-nan",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=abc",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected number, received NaN",
+            "pointer": "#/limit"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-limit-fractional",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&limit=1.5",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected int, received number",
+            "pointer": "#/limit"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-prefix-missing",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid input: expected string, received undefined",
+            "pointer": "#/prefix"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-prefix-empty",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Prefix is required",
+            "pointer": "#/prefix"
+          },
+          {
+            "detail": "Prefix must be letters/digits, optionally followed by a dot and digits (e.g. \"alice\", \"alice.\", \"alice.10\")",
+            "pointer": "#/prefix"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-prefix-too-long",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Prefix must be at most 64 characters",
+            "pointer": "#/prefix"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-prefix-space",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=has%20space",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Prefix must be letters/digits, optionally followed by a dot and digits (e.g. \"alice\", \"alice.\", \"alice.10\")",
+            "pointer": "#/prefix"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-prefix-hyphen",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=foo-bar",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Prefix must be letters/digits, optionally followed by a dot and digits (e.g. \"alice\", \"alice.\", \"alice.10\")",
+            "pointer": "#/prefix"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-prefix-double-dot",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=a.1.2",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Prefix must be letters/digits, optionally followed by a dot and digits (e.g. \"alice\", \"alice.\", \"alice.10\")",
+            "pointer": "#/prefix"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-multi-failure",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&limit=0",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Query Parameter Value",
+        "detail": "The request query contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Prefix must be at most 64 characters",
+            "pointer": "#/prefix"
+          },
+          {
+            "detail": "Too small: expected number to be >0",
+            "pointer": "#/limit"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "search-400-cursor-not-base64",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&cursor=%25%25not-base64%25%25",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": "Invalid cursor"
+      }
+    }
+  },
+  {
+    "name": "search-400-cursor-wrong-json",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&cursor=eyJ3cm9uZyI6InNoYXBlIn0",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": "Invalid cursor"
+      }
+    }
+  },
+  {
+    "name": "search-200-unknown-param-ignored",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice&status=RESERVED",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-auth-probe-bad-bearer",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice",
+      "headers": {
+        "Authorization": "Bearer not-a-jwt"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-cors-probe-origin",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice",
+      "headers": {
+        "Origin": "https://app.example.com"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-cors-preflight",
+    "request": {
+      "method": "OPTIONS",
+      "path": "/api/v1/usernames/search",
+      "headers": {
+        "Origin": "https://app.example.com",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization,content-type"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "text/plain; charset=UTF-8"
+      },
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "search-etag-first",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "search-etag-if-none-match",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search?prefix=alice",
+      "headers": {
+        "If-None-Match": "W/\"probe\""
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "usernames": [
+          {
+            "accountId": "acct-alice-smith",
+            "username": "alice_smith",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-01",
+            "username": "alicea.1",
+            "status": "ASSIGNED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "accountId": "acct-alicea-02",
+            "username": "alicea.2",
+            "status": "RESERVED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          },
+          {
+            "accountId": "acct-alicez-99",
+            "username": "alicez.99",
+            "status": "FAILED",
+            "onchainData": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "name": "get-200-assigned",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.11",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "candidateAccountId": "acct-charlie-11",
+        "username": "charlie.11",
+        "status": "ASSIGNED",
+        "onchainData": {
+          "blockIndex": 3,
+          "blockNumber": 12345,
+          "blockHash": "0xabababababababababababababababababababababababababababababababab",
+          "eventIndex": 7
+        },
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-02T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-200-reserved-evidence",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/reservd.22",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "candidateAccountId": "acct-reservd-22",
+        "username": "reservd.22",
+        "status": "RESERVED",
+        "onchainData": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": null
+      }
+    }
+  },
+  {
+    "name": "get-404-not-found",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/missing.01",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": "Username not found"
+      }
+    }
+  },
+  {
+    "name": "get-400-digits-00",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.00",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Parameter Value",
+        "detail": "The request path contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid string: must match pattern /^([a-z]{6,})\\.(0[1-9]|[1-9][0-9])$/",
+            "pointer": "#/username"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "get-400-uppercase",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/Charlie.11",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Parameter Value",
+        "detail": "The request path contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid string: must match pattern /^([a-z]{6,})\\.(0[1-9]|[1-9][0-9])$/",
+            "pointer": "#/username"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "get-400-short-base",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/abcde.11",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Parameter Value",
+        "detail": "The request path contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid string: must match pattern /^([a-z]{6,})\\.(0[1-9]|[1-9][0-9])$/",
+            "pointer": "#/username"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "get-400-one-digit",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.1",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Parameter Value",
+        "detail": "The request path contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid string: must match pattern /^([a-z]{6,})\\.(0[1-9]|[1-9][0-9])$/",
+            "pointer": "#/username"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "get-400-three-digits",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.100",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Parameter Value",
+        "detail": "The request path contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid string: must match pattern /^([a-z]{6,})\\.(0[1-9]|[1-9][0-9])$/",
+            "pointer": "#/username"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "get-400-bare-base",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "contentType": "application/problem+json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/problem+json"
+      },
+      "body": {
+        "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+        "title": "Invalid Parameter Value",
+        "detail": "The request path contains an invalid parameter value.",
+        "status": 400,
+        "errors": [
+          {
+            "detail": "Invalid string: must match pattern /^([a-z]{6,})\\.(0[1-9]|[1-9][0-9])$/",
+            "pointer": "#/username"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "get-auth-probe-bad-bearer",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.11",
+      "headers": {
+        "Authorization": "Bearer not-a-jwt"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "candidateAccountId": "acct-charlie-11",
+        "username": "charlie.11",
+        "status": "ASSIGNED",
+        "onchainData": {
+          "blockIndex": 3,
+          "blockNumber": 12345,
+          "blockHash": "0xabababababababababababababababababababababababababababababababab",
+          "eventIndex": 7
+        },
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-02T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-cors-probe-origin",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.11",
+      "headers": {
+        "Origin": "https://app.example.com"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "candidateAccountId": "acct-charlie-11",
+        "username": "charlie.11",
+        "status": "ASSIGNED",
+        "onchainData": {
+          "blockIndex": 3,
+          "blockNumber": 12345,
+          "blockHash": "0xabababababababababababababababababababababababababababababababab",
+          "eventIndex": 7
+        },
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-02T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-cors-preflight",
+    "request": {
+      "method": "OPTIONS",
+      "path": "/api/v1/usernames/charlie.11",
+      "headers": {
+        "Origin": "https://app.example.com",
+        "Access-Control-Request-Method": "GET"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "text/plain; charset=UTF-8"
+      },
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "get-etag-first",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.11",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "candidateAccountId": "acct-charlie-11",
+        "username": "charlie.11",
+        "status": "ASSIGNED",
+        "onchainData": {
+          "blockIndex": 3,
+          "blockNumber": 12345,
+          "blockHash": "0xabababababababababababababababababababababababababababababababab",
+          "eventIndex": 7
+        },
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-02T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "get-etag-if-none-match",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/charlie.11",
+      "headers": {
+        "If-None-Match": "W/\"probe\""
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "candidateAccountId": "acct-charlie-11",
+        "username": "charlie.11",
+        "status": "ASSIGNED",
+        "onchainData": {
+          "blockIndex": 3,
+          "blockNumber": 12345,
+          "blockHash": "0xabababababababababababababababababababababababababababababababab",
+          "eventIndex": 7
+        },
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-02T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "list-200-evidence-prefix",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames?prefix=alice",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "deprecation": "true",
+        "etag": "W/\"3cd451236744303601671cc8e9fea8d911a7749d\"",
+        "link": "</api/v1/usernames/search>; rel=\"alternate\"; title=\"Search Usernames\"",
+        "sunset": "Mon, 22 Jun 2026 00:00:00 GMT"
+      },
+      "body": [
+        {
+          "candidateAccountId": "acct-alice-smith",
+          "username": "alice_smith",
+          "status": "ASSIGNED",
+          "onchainData": {
+            "blockIndex": 3,
+            "blockNumber": 12345,
+            "blockHash": "0xabababababababababababababababababababababababababababababababab",
+            "eventIndex": 7
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-02T00:00:00.000Z"
+        },
+        {
+          "candidateAccountId": "acct-alicea-01",
+          "username": "alicea.01",
+          "status": "ASSIGNED",
+          "onchainData": {
+            "blockIndex": 3,
+            "blockNumber": 12345,
+            "blockHash": "0xabababababababababababababababababababababababababababababababab",
+            "eventIndex": 7
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-02T00:00:00.000Z"
+        },
+        {
+          "candidateAccountId": "acct-alicea-02",
+          "username": "alicea.02",
+          "status": "RESERVED",
+          "onchainData": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": null
+        },
+        {
+          "candidateAccountId": "acct-alicez-99",
+          "username": "alicez.99",
+          "status": "FAILED",
+          "onchainData": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "list-200-evidence-no-prefix",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "retryAfter": null,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "deprecation": "true",
+        "etag": "W/\"97d170e1550eee4afc0af065b78cda302a97674c\"",
+        "link": "</api/v1/usernames/search>; rel=\"alternate\"; title=\"Search Usernames\"",
+        "sunset": "Mon, 22 Jun 2026 00:00:00 GMT"
+      },
+      "body": []
+    }
+  },
+  {
+    "name": "list-200-evidence-trailing-slash",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "text/plain; charset=UTF-8"
+      },
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "get-404-unknown-subpath",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/usernames/search/extra",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "text/plain; charset=UTF-8"
+      },
+      "body": "404 Not Found"
+    }
+  },
+  {
+    "name": "put-404-search",
+    "request": {
+      "method": "PUT",
+      "path": "/api/v1/usernames/search",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "contentType": "text/plain; charset=UTF-8",
+      "retryAfter": null,
+      "headers": {
+        "content-type": "text/plain; charset=UTF-8"
+      },
+      "body": "404 Not Found"
+    }
+  }
+]

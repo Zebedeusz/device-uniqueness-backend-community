@@ -18,7 +18,7 @@ this gateway before the migration is complete.
 | Path | Upstream | Status |
 |---|---|---|
 | `/docs*` | static API reference (`file_server`) | committed artifact |
-| `/api/v1/usernames/search` | `username-indexer` (:8081) | migrated |
+| `GET /api/v1/usernames*` (search; bare-path GET and the removed `/{username}` lookup both 404) | `username-indexer` (:8081) | migrated |
 | `/api/v1/dim-ticket*` | `dim-tickets-api` (:8082) | migrated |
 | `/api/v1/invitation-ticket/*` | `invite-tickets-api` (:8083) | migrated |
 | `/api/v1/turn/*` | `turn-api` (:8084) | migrated |
@@ -27,7 +27,7 @@ this gateway before the migration is complete.
 | `/api/v1/schemas*` | **legacy origin** | unowned — needs an in/out ruling |
 | `/api/v1/subscriptions*` | **legacy origin** | unowned — needs an in/out ruling |
 | `/admin*`, `/debug/*` | **legacy origin** | legacy ops surfaces; die with legacy |
-| everything else (auth, attester, usernames write, JWKS, health) | `identity-api` (:8080) | migrated |
+| everything else (auth, attester, usernames write + availability + root OPTIONS preflight, JWKS, health) | `identity-api` (:8080) | migrated |
 
 The legacy origin is `{$LEGACY_BACKEND_ORIGIN}`; it **defaults to the identity-api upstream**,
 so an undeployed legacy backend degrades to a 404 from identity-api rather than a broken

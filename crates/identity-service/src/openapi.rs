@@ -80,7 +80,7 @@ All non-2xx responses share the `ErrorResponse` envelope: `{ error, message }`."
         crate::auth::refresh::RefreshRequest,
         crate::usernames::AttesterResponse,
         crate::usernames::available::AvailableRequest,
-        crate::usernames::available::AvailableResponse,
+        crate::usernames::available::AvailableV1Response,
         crate::usernames::available::NameAvailability,
         crate::usernames::register::RegisterRequest,
         crate::usernames::register::Dotns,

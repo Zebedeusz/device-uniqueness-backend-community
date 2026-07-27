@@ -1397,8 +1397,9 @@ table.params td.desc code{
             <span class="chip green">202</span>
             <span class="chip red">400</span>
             <span class="chip red">401</span>
-            <span class="chip red">403</span>
             <span class="chip blue">409</span>
+            <span class="chip yellow">429</span>
+            <span class="chip red">500</span>
             <span class="chip blue">bearer JWT</span>
           </div>
         </div>
@@ -1415,7 +1416,7 @@ table.params td.desc code{
               </thead>
               <tbody>
                 <tr><td class="name">candidateAccountId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">SS58 beneficiary account that will own the username.</td></tr>
-                <tr><td class="name">username</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base username (lowercase ASCII, &gt;= 6 chars).</td></tr>
+                <tr><td class="name">username</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base username (lowercase ASCII letters, 6..=29 chars).</td></tr>
                 <tr><td class="name">preferredDigits</td><td class="type">string</td><td class="req">no</td><td class="desc">Optional two-digit suffix, e.g. <code>&quot;07&quot;</code>; random-free if omitted.</td></tr>
                 <tr><td class="name">candidateSignature</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x</code>-hex 64-byte sr25519 signature proving control of the candidate.</td></tr>
                 <tr><td class="name">ringVrfKey</td><td class="type">string</td><td class="req yes">yes</td><td class="desc"><code>0x</code>-hex ring VRF key.</td></tr>
@@ -1444,7 +1445,7 @@ table.params td.desc code{
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"candidateAccountId"</span><span class="p">:</span> <span class="s">"SS58 account matching JWT subject"</span><span class="p">,</span>
+  <span class="s">"candidateAccountId"</span><span class="p">:</span> <span class="s">"5FbRAkhDvNVecNzHLFxBNXFXNwvBaV69S1W3nfBbnxYypkkT"</span><span class="p">,</span>
   <span class="s">"username"</span><span class="p">:</span> <span class="s">"tallesx"</span><span class="p">,</span>
   <span class="s">"preferredDigits"</span><span class="p">:</span> <span class="s">"07"</span><span class="p">,</span>
   <span class="s">"candidateSignature"</span><span class="p">:</span> <span class="s">"0x...64 bytes..."</span><span class="p">,</span>
@@ -1455,7 +1456,7 @@ table.params td.desc code{
   <span class="s">"dotns"</span><span class="p">:</span> <span class="p">{</span>
     <span class="s">"signature"</span><span class="p">:</span> <span class="s">"0x...64 bytes..."</span><span class="p">,</span>
     <span class="s">"signedAt"</span><span class="p">:</span> <span class="n">1780000000</span><span class="p">,</span>
-    <span class="s">"reservedUsername"</span><span class="p">:</span> <span class="s">"optional-name"</span>
+    <span class="s">"reservedUsername"</span><span class="p">:</span> <span class="s">"reservedname"</span>
   <span class="p">}</span>
 <span class="p">}</span></pre>
           </div>
@@ -1476,28 +1477,16 @@ table.params td.desc code{
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"WRONG_DATA"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"username must be at least 6 lowercase letters"</span>
-<span class="p">}</span></pre>
-          </div>
-          <div class="code-block">
-            <div class="code-head">
-              <span class="code-head-label">Response · 401 · application/json</span>
-              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
-            </div>
-<pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"UNAUTHORIZED"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"unauthorized"</span>
-<span class="p">}</span></pre>
-          </div>
-          <div class="code-block">
-            <div class="code-head">
-              <span class="code-head-label">Response · 403 · application/json</span>
-              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
-            </div>
-<pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"FORBIDDEN"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"candidateSignature does not prove control of candidateAccountId"</span>
+  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/invalid-body-property-value"</span><span class="p">,</span>
+  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Invalid Body Property Value"</span><span class="p">,</span>
+  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"The request body contains an invalid body property value."</span><span class="p">,</span>
+  <span class="s">"status"</span><span class="p">:</span> <span class="n">400</span><span class="p">,</span>
+  <span class="s">"errors"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Invalid signature."</span><span class="p">,</span>
+      <span class="s">"pointer"</span><span class="p">:</span> <span class="s">"#/candidateSignature"</span>
+    <span class="p">}</span>
+  <span class="p">]</span>
 <span class="p">}</span></pre>
           </div>
           <div class="code-block">
@@ -1506,8 +1495,16 @@ table.params td.desc code{
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"CONFLICT"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"username is already taken"</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Preferred digits 07 already taken for username tallesx"</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 500 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Failed to persist username registration"</span>
 <span class="p">}</span></pre>
           </div>
           <div class="status-grid">
@@ -1523,28 +1520,35 @@ table.params td.desc code{
                 <span class="sc-code c400">400</span>
                 <span class="sc-label">WRONG_DATA</span>
               </div>
-              <div class="sc-desc">Invalid username or malformed proof/hex field.</div>
+              <div class="sc-desc">Validation failed (problem details with <code>errors</code>) or malformed JSON.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing or invalid bearer token.</div>
-            </div>
-            <div class="status-card">
-              <div class="sc-head">
-                <span class="sc-code c403">403</span>
-                <span class="sc-label">FORBIDDEN</span>
-              </div>
-              <div class="sc-desc">candidateSignature does not prove control of candidateAccountId.</div>
+              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c409">409</span>
-                <span class="sc-label">CONFLICT</span>
+                <span class="sc-label">Preferred digits 07 already taken for username tallesx</span>
               </div>
-              <div class="sc-desc">Preferred digits or username already taken.</div>
+              <div class="sc-desc">Preferred digits taken, no digits available, or username taken.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c429">429</span>
+                <span class="sc-label">RATE_LIMITED</span>
+              </div>
+              <div class="sc-desc">Subject rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c500">500</span>
+                <span class="sc-label">Failed to persist username registration</span>
+              </div>
+              <div class="sc-desc">Persistence failure or unexpected error.</div>
             </div>
           </div>
         </div>
@@ -1560,11 +1564,13 @@ table.params td.desc code{
             <span class="chip green">200</span>
             <span class="chip red">400</span>
             <span class="chip red">401</span>
+            <span class="chip yellow">429</span>
+            <span class="chip red">500</span>
             <span class="chip blue">bearer JWT</span>
           </div>
         </div>
         <div class="endpoint-body">
-          <p class="endpoint-desc">Availability for each requested base (JWT-gated).</p>
+          <p class="endpoint-desc">Availability for each requested base.</p>
           <div class="auth-note">
             <span class="auth-label">Auth</span>
             <span class="auth-text">Bearer JWT required in the <code>Authorization</code> header.</span>
@@ -1575,7 +1581,7 @@ table.params td.desc code{
                 <tr><th>Query</th><th>Type</th><th>Required</th><th>Description</th></tr>
               </thead>
               <tbody>
-                <tr><td class="name">version</td><td class="type">string</td><td class="req">no</td><td class="desc">Response schema tag selector, e.g. v1.</td></tr>
+                <tr><td class="name">version</td><td class="type">string</td><td class="req">no</td><td class="desc">Response version; <code>v1</code> is the only (and default) option. The legacy flat <code>v0</code> record was removed 2026-07-23.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1629,18 +1635,25 @@ table.params td.desc code{
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"WRONG_DATA"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"at most 100 usernames per request"</span>
+  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/invalid-body-property-value"</span><span class="p">,</span>
+  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Invalid Body Property Value"</span><span class="p">,</span>
+  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"The request body contains an invalid body property value."</span><span class="p">,</span>
+  <span class="s">"status"</span><span class="p">:</span> <span class="n">400</span><span class="p">,</span>
+  <span class="s">"errors"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Too big: expected array to have &lt;=100 items"</span><span class="p">,</span>
+      <span class="s">"pointer"</span><span class="p">:</span> <span class="s">"#/usernames"</span>
+    <span class="p">}</span>
+  <span class="p">]</span>
 <span class="p">}</span></pre>
           </div>
           <div class="code-block">
             <div class="code-head">
-              <span class="code-head-label">Response · 401 · application/json</span>
+              <span class="code-head-label">Response · 500 · application/json</span>
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"UNAUTHORIZED"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"unauthorized"</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Oops! Something went wrong."</span>
 <span class="p">}</span></pre>
           </div>
           <div class="status-grid">
@@ -1649,21 +1662,35 @@ table.params td.desc code{
                 <span class="sc-code c200">200</span>
                 <span class="sc-label">OK</span>
               </div>
-              <div class="sc-desc">Per-base availability read from People Chain UsernameOwnerOf.</div>
+              <div class="sc-desc">Per-base availability read from People Chain UsernameOwnerOf plus pending outbox reservations, tagged <code>{_tag: &quot;v1&quot;, value}</code> with availableDigits.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c400">400</span>
                 <span class="sc-label">WRONG_DATA</span>
               </div>
-              <div class="sc-desc">More than 100 usernames per request.</div>
+              <div class="sc-desc">Invalid <code>version</code> (query dialect), invalid <code>usernames</code> (body dialect), or malformed JSON.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing or invalid bearer token.</div>
+              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio; a deliberate hardening divergence — legacy served this route unauthenticated).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c429">429</span>
+                <span class="sc-label">RATE_LIMITED</span>
+              </div>
+              <div class="sc-desc">Subject rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c500">500</span>
+                <span class="sc-label">Oops! Something went wrong.</span>
+              </div>
+              <div class="sc-desc">People Chain failure or reservation-outbox failure.</div>
             </div>
           </div>
         </div>
@@ -1673,7 +1700,7 @@ table.params td.desc code{
         <div class="endpoint-head">
           <div class="endpoint-title">
             <span class="method-badge m-get">GET</span>
-            <span class="endpoint-path">/api/v1/usernames/search<span class="query">?prefix=<span class="pname">&lt;prefix&gt;</span>&status=<span class="pname">&lt;status&gt;</span>&limit=<span class="pname">&lt;limit&gt;</span>&cursor=<span class="pname">&lt;cursor&gt;</span>&includeOnchainData=<span class="pname">&lt;includeOnchainData&gt;</span></span></span>
+            <span class="endpoint-path">/api/v1/usernames/search<span class="query">?prefix=<span class="pname">&lt;prefix&gt;</span>&limit=<span class="pname">&lt;limit&gt;</span>&cursor=<span class="pname">&lt;cursor&gt;</span>&includeOnchainData=<span class="pname">&lt;includeOnchainData&gt;</span></span></span>
           </div>
           <div class="endpoint-meta">
             <span class="chip green">200</span>
@@ -1690,9 +1717,8 @@ table.params td.desc code{
                 <tr><th>Query</th><th>Type</th><th>Required</th><th>Description</th></tr>
               </thead>
               <tbody>
-                <tr><td class="name">prefix</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Case-insensitive username prefix, from 1 through 64 characters.</td></tr>
-                <tr><td class="name">status</td><td class="type">string</td><td class="req">no</td><td class="desc">Optional compatibility filter; only <code>ASSIGNED</code> is accepted.</td></tr>
-                <tr><td class="name">limit</td><td class="type">number</td><td class="req">no</td><td class="desc">Requested page size, defaulting to 100 and capped at 1,000.</td></tr>
+                <tr><td class="name">prefix</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Prefix of letters/digits, optionally followed by a dot and digits.</td></tr>
+                <tr><td class="name">limit</td><td class="type">number</td><td class="req">no</td><td class="desc">Requested page size, defaulting to 100 and clamped to 1,000.</td></tr>
                 <tr><td class="name">cursor</td><td class="type">string</td><td class="req">no</td><td class="desc">Opaque continuation cursor from an earlier response.</td></tr>
                 <tr><td class="name">includeOnchainData</td><td class="type">boolean</td><td class="req">no</td><td class="desc">Compatibility flag; indexed rows have no truthful event position.</td></tr>
               </tbody>
@@ -1714,8 +1740,16 @@ table.params td.desc code{
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"WRONG_DATA"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"prefix must contain between 1 and 64 characters"</span>
+  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/invalid-request-parameter-value"</span><span class="p">,</span>
+  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Invalid Query Parameter Value"</span><span class="p">,</span>
+  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"The request query contains an invalid parameter value."</span><span class="p">,</span>
+  <span class="s">"status"</span><span class="p">:</span> <span class="n">400</span><span class="p">,</span>
+  <span class="s">"errors"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Prefix is required"</span><span class="p">,</span>
+      <span class="s">"pointer"</span><span class="p">:</span> <span class="s">"#/prefix"</span>
+    <span class="p">}</span>
+  <span class="p">]</span>
 <span class="p">}</span></pre>
           </div>
           <div class="code-block">
@@ -1724,8 +1758,10 @@ table.params td.desc code{
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"RATE_LIMITED"</span><span class="p">,</span>
-  <span class="s">"message"</span><span class="p">:</span> <span class="s">"rate limited"</span>
+  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/too-many-requests"</span><span class="p">,</span>
+  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Too Many Requests"</span><span class="p">,</span>
+  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Rate limit exceeded. Please retry after 60 seconds."</span><span class="p">,</span>
+  <span class="s">"status"</span><span class="p">:</span> <span class="n">429</span>
 <span class="p">}</span></pre>
           </div>
           <div class="status-grid">
@@ -1741,14 +1777,14 @@ table.params td.desc code{
                 <span class="sc-code c400">400</span>
                 <span class="sc-label">WRONG_DATA</span>
               </div>
-              <div class="sc-desc">Missing/invalid prefix, status, limit, or cursor.</div>
+              <div class="sc-desc">Invalid query parameter (problem details with <code>errors</code>) or invalid cursor (<code>{&quot;error&quot;:&quot;Invalid cursor&quot;}</code>).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">Public search rate limit exceeded.</div>
+              <div class="sc-desc">Public rate limit exceeded (problem details with <code>Retry-After</code>).</div>
             </div>
           </div>
         </div>

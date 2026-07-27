@@ -3,7 +3,10 @@
 //! The legacy backend spoke three shapes on the migrated routes and all are
 //! frozen (golden-captured in each service's `tests/fixtures/`):
 //! - **RFC 9457 problem details** (`application/problem+json`) from the JWT
-//!   middleware (401), the rate limiter (429), and body validation (400).
+//!   middleware (401), the rate limiter (429), and zod validation (400) —
+//!   with one type/title/detail triple per validation target: body, query
+//!   parameter, path parameter, and header (the usernames capture pinned the
+//!   query/param/header variants).
 //! - **Plain text** from Hono itself: `Malformed JSON in request body` (400,
 //!   un-spaced `text/plain;charset=UTF-8`) and the default `404 Not Found`
 //!   (spaced `text/plain; charset=UTF-8`).
@@ -109,14 +112,15 @@ pub fn rate_limited(retry_after_secs: u64) -> Response {
     )
 }
 
-/// 400: the request body failed validation (problem details with `errors`).
-pub fn invalid_body(errors: &[FieldError]) -> Response {
+/// 400 problem details with an `errors` array — the shape shared by the four
+/// zod validation dialects (body / query / path param / header).
+fn invalid_with_errors(slug: &str, title: &str, detail: &str, errors: &[FieldError]) -> Response {
     problem(
         StatusCode::BAD_REQUEST,
         json!({
-            "type": format!("{PROBLEM_REGISTRY}/invalid-body-property-value"),
-            "title": "Invalid Body Property Value",
-            "detail": "The request body contains an invalid body property value.",
+            "type": format!("{PROBLEM_REGISTRY}/{slug}"),
+            "title": title,
+            "detail": detail,
             "status": 400,
             "errors": errors
                 .iter()
@@ -124,6 +128,47 @@ pub fn invalid_body(errors: &[FieldError]) -> Response {
                 .collect::<Vec<_>>(),
         }),
         &[],
+    )
+}
+
+/// 400: the request body failed validation (problem details with `errors`).
+pub fn invalid_body(errors: &[FieldError]) -> Response {
+    invalid_with_errors(
+        "invalid-body-property-value",
+        "Invalid Body Property Value",
+        "The request body contains an invalid body property value.",
+        errors,
+    )
+}
+
+/// 400: a query parameter failed validation (problem details with `errors`).
+pub fn invalid_query(errors: &[FieldError]) -> Response {
+    invalid_with_errors(
+        "invalid-request-parameter-value",
+        "Invalid Query Parameter Value",
+        "The request query contains an invalid parameter value.",
+        errors,
+    )
+}
+
+/// 400: a path parameter failed validation (problem details with `errors`).
+/// Same registry slug as the query dialect, different title/detail.
+pub fn invalid_param(errors: &[FieldError]) -> Response {
+    invalid_with_errors(
+        "invalid-request-parameter-value",
+        "Invalid Parameter Value",
+        "The request path contains an invalid parameter value.",
+        errors,
+    )
+}
+
+/// 400: a request header failed validation (problem details with `errors`).
+pub fn invalid_header(errors: &[FieldError]) -> Response {
+    invalid_with_errors(
+        "invalid-request-header-format",
+        "Invalid Header Value",
+        "The request headers contain an invalid value.",
+        errors,
     )
 }
 

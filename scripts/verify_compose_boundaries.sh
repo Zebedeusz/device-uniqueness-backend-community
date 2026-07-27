@@ -59,6 +59,24 @@ for service in identity-api identity-chain-writer username-indexer; do
   forbid_key "$service" INVITER_SIGNER_SURI
 done
 
+# DotNS request validation belongs only to identity-api. Compose uses explicit
+# environment allowlists, so require all three knobs there and keep them out of
+# unrelated processes.
+for key in DOTNS_GATEWAY_ENABLED DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS DOTNS_MAX_FUTURE_SKEW_SECS; do
+  require_key identity-api "$key"
+  for service in identity-chain-writer username-indexer dim-tickets-api dim-tickets-writer \
+                 invite-tickets-api invite-tickets-pool turn-api gateway; do
+    forbid_key "$service" "$key"
+  done
+done
+
+# username-indexer is a fully public read service: no JWT material at all.
+for key in JWT_ED25519_SECRET JWT_ED25519_PUBLIC_KEY JWT_JWKS_JSON TURN_SECRET; do
+  forbid_key username-indexer "$key"
+done
+require_key username-indexer SEARCH_RATE_LIMIT
+require_key username-indexer SEARCH_RATE_LIMIT_WINDOW_SECS
+
 for service in dim-tickets-api dim-tickets-writer; do
   forbid_key "$service" JWT_ED25519_SECRET
   forbid_key "$service" CHAIN_WRITER_SIGNER_SURI

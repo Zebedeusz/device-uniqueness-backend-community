@@ -121,6 +121,11 @@ impl Jwt {
     pub fn verify(&self, token: &str) -> Result<VerifiedClaims, JwtError> {
         self.verifier.verify(token)
     }
+
+    /// The verify-only half, for `http-common`'s `AuthSubject` extractor.
+    pub fn verifier(&self) -> &jwt_verify::Verifier {
+        &self.verifier
+    }
 }
 
 pub use jwt_verify::{JwtError, VerifiedClaims};

@@ -59,7 +59,7 @@ create now. See "How the workspace grows" below.
 | Service | Responsibility | Status |
 |---|---|---|
 | `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. Bins: `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker). | **exists** |
-| `username-indexer` | Finalized-chain username **indexer + public prefix search** (`GET /api/v1/usernames/search`). Read-only projection; can be down without affecting registration. | **exists** |
+| `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, unauthenticated, per-IP rate limited). The deprecated single-username lookup (`GET /api/v1/usernames/{username}`) was removed 2026-07-23 in favour of `search` and now serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | **exists** |
 | `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. Independently deployable (own process/secrets, no `depends_on`). Bin: `notify-relay`. Real iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | **exists** (live device smokes pending) |
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. Bin: `turn-api`. Plan: `docs/plans/active/turn.md`. | **exists** |
 | `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. Bins: `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar). Plan: `docs/plans/active/invite-claim.md`. | **exists** (pool refill demo pending a funded inviter) |
@@ -92,7 +92,7 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 ## Classification quick-reference
 
 - **attestation** → inside `identity-service` (NOT a service, NOT a shared lib).
-- **availability** → `identity-service` (current direct-chain read).
+- **availability** → `identity-service` (People Chain plus durable reservation-outbox read).
 - **username write** → `identity-service`.
 - **username read/search** → `username-indexer` — true carve-out.
 - **free-reg eligibility/queue** → `identity-service` product logic.
@@ -121,7 +121,7 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 | `chain-client` | `chain-client` | extracted (crate) |
 | `http-common` | `http-common` | extracted (crate) |
 | *(future)* shared libs | `postgres` / `config` / `telemetry` | extract lazily, per above |
-| gateway | Caddy | routes search → :8081, DIM tickets → :8082, notify → :8083, else identity-api → :8080 |
+| gateway | Caddy | routes username GET reads → :8081, DIM tickets → :8082, invitation tickets → :8083, TURN → :8084, notify → :8085, and identity-owned writes/availability/root preflight → :8080; unmigrated routes use the legacy cutover lane |
 
 ## Open decisions (need the user)
 
@@ -203,6 +203,9 @@ Operational invariants an agent must respect when touching the code.
   `sync_state` checkpoint is empty**, and each sync pass takes the lock with `pg_try_advisory_lock`
   (skips the pass if another instance holds it). So the service is safe as N replicas on one shared
   Postgres, and restarts resume incrementally from the checkpoint (no full re-scan).
+- **`username-indexer` public reads share one per-IP rate-limit bucket.** Search and single-username
+  lookup are deliberately JWT-free; the gateway forwards both GET surfaces to the indexer, while
+  identity-owned POST/OPTIONS traffic falls through to `identity-api`.
 - **`notifications` is an isolated failure domain.** It is stateless, DB-free, and shares no
   `depends_on` with any other service, so `/readyz` needs no external probe (readiness = the bound
   listener; provider outages are per-request `200 success:false`, never unreadiness) and stopping it

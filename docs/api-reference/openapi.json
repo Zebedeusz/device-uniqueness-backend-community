@@ -298,57 +298,59 @@
             }
           },
           "400": {
-            "description": "Invalid username or malformed proof/hex field.",
+            "description": "Validation failed (problem details with `errors`) or malformed JSON.",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
+                "schema": {},
                 "example": {
-                  "error": "WRONG_DATA",
-                  "message": "username must be at least 6 lowercase letters"
+                  "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+                  "title": "Invalid Body Property Value",
+                  "detail": "The request body contains an invalid body property value.",
+                  "status": 400,
+                  "errors": [
+                    {
+                      "detail": "Invalid signature.",
+                      "pointer": "#/candidateSignature"
+                    }
+                  ]
                 }
               }
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token.",
+            "description": "Missing or invalid bearer token (the frozen problem-details trio).",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": "UNAUTHORIZED",
-                  "message": "unauthorized"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "candidateSignature does not prove control of candidateAccountId.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": "FORBIDDEN",
-                  "message": "candidateSignature does not prove control of candidateAccountId"
-                }
+                "schema": {}
               }
             }
           },
           "409": {
-            "description": "Preferred digits or username already taken.",
+            "description": "Preferred digits taken, no digits available, or username taken.",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
+                "schema": {},
                 "example": {
-                  "error": "CONFLICT",
-                  "message": "username is already taken"
+                  "error": "Preferred digits 07 already taken for username tallesx"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "Persistence failure or unexpected error.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "Failed to persist username registration"
                 }
               }
             }
@@ -366,13 +368,13 @@
         "tags": [
           "Usernames"
         ],
-        "summary": "Availability for each requested base (JWT-gated).",
+        "summary": "Availability for each requested base.",
         "operationId": "check",
         "parameters": [
           {
             "name": "version",
             "in": "query",
-            "description": "Response schema tag selector, e.g. v1.",
+            "description": "Response version; `v1` is the only (and default) option. The legacy flat `v0` record was removed 2026-07-23.",
             "required": false,
             "schema": {
               "type": "string"
@@ -391,11 +393,11 @@
         },
         "responses": {
           "200": {
-            "description": "Per-base availability read from People Chain UsernameOwnerOf.",
+            "description": "Per-base availability read from People Chain UsernameOwnerOf plus pending outbox reservations, tagged `{_tag: \"v1\", value}` with availableDigits.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AvailableResponse"
+                  "$ref": "#/components/schemas/AvailableV1Response"
                 },
                 "example": {
                   "_tag": "v1",
@@ -417,29 +419,48 @@
             }
           },
           "400": {
-            "description": "More than 100 usernames per request.",
+            "description": "Invalid `version` (query dialect), invalid `usernames` (body dialect), or malformed JSON.",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
+                "schema": {},
                 "example": {
-                  "error": "WRONG_DATA",
-                  "message": "at most 100 usernames per request"
+                  "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
+                  "title": "Invalid Body Property Value",
+                  "detail": "The request body contains an invalid body property value.",
+                  "status": 400,
+                  "errors": [
+                    {
+                      "detail": "Too big: expected array to have <=100 items",
+                      "pointer": "#/usernames"
+                    }
+                  ]
                 }
               }
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token.",
+            "description": "Missing or invalid bearer token (the frozen problem-details trio; a deliberate hardening divergence — legacy served this route unauthenticated).",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
+                "schema": {}
+              }
+            }
+          },
+          "429": {
+            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "People Chain failure or reservation-outbox failure.",
+            "content": {
+              "application/json": {
+                "schema": {},
                 "example": {
-                  "error": "UNAUTHORIZED",
-                  "message": "unauthorized"
+                  "error": "Oops! Something went wrong."
                 }
               }
             }
@@ -551,7 +572,7 @@
           {
             "name": "prefix",
             "in": "query",
-            "description": "Case-insensitive username prefix, from 1 through 64 characters.",
+            "description": "Prefix of letters/digits, optionally followed by a dot and digits.",
             "required": true,
             "schema": {
               "type": "string"
@@ -559,19 +580,9 @@
             "example": "ali"
           },
           {
-            "name": "status",
-            "in": "query",
-            "description": "Optional compatibility filter; only `ASSIGNED` is accepted.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "example": "ASSIGNED"
-          },
-          {
             "name": "limit",
             "in": "query",
-            "description": "Requested page size, defaulting to 100 and capped at 1,000.",
+            "description": "Requested page size, defaulting to 100 and clamped to 1,000.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -615,25 +626,35 @@
             }
           },
           "400": {
-            "description": "Missing/invalid prefix, status, limit, or cursor.",
+            "description": "Invalid query parameter (problem details with `errors`) or invalid cursor (`{\"error\":\"Invalid cursor\"}`).",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "error": "WRONG_DATA",
-                  "message": "prefix must contain between 1 and 64 characters"
+                  "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
+                  "title": "Invalid Query Parameter Value",
+                  "detail": "The request query contains an invalid parameter value.",
+                  "status": 400,
+                  "errors": [
+                    {
+                      "detail": "Prefix is required",
+                      "pointer": "#/prefix"
+                    }
+                  ]
                 }
               }
             }
           },
           "429": {
-            "description": "Public search rate limit exceeded.",
+            "description": "Public rate limit exceeded (problem details with `Retry-After`).",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "error": "RATE_LIMITED",
-                  "message": "rate limited"
+                  "type": "https://problems-registry.smartbear.com/too-many-requests",
+                  "title": "Too Many Requests",
+                  "detail": "Rate limit exceeded. Please retry after 60 seconds.",
+                  "status": 429
                 }
               }
             }
@@ -934,7 +955,7 @@
       },
       "AvailableRequest": {
         "type": "object",
-        "description": "`{ usernames: [base, ...] }` — bases to validate and check on chain.",
+        "description": "`{ usernames: [base, ...] }` — bases to validate and check on chain\n(documentation mirror; the handler validates raw JSON).",
         "required": [
           "usernames"
         ],
@@ -952,9 +973,9 @@
           }
         }
       },
-      "AvailableResponse": {
+      "AvailableV1Response": {
         "type": "object",
-        "description": "`{ _tag: \"v1\", value: { base: {status, availableDigits?} } }`.",
+        "description": "`{ _tag: \"v1\", value: { base: { status, availableDigits? } } }`.",
         "required": [
           "_tag",
           "value"
@@ -1016,7 +1037,7 @@
               "null"
             ],
             "description": "Optional reserved-name override.",
-            "example": "optional-name"
+            "example": "reservedname"
           }
         }
       },
@@ -1087,7 +1108,7 @@
       },
       "RegisterRequest": {
         "type": "object",
-        "description": "The flat registration request, matching the shipping clients verbatim.",
+        "description": "The flat registration request (documentation mirror — the handler\nvalidates raw JSON to reproduce the legacy zod error bodies).",
         "required": [
           "candidateAccountId",
           "username",
@@ -1101,11 +1122,11 @@
           "candidateAccountId": {
             "type": "string",
             "description": "SS58 beneficiary account that will own the username.",
-            "example": "SS58 account matching JWT subject"
+            "example": "5FbRAkhDvNVecNzHLFxBNXFXNwvBaV69S1W3nfBbnxYypkkT"
           },
           "username": {
             "type": "string",
-            "description": "Base username (lowercase ASCII, >= 6 chars).",
+            "description": "Base username (lowercase ASCII letters, 6..=29 chars).",
             "example": "tallesx"
           },
           "preferredDigits": {
@@ -1183,7 +1204,7 @@
               "boolean",
               "null"
             ],
-            "description": "Present only when the DeviceCheck free-slot gate applies (Slice 6)."
+            "description": "Present only when the DeviceCheck free-slot gate applies (the\nattestation slice; deferred)."
           }
         }
       },
@@ -1266,7 +1287,7 @@
           },
           "username": {
             "type": "string",
-            "description": "Full username when present, otherwise the lite username.",
+            "description": "Full username when present, otherwise `base.digits` with the digits\nrendered as an integer (`alice.1` for stored digits `01`) — the\nfrozen legacy quirk (`NumberFromString` decode before rendering).",
             "example": "alice.12"
           },
           "status": {
@@ -1285,13 +1306,13 @@
             "type": "string",
             "format": "date-time",
             "description": "Time the projection first observed the account.",
-            "example": "2026-07-11T10:00:00Z"
+            "example": "2026-07-11T10:00:00.000Z"
           },
           "updatedAt": {
             "type": "string",
             "format": "date-time",
             "description": "Time the projection last refreshed the account.",
-            "example": "2026-07-11T10:01:00Z"
+            "example": "2026-07-11T10:01:00.000Z"
           }
         }
       },
@@ -1782,6 +1803,10 @@
     {
       "name": "Usernames",
       "description": "Availability reads and registration intake."
+    },
+    {
+      "name": "Usernames",
+      "description": "Public username search over the finalized chain projection. Unauthenticated; IP rate-limited."
     },
     {
       "name": "Invitation Tickets",

@@ -27,6 +27,23 @@ pub fn invalid_input(expected: &str, received: &str) -> String {
 /// The zod v4 `min(1)` failure message for strings.
 pub const TOO_SMALL_MIN1: &str = "Too small: expected string to have >=1 characters";
 
+/// The zod v4 `positive()` failure message for numbers (captured from the
+/// usernames search `limit` param).
+pub const TOO_SMALL_POSITIVE_NUMBER: &str = "Too small: expected number to be >0";
+
+/// The zod v4 `array().max(n)` failure message (captured from the usernames
+/// availability `usernames` field).
+pub fn too_big_array(max_items: usize) -> String {
+    format!("Too big: expected array to have <={max_items} items")
+}
+
+/// The zod v4 default `regex()` failure message: the pattern is rendered in
+/// JS `RegExp#toString()` form, e.g.
+/// `Invalid string: must match pattern /^([a-z]{6,})$/`.
+pub fn invalid_string_pattern(js_pattern: &str) -> String {
+    format!("Invalid string: must match pattern {js_pattern}")
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

@@ -25,6 +25,7 @@ path = "src/bin/identity_chain_writer.rs"
 chain-types.workspace = true
 chain-client.workspace = true
 jwt-verify.workspace = true
+http-common.workspace = true
 subxt = { workspace = true, features = ["jsonrpsee"] }
 subxt-signer = { workspace = true, features = ["subxt"] }
 
@@ -57,6 +58,9 @@ futures = "0.3"
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
 
 [lints]
 workspace = true

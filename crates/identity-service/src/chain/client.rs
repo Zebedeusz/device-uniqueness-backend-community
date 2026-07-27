@@ -39,6 +39,11 @@ impl ChainClient {
         })
     }
 
+    /// Wrap an already-constructed online client (offline replay tests).
+    pub fn from_online(client: OnlineClient<PeopleConfig>) -> Self {
+        Self { client }
+    }
+
     /// Liveness probe used by `/readyz`.
     pub async fn health(&self) -> anyhow::Result<()> {
         self.client

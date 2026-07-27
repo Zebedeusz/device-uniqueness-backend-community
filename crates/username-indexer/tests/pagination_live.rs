@@ -17,12 +17,12 @@
 //! then pages through with a small limit and asserts the global order is stable
 //! and no row appears twice across pages.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
-use username_indexer::search::{search, SearchQuery};
+use username_indexer::search::search;
 
 const ACCOUNTS: [[u8; 32]; 5] = [[0xE1; 32], [0xE2; 32], [0xE3; 32], [0xE4; 32], [0xE5; 32]];
 
@@ -51,18 +51,16 @@ async fn live_pagination_is_stable_and_non_overlapping() {
     let mut account_ids: Vec<String> = Vec::new();
     let mut usernames: Vec<String> = Vec::new();
     for _ in 0..16 {
-        let response = search(
-            &pool,
-            SearchQuery {
-                prefix: "zq".to_string(),
-                status: Some("ASSIGNED".to_string()),
-                limit: Some(2),
-                cursor: cursor.clone(),
-                include_onchain_data: None,
-            },
-        )
-        .await
-        .expect("search page");
+        let mut params = HashMap::from([
+            ("prefix".to_string(), "zq".to_string()),
+            // Unknown params are ignored (the Android client sends `status`).
+            ("status".to_string(), "ASSIGNED".to_string()),
+            ("limit".to_string(), "2".to_string()),
+        ]);
+        if let Some(cursor) = &cursor {
+            params.insert("cursor".to_string(), cursor.clone());
+        }
+        let response = search(&pool, &params).await.expect("search page");
         for row in &response.usernames {
             account_ids.push(row.account_id.clone());
             usernames.push(row.username.clone());

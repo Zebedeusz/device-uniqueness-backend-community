@@ -774,6 +774,26 @@ mod tests {
             .is_some());
     }
 
+    #[test]
+    fn availability_documents_the_v1_shape_and_internal_failure() {
+        let doc = merged_doc();
+        let responses = doc
+            .pointer("/paths/~1api~1v1~1usernames~1available/post/responses")
+            .and_then(Value::as_object)
+            .expect("availability responses");
+        assert!(responses.contains_key("500"));
+
+        let schema = responses
+            .get("200")
+            .and_then(|response| response.pointer("/content/application~1json/schema/$ref"))
+            .and_then(Value::as_str)
+            .expect("availability response schema ref");
+        assert_eq!(schema, "#/components/schemas/AvailableV1Response");
+        assert!(doc
+            .pointer("/components/schemas/AvailableV1Response/properties/_tag")
+            .is_some());
+    }
+
     /// The committed artifacts must match what the code renders. If this fails,
     /// run `just openapi` and commit the result.
     #[test]

@@ -55,6 +55,11 @@ impl ChainClient {
         Ok(Self { client })
     }
 
+    /// Wrap an already-constructed online client (offline replay tests).
+    pub fn from_online(client: OnlineClient<PeopleConfig>) -> Self {
+        Self { client }
+    }
+
     /// Return the underlying online client.
     pub fn online(&self) -> &OnlineClient<PeopleConfig> {
         &self.client

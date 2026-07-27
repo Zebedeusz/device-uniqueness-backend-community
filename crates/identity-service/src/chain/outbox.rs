@@ -12,6 +12,8 @@
 //! deploy-overlap guard, not a fence — the chain nonce + reconciliation is the
 //! real serializer.
 
+use std::collections::BTreeSet;
+
 use sqlx::{PgPool, Row as _};
 use time::OffsetDateTime;
 
@@ -124,6 +126,35 @@ pub async fn insert(pool: &PgPool, r: &NewReservation) -> Result<i64, InsertErro
         _ => InsertError::Db(e),
     })?;
     Ok(row.try_get::<i64, _>("id")?)
+}
+
+/// Return every discriminator already protected by the outbox for `base`.
+///
+/// All statuses count because `full_username` remains permanently unique even
+/// for terminal rows. Advertising one of those digits as available would make
+/// a subsequent insert fail despite the availability response.
+pub async fn allocated_discriminators(
+    pool: &PgPool,
+    base: &str,
+) -> Result<BTreeSet<u8>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT digits FROM username_reservations \
+         WHERE base = $1",
+    )
+    .bind(base)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            let raw = row.try_get::<String, _>("digits")?;
+            raw.parse::<u8>()
+                .map_err(|error| sqlx::Error::ColumnDecode {
+                    index: "digits".to_string(),
+                    source: Box::new(error),
+                })
+        })
+        .collect()
 }
 
 /// A reservation the writer submits, with the on-chain attestation payload.

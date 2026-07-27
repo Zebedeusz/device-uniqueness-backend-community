@@ -24,6 +24,14 @@ pub struct AppState {
     pub limiter: RateLimiter,
 }
 
+/// Lets the usernames surface use `http-common`'s `AuthSubject` extractor
+/// (the frozen 401 trio) against this issuer's own verifying key.
+impl http_common::HasJwtVerifier for AppState {
+    fn jwt_verifier(&self) -> &jwt_verify::Verifier {
+        self.jwt.verifier()
+    }
+}
+
 impl AppState {
     /// Assemble state from the connected pool, chain client, signer, and config.
     pub fn new(pool: PgPool, chain: ChainClient, jwt: Jwt, config: Config) -> Self {

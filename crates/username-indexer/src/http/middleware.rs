@@ -38,6 +38,11 @@ impl RateLimiter {
         }
     }
 
+    /// The window length in whole seconds (the `Retry-After` value).
+    pub fn window_secs(&self) -> u64 {
+        self.window.as_secs()
+    }
+
     /// Record a hit for `key`; returns `false` when the limit is exceeded.
     pub fn allow(&self, key: &str) -> bool {
         let now = Instant::now();
@@ -54,13 +59,16 @@ impl RateLimiter {
     }
 }
 
-/// Reject public search requests over the per-IP limit.
+/// Reject public read requests over the per-IP limit.
 ///
-/// The path is constant (this layer only wraps the search route), so the key is
-/// the best-effort client IP alone.
+/// The two public GET routes share one bucket per client IP; the 429 renders
+/// the frozen legacy problem-details body with `Retry-After`.
 pub async fn rate_limit(State(state): State<AppState>, req: Request, next: Next) -> Response {
     if !state.limiter.allow(&client_ip(&req)) {
-        return AppError::RateLimited.into_response();
+        return AppError::RateLimited {
+            retry_after_secs: state.limiter.window_secs(),
+        }
+        .into_response();
     }
     next.run(req).await
 }
