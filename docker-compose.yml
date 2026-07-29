@@ -165,6 +165,20 @@ services:
       SYNC_INTERVAL_SECS: ${SYNC_INTERVAL_SECS:-30}
       SEARCH_RATE_LIMIT: ${SEARCH_RATE_LIMIT:-60}
       SEARCH_RATE_LIMIT_WINDOW_SECS: ${SEARCH_RATE_LIMIT_WINDOW_SECS:-60}
+      # Proof-of-compute gate on public search, OFF by default. When enabled the
+      # gate is either-or: a valid identity-service JWT satisfies search just as
+      # a solved puzzle does, so the shipping apps (which authenticate search)
+      # need no change and only anonymous callers mine.
+      POC_ENABLED: ${POC_ENABLED:-false}
+      POC_HMAC_SECRET: ${POC_HMAC_SECRET:-}
+      POC_DIFFICULTY_BITS: ${POC_DIFFICULTY_BITS:-16}
+      POC_SESSION_TTL_SECS: ${POC_SESSION_TTL_SECS:-60}
+      POC_CLOCK_SKEW_SECS: ${POC_CLOCK_SKEW_SECS:-30}
+      # VERIFY-ONLY key material for that bypass — the public half only, never
+      # JWT_ED25519_SECRET: this service can verify identity-service tokens but
+      # can never mint one (enforced by scripts/verify_compose_boundaries.sh).
+      JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
+      JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8081:8080"

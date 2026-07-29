@@ -59,11 +59,14 @@
 	handle /api/v1/notify* {
 		reverse_proxy {$NOTIFY_UPSTREAM:127.0.0.1:8085}
 	}
+	# Proof-of-compute puzzle issuance belongs to the indexer: it gates the
+	# indexer's own public search read. With POC_ENABLED=false (the default)
+	# the service does not mount the route and answers its plain-text 404.
+	handle /api/v1/poc* {
+		reverse_proxy {$USERNAME_INDEXER_UPSTREAM:127.0.0.1:8081}
+	}
 
 	# --- cutover lane: no Rust owner yet --------------------------------
-	handle /api/v1/poc* {
-		import legacy
-	}
 	handle /api/v1/schemas* {
 		import legacy
 	}

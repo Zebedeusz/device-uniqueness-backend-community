@@ -264,16 +264,16 @@ Two facts that shape the plan:
   on the sync loop tick, which keeps `sync.rs` free of gate concerns.
 - **Issuance is deliberately not rate limited** (legacy parity: its `/poc` router had no limiter).
   Issuance writes nothing and is one HMAC; revisit if it is ever abused.
-- **Not done here (Phase 4)**: `gateway/Caddyfile` still sends `/api/v1/poc*` to the legacy origin,
-  compose does not wire the service, and the boundary script still forbids JWT material on the
-  indexer — so a compose deployment cannot enable the gate yet.
+- **Phase 4 config work landed 2026-07-29**: gateway route, compose wiring, boundary script, and
+  runbook are in. The only Phase 4 item left is the live smoke on the test deployment, which needs a
+  deploy and therefore explicit consent.
 
 ## Phase 4: Own the route and prove it on the test deployment
 - **Goal**: `/api/v1/poc*` leaves the legacy cutover lane and the gate runs on real infrastructure.
 - **Scope checklist**:
-  - [ ] `gateway/Caddyfile`: replace the `handle /api/v1/poc*` legacy import with a route to the
-        indexer upstream (`:8081`); update the route table in `docs/plans/active/gateway.md` from
-        "unowned" to migrated.
+  - [x] (2026-07-29) `gateway/Caddyfile`: `/api/v1/poc*` now reverse-proxies to
+        `{$USERNAME_INDEXER_UPSTREAM}` instead of importing `legacy`; `docs/plans/active/gateway.md`
+        route table flipped from "unowned" to migrated. Validated with `caddy validate`.
   - [x] (2026-07-29) `.env.example`: the five `POC_*` vars documented on the username-indexer
         section, flag off by default. Still to do: `docker-compose.yml` wiring, and
         `scripts/verify_compose_boundaries.sh` updated — `scripts/verify_compose_boundaries.sh` updated — the PoC secret asserted
@@ -285,7 +285,10 @@ Two facts that shape the plan:
         username-indexer`), the indexer service row, the corrected "no JWT/JWKS" HTTP note, the
         subject-or-IP rate-limit note, and the JWT-or-puzzle invariant. Landed with Phase 3 rather
         than deferred, because leaving those lines stale would have made the doc wrong.
-  - [ ] `docs/runbook.md`: enable/disable procedure, what a `402` spike means, difficulty tuning.
+  - [x] (2026-07-29) `docs/runbook.md`: a "Proof-of-compute gate" section (enable/disable, required
+        verify-only material, smoke commands, difficulty tuning), the `POC_HMAC_SECRET` rotation
+        note, the `:8081` route note, and three failure-mode rows (`402` spikes, replayed puzzles,
+        `spent_puzzles` growth).
   - [ ] Deploy to `identity.dotspark.app` with `POC_ENABLED=true` **on the indexer only** and run
         the solver against the public URL through the gateway; also re-run one authenticated search
         to prove the bearer bypass on real infrastructure.

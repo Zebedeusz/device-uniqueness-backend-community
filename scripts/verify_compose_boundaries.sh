@@ -85,12 +85,26 @@ require_key registration-queue QUEUE_LEASE_TTL_SECS
 require_key identity-api QUEUE_ENABLED
 require_key identity-chain-writer QUEUE_FALLBACK_AFTER_SECS
 
-# username-indexer is a fully public read service: no JWT material at all.
-for key in JWT_ED25519_SECRET JWT_ED25519_PUBLIC_KEY JWT_JWKS_JSON TURN_SECRET; do
+# username-indexer serves public reads and holds VERIFY-ONLY JWT material: the
+# public key admits authenticated callers past the proof-of-compute gate, but the
+# service can never mint a token. The signing secret and every other service's
+# secret stay out.
+for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
+           INVITE_INVITER_SIGNER_SURI TURN_SECRET; do
   forbid_key username-indexer "$key"
 done
 require_key username-indexer SEARCH_RATE_LIMIT
 require_key username-indexer SEARCH_RATE_LIMIT_WINDOW_SECS
+# The gate's flag and its two key inputs: the bypass needs verify-only JWT
+# material, and the puzzle secret must live here and nowhere else.
+require_key username-indexer POC_ENABLED
+require_key username-indexer JWT_ED25519_PUBLIC_KEY
+require_key username-indexer POC_HMAC_SECRET
+for service in identity-api identity-chain-writer registration-queue \
+               dim-tickets-api dim-tickets-writer invite-tickets-api \
+               invite-tickets-pool turn-api notify-relay gateway; do
+  forbid_key "$service" POC_HMAC_SECRET
+done
 
 for service in dim-tickets-api dim-tickets-writer; do
   forbid_key "$service" JWT_ED25519_SECRET
