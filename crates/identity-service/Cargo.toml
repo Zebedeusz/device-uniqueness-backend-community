@@ -55,12 +55,34 @@ hex = "0.4"
 rand = "0.8"
 time = "0.3"
 futures = "0.3"
+# Keep secret config (JWT seed, DB URL, decryption/DeviceCheck keys) out of logs:
+# opaque Debug + zeroize-on-drop, exposed only via `.expose_secret()`.
+secrecy = "0.10"
+
+# Platform attestation verification (iOS App Attest + Android key attestation):
+# CBOR envelope, X.509/ASN.1 parsing, ECDSA P-256/P-384, and RSA (the classic
+# Google key-attestation root is RSA).
+ciborium = "0.2"
+x509-parser = "0.17"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pkcs8", "pem"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+# Android attestation CRL fetch (https://android.googleapis.com/attestation/status).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Play Integrity self-managed keys: the classic token is a JWE (A256KW + A256GCM)
+# wrapping a JWS (ES256) verdict, decrypted/verified locally — no Google API call.
+aes-gcm = "0.10"
+aes-kw = { version = "0.2", features = ["std"] }
+# Temporary Google decodeIntegrityToken fallback (until the Play Console
+# self-managed key exchange lands): RS256 service-account assertion.
+jsonwebtoken = "9"
 
 [dev-dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
+# Synthetic Apple-style attestation cert chains for App Attest verify tests.
+rcgen = "0.13"
 
 [lints]
 workspace = true

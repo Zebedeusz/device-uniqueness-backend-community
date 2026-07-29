@@ -1,19 +1,30 @@
 //! `POST /api/v1/auth/token` — verify the account proof, issue a JWT.
 //!
-//! Attestation (`Auth-Payload`, `attestationChain`, App Attest / Play Integrity)
-//! is a no-op while `AUTH_ENABLED` is false — but the challenge and sr25519
-//! client proof are always verified, so `accountId` is bound to a key the caller
-//! controls. The proof hashes the **raw** request body, so we read it as bytes
-//! rather than parsing JSON (re-serialization would change the hash).
+//! The challenge and sr25519 client proof are always verified, binding
+//! `accountId` to a key the caller controls. With `AUTH_ENABLED=true` the
+//! platform attestation evidence is verified too: the iOS App Attest
+//! assertion (`Auth-Payload` + `Auth-iOS-KeyId`) against the key registered
+//! via `/auth/app-attest/attestations`, the Android hardware-keystore chain
+//! (`Auth-Attestation-Type: key-attestation` + `attestationChain` in the
+//! JSON body), or the Play Integrity token (`Auth-Attestation-Type:
+//! play-integrity` + the classic JWE in `Auth-Payload`, verified locally
+//! with self-managed keys). `ENFORCE_AUTH` selects soft (log-only) vs hard
+//! (reject) handling of failed verdicts. The proof hashes the **raw**
+//! request body, so we read it as bytes rather than parsing JSON
+//! (re-serialization would change the hash).
 
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
+use secrecy::ExposeSecret as _;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::{challenge, decode_header, decode_header_fixed, detect_platform, proof, refresh};
+use super::{
+    app_attest, challenge, decode_header, decode_header_fixed, detect_platform, key_attest,
+    play_integrity, proof, refresh,
+};
 use crate::http::error::{AppError, AppResult};
 use crate::http::state::AppState;
 
@@ -47,16 +58,28 @@ impl TokenResponse {
         ("Auth-ClientId" = String, Header, description = "Base64 of the 32-byte sr25519 public key."),
         ("Auth-ClientProof" = String, Header, description = "Base64 of the 64-byte sr25519 signature over the raw body."),
         ("Auth-Challenge" = String, Header, description = "Challenge previously minted via /auth/challenges."),
-        ("Auth-iOS-Package" = Option<String>, Header, description = "Optional platform signal, e.g. io.pcf.polkadotapp.")
+        ("Auth-iOS-Package" = Option<String>, Header, description = "iOS bundle id, e.g. io.pcf.polkadotapp. Selects the App Attest verification path."),
+        ("Auth-Payload" = Option<String>, Header, description = "Base64 App Attest assertion (iOS) or the raw classic Play Integrity token (Android play-integrity), verified when attestation is enabled."),
+        ("Auth-iOS-KeyId" = Option<String>, Header, description = "Base64 App Attest key id registered via /auth/app-attest/attestations."),
+        ("Auth-Android-Package" = Option<String>, Header, description = "Android package name; required for play-integrity and sets the JWT platform claim for Android clients."),
+        ("Auth-Attestation-Type" = Option<String>, Header, description = "Android attestation dispatch: `key-attestation` verifies the `attestationChain` field in the JSON body (base64 DER, leaf first); `play-integrity` verifies the token in Auth-Payload with self-managed response keys.")
     ),
-    request_body(content = serde_json::Value, description = "Raw body covered by the proof; may be empty {}.",
+    request_body(content = serde_json::Value, description = "Raw body covered by the proof; may be empty {}. \
+        Android key-attestation requests carry the certificate chain here as `attestationChain` \
+        (2-10 base64 DER entries, leaf first).",
         example = json!({})),
     responses(
         (status = 200, description = "Verified. Access JWT + opaque refresh token.", body = TokenResponse,
          example = json!({ "token": "jwt", "refreshToken": "opaque-base64-token" })),
         (status = 401, description = "Bad or spent challenge, or invalid client proof.",
          body = crate::http::error::ErrorResponse,
-         example = json!({ "error": "UNAUTHORIZED", "message": "unauthorized" }))
+         example = json!({ "error": "UNAUTHORIZED", "message": "unauthorized" })),
+        (status = 403, description = "Platform attestation failed verification (hard enforcement).",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "INTEGRITY_FAILED", "message": "attestation rejected" })),
+        (status = 503, description = "Android attestation revocation list unavailable; retry with a fresh challenge (hard enforcement).",
+         body = crate::http::error::ErrorResponse,
+         example = json!({ "error": "ATTESTATION_CRL_UNAVAILABLE", "message": "attestation CRL unavailable" }))
     )
 )]
 pub async fn issue(
@@ -76,20 +99,32 @@ pub async fn issue(
         return Err(AppError::Unauthorized);
     }
 
-    if state.config.auth_enabled {
-        // Slice 6 lands real App Attest / Play Integrity / TEE verification here.
-        tracing::debug!("attestation enabled: platform verification not yet implemented");
+    // appFromOfficialStore is a real verdict: with attestation enabled it
+    // derives only from verified evidence — a failed soft-mode verdict is
+    // `false`, never a fabricated `true`. The M0 no-op keeps the legacy
+    // hardcoded `true`.
+    let app_from_official_store = if state.config.auth_enabled {
+        match attestation_verdict(&state, &headers, &challenge, &client_id, &body).await? {
+            Ok(from_store) => from_store,
+            Err(reason) if state.config.enforce_auth => {
+                tracing::warn!(reason = %reason, "attestation rejected (hard mode)");
+                return Err(AppError::IntegrityFailed(reason));
+            }
+            Err(reason) => {
+                tracing::warn!(reason = %reason, "attestation verdict failed (soft mode, request allowed)");
+                false
+            }
+        }
     } else {
         tracing::debug!(
             attestation = state.config.attestation_mode(),
             "attestation no-op"
         );
-    }
+        true
+    };
 
     let account_id = format!("0x{}", hex::encode(client_id));
     let platform = detect_platform(&headers);
-    // Attestation-derived in Slice 6; defaults true (iOS App Store contract) for now.
-    let app_from_official_store = true;
 
     let token = state.jwt.issue(
         &account_id,
@@ -107,6 +142,228 @@ pub async fn issue(
     .await?;
 
     Ok(Json(TokenResponse::new(token, refresh_token)))
+}
+
+/// Evaluate the platform attestation evidence for this request.
+///
+/// Outer `Err` = infrastructure failure; inner `Err(reason)` = attestation
+/// verdict failure, gated soft/hard by the caller. The inner `Ok` is the
+/// verified `appFromOfficialStore`: `true` for iOS (App Store contract),
+/// digest-derived for Android.
+async fn attestation_verdict(
+    state: &AppState,
+    headers: &HeaderMap,
+    challenge: &[u8],
+    client_id: &[u8; 32],
+    body: &[u8],
+) -> AppResult<Result<bool, String>> {
+    if headers.contains_key("auth-ios-package") {
+        return Ok(
+            ios_attestation_verdict(state, headers, challenge, client_id, body)
+                .await?
+                .map(|()| true),
+        );
+    }
+
+    // The attestation-type value is a protocol enum; matched case-sensitively
+    // like the legacy backend.
+    match headers
+        .get("auth-attestation-type")
+        .and_then(|v| v.to_str().ok())
+    {
+        Some("key-attestation") => key_attestation_verdict(state, challenge, body).await,
+        Some("play-integrity") => {
+            Ok(play_integrity_verdict(state, headers, challenge, client_id, body).await)
+        }
+        Some(other) => Ok(Err(format!("unknown Auth-Attestation-Type {other:?}"))),
+        None => Ok(Err(
+            "no attestation evidence (no Auth-iOS-Package or Auth-Attestation-Type)".into(),
+        )),
+    }
+}
+
+/// Verify the Play Integrity token from `Auth-Payload` (the raw classic JWE
+/// string, not base64-decoded). Self-managed keys take precedence; the
+/// temporary `GOOGLE_CREDENTIALS` fallback decodes via Google's API until
+/// the key exchange lands. Both feed the same nonce binding + verdict
+/// policy. Returns the derived `appFromOfficialStore`.
+async fn play_integrity_verdict(
+    state: &AppState,
+    headers: &HeaderMap,
+    challenge: &[u8],
+    client_id: &[u8; 32],
+    body: &[u8],
+) -> Result<bool, String> {
+    // Legacy middleware contract: the package header is required and
+    // allow-listed before anything is decoded.
+    let package = headers
+        .get("auth-android-package")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing Auth-Android-Package header")?;
+    if !state
+        .config
+        .android_package_names
+        .iter()
+        .any(|p| p == package)
+    {
+        return Err(format!("unknown Android package {package}"));
+    }
+    let integrity_token = headers
+        .get("auth-payload")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing Auth-Payload integrity token")?;
+
+    let (Some(playstore_digest), Some(website_digest)) = (
+        state.config.android_signing_digest_playstore.as_ref(),
+        state.config.android_signing_digest_website.as_ref(),
+    ) else {
+        return Err("android signing digests are not configured".into());
+    };
+
+    let expected_nonce = proof::client_data_hash(challenge, client_id, body);
+    let policy = play_integrity::PolicyParams {
+        expected_nonce: &expected_nonce,
+        mode: state.config.play_integrity_mode,
+        package_names: &state.config.android_package_names,
+        playstore_digest,
+        website_digest,
+    };
+
+    if let (Some(decryption_key), Some(verification_key)) = (
+        state
+            .config
+            .play_integrity_decryption_key
+            .as_ref()
+            .map(|k| k.expose_secret()),
+        state.config.play_integrity_verification_key.as_deref(),
+    ) {
+        let params = play_integrity::VerifyParams {
+            decryption_key,
+            verification_key_der: verification_key,
+            policy,
+        };
+        return play_integrity::verify_token(integrity_token, &params).map_err(|e| e.to_string());
+    }
+
+    if let Some(google) = &state.play_integrity_google {
+        tracing::debug!(
+            "play integrity: self-managed keys unset; using the temporary \
+             Google decodeIntegrityToken fallback"
+        );
+        let payload = google
+            .decode(package, integrity_token)
+            .await
+            .map_err(|e| format!("google decode fallback: {e}"))?;
+        return play_integrity::check_payload(&payload, &policy).map_err(|e| e.to_string());
+    }
+
+    Err(
+        "play integrity is not configured (neither self-managed keys nor GOOGLE_CREDENTIALS)"
+            .into(),
+    )
+}
+
+/// Verify the Android hardware-keystore chain from the request body.
+///
+/// Outer `Err` = infrastructure failure (a hard-mode CRL outage surfaces as a
+/// `503` so the client retries); inner `Err(reason)` = attestation verdict
+/// failure, gated soft/hard by the caller. Inner `Ok` is the derived
+/// `appFromOfficialStore`.
+async fn key_attestation_verdict(
+    state: &AppState,
+    challenge: &[u8],
+    body: &[u8],
+) -> AppResult<Result<bool, String>> {
+    let chain = match key_attest::chain_from_body(body) {
+        Ok(chain) => chain,
+        Err(reason) => return Ok(Err(reason)),
+    };
+
+    let (Some(playstore_digest), Some(website_digest)) = (
+        state.config.android_signing_digest_playstore.as_ref(),
+        state.config.android_signing_digest_website.as_ref(),
+    ) else {
+        // Unreachable when auth is enabled (config is fail-fast), but never
+        // silently pass without a digest allow-list.
+        return Ok(Err("android signing digests are not configured".into()));
+    };
+
+    let revoked_serials = match state.crl.revoked_serials().await {
+        Ok(serials) => serials,
+        // CRL unavailability is infrastructure, not a device failure. Hard
+        // mode surfaces a 503 "retry" rather than a spurious integrity reject;
+        // soft mode falls through as a logged verdict failure (request allowed).
+        Err(e) if state.config.enforce_auth => {
+            tracing::warn!(error = %e, "attestation CRL unavailable (hard mode)");
+            return Err(AppError::CrlUnavailable);
+        }
+        Err(e) => return Ok(Err(format!("attestation CRL unavailable: {e}"))),
+    };
+
+    let params = key_attest::verify::VerifyParams {
+        challenge,
+        package_names: &state.config.android_package_names,
+        playstore_digest,
+        website_digest,
+        trusted_roots_der: &key_attest::verify::google_roots_der(),
+        trusted_verified_boot_keys: key_attest::verify::GRAPHENEOS_VERIFIED_BOOT_KEYS,
+        revoked_serials: &revoked_serials,
+        now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
+    };
+    Ok(key_attest::verify::verify_chain(&chain, &params).map_err(|e| e.to_string()))
+}
+
+/// Evaluate the iOS App Attest assertion for this request.
+///
+/// Outer `Err` = infrastructure failure; inner `Err(reason)` = attestation
+/// verdict failure, gated soft/hard by the caller.
+async fn ios_attestation_verdict(
+    state: &AppState,
+    headers: &HeaderMap,
+    challenge: &[u8],
+    client_id: &[u8; 32],
+    body: &[u8],
+) -> AppResult<Result<(), String>> {
+    let Some(package) = headers
+        .get("auth-ios-package")
+        .and_then(|v| v.to_str().ok())
+    else {
+        return Ok(Err(
+            "no iOS package header; platform attestation unavailable".into(),
+        ));
+    };
+    if !state.config.ios_package_names.iter().any(|p| p == package) {
+        return Ok(Err(format!("unknown iOS package {package}")));
+    }
+    let Ok(assertion) = decode_header(headers, "auth-payload") else {
+        return Ok(Err("missing or invalid Auth-Payload assertion".into()));
+    };
+    let Ok(key_id) = decode_header(headers, "auth-ios-keyid") else {
+        return Ok(Err("missing or invalid Auth-iOS-KeyId".into()));
+    };
+    let Some(key) = app_attest::store::find(&state.pool, &key_id).await? else {
+        return Ok(Err("unregistered App Attest key".into()));
+    };
+
+    let client_data_hash = proof::client_data_hash(challenge, client_id, body);
+    match app_attest::verify::verify_assertion(
+        &assertion,
+        &client_data_hash,
+        &key.public_key,
+        &state.config.apple_app_attest_app_ids,
+        key.sign_count,
+    ) {
+        Ok(next_sign_count) => {
+            if app_attest::store::commit_sign_count(&state.pool, &key_id, next_sign_count).await? {
+                Ok(Ok(()))
+            } else {
+                // A concurrent assertion advanced the counter past ours
+                // between load and commit; treat like any sign-count failure.
+                Ok(Err("assertion sign count no longer monotonic".into()))
+            }
+        }
+        Err(err) => Ok(Err(err.to_string())),
+    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@
 //! onto People Chain.
 
 use anyhow::Context as _;
+use secrecy::ExposeSecret as _;
 use tracing_subscriber::EnvFilter;
 
 use identity_service::{db, routes, AppState, ChainClient, Config, Jwt};
@@ -27,8 +28,8 @@ async fn main() -> anyhow::Result<()> {
         "starting identity-api"
     );
 
-    let jwt = Jwt::new(&config.jwt_secret, config.jwt_issuer.clone());
-    let pool = db::connect(&config.database_url).await?;
+    let jwt = Jwt::new(config.jwt_secret.expose_secret(), config.jwt_issuer.clone());
+    let pool = db::connect(config.database_url.expose_secret()).await?;
     let chain = ChainClient::connect(&config.people_rpc_url).await?;
     tracing::info!("connected to People Chain");
 

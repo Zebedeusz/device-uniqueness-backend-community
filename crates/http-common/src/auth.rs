@@ -18,6 +18,10 @@ pub trait HasJwtVerifier {
 pub struct AuthSubject {
     /// `0x`-hex sr25519 public key of the caller (the JWT subject).
     pub subject: String,
+    /// Client platform (`"ios"`/`"android"`) from the token's `plt` claim,
+    /// when the issuer set it. Tamper-proof (verified JWT); used to scope
+    /// platform-specific gates such as iOS DeviceCheck.
+    pub platform: Option<String>,
 }
 
 /// An auth rejection, rendered as the legacy middleware's three 401
@@ -74,6 +78,7 @@ where
             .map_err(|_| AuthError::InvalidToken)?;
         Ok(AuthSubject {
             subject: claims.account_id,
+            platform: claims.platform,
         })
     }
 }

@@ -41,6 +41,17 @@ pub enum AppError {
     /// Authenticated, but not allowed to perform the action (e.g. `who` != subject).
     #[error("{0}")]
     Forbidden(String),
+    /// Platform attestation (App Attest / Play Integrity / key attestation)
+    /// failed verification under hard enforcement. Distinct from `Unauthorized`
+    /// (bad challenge/proof): the client is talking to us fine, the device/app
+    /// failed the genuineness check, so it maps to `403 INTEGRITY_FAILED`.
+    #[error("{0}")]
+    IntegrityFailed(String),
+    /// Google's Android attestation revocation list could not be consulted and
+    /// no cached snapshot exists — an infrastructure failure, not a device
+    /// failure. Maps to `503` so the client retries with a fresh challenge.
+    #[error("attestation CRL unavailable")]
+    CrlUnavailable,
     /// Request conflicts with existing state (e.g. username/digits already taken).
     #[error("{0}")]
     Conflict(String),
@@ -73,6 +84,11 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "WRONG_DATA"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
             AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "FORBIDDEN"),
+            AppError::IntegrityFailed(_) => (StatusCode::FORBIDDEN, "INTEGRITY_FAILED"),
+            AppError::CrlUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ATTESTATION_CRL_UNAVAILABLE",
+            ),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "CONFLICT"),
             AppError::Internal(err) => {
                 tracing::error!(error = ?err, "internal error");
@@ -80,7 +96,10 @@ impl IntoResponse for AppError {
             }
         };
         let message = match &self {
-            AppError::BadRequest(m) | AppError::Forbidden(m) | AppError::Conflict(m) => m.clone(),
+            AppError::BadRequest(m)
+            | AppError::Forbidden(m)
+            | AppError::IntegrityFailed(m)
+            | AppError::Conflict(m) => m.clone(),
             other => other.to_string(),
         };
         (status, Json(json!({ "error": code, "message": message }))).into_response()

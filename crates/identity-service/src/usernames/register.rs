@@ -27,7 +27,9 @@ use std::str::FromStr as _;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse as _, Response};
 use axum::Json;
+use base64::Engine as _;
 use http_common::{zod, AuthSubject};
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom as _;
@@ -36,6 +38,7 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 use crate::chain::outbox::{self, InsertError, NewReservation};
+use crate::device_check::{self, Decision};
 use crate::http::state::AppState;
 
 use super::error::{FieldError, UsernamesError, UsernamesResult};
@@ -113,8 +116,9 @@ pub struct RegisterResponse {
     /// Full `base.NN` username.
     #[schema(example = "tallesx.07")]
     pub username: String,
-    /// Present only when the DeviceCheck free-slot gate applies (the
-    /// attestation slice; deferred).
+    /// Present only when the DeviceCheck free-slot gate ran and produced an
+    /// advisory availability (`Register`/`Proceed`); omitted when DeviceCheck
+    /// is disabled or the outcome short-circuited (payment/token/unavailable).
     #[serde(
         rename = "device_check_available",
         skip_serializing_if = "Option::is_none"
@@ -145,6 +149,10 @@ const DEVICE_TOKEN_HEADER: &str = "Device-Token-iOS";
         (status = 202, description = "Reservation accepted into the outbox for on-chain registration.",
          body = RegisterResponse,
          example = json!({ "base_username": "tallesx", "digits": "07", "username": "tallesx.07" })),
+        (status = 200, description = "DeviceCheck free slot already used (hard mode): the device must \
+            pay to register. Not an error — a 200 outcome.",
+         body = serde_json::Value,
+         example = json!({ "registrationOutcome": "PAYMENT_REQUIRED" })),
         (status = 400, description = "Validation failed (problem details with `errors`) or malformed JSON.",
          body = serde_json::Value,
          example = json!({
@@ -154,7 +162,8 @@ const DEVICE_TOKEN_HEADER: &str = "Device-Token-iOS";
              "status": 400,
              "errors": [{ "detail": "Invalid signature.", "pointer": "#/candidateSignature" }]
          })),
-        (status = 401, description = "Missing or invalid bearer token (the frozen problem-details trio).",
+        (status = 401, description = "Missing or invalid bearer token (the frozen problem-details trio), \
+            or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present.",
          body = serde_json::Value),
         (status = 409, description = "Preferred digits taken, no digits available, or username taken.",
          body = serde_json::Value,
@@ -163,7 +172,14 @@ const DEVICE_TOKEN_HEADER: &str = "Device-Token-iOS";
          body = serde_json::Value),
         (status = 500, description = "Persistence failure or unexpected error.",
          body = serde_json::Value,
-         example = json!({ "error": "Failed to persist username registration" }))
+         example = json!({ "error": "Failed to persist username registration" })),
+        (status = 502, description = "Hard-mode DeviceCheck could not reach Apple to resolve the device.",
+         body = serde_json::Value,
+         example = json!({ "error": "iOS DeviceCheck verification failed" })),
+        (status = 503, description = "The DeviceCheck free slot could not be marked used at Apple after \
+            a successful gate (upstream write failure; retryable).",
+         body = serde_json::Value,
+         example = json!({ "error": "Failed to mark iOS device as registered with Apple DeviceCheck" }))
     )
 )]
 pub async fn register(
@@ -171,7 +187,7 @@ pub async fn register(
     auth: AuthSubject,
     headers: HeaderMap,
     body: Bytes,
-) -> UsernamesResult<(StatusCode, Json<RegisterResponse>)> {
+) -> UsernamesResult<Response> {
     super::check_rate_limit(&state, &auth.subject)?;
     validate_device_token_header(&headers)?;
 
@@ -182,6 +198,43 @@ pub async fn register(
     let digit = select_digit(&taken, parsed.preferred_digits.as_deref(), &parsed.username)?;
     let digits = format!("{digit:02}");
     let full_username = format!("{}.{digits}", parsed.username);
+
+    // DeviceCheck is Apple iOS uniqueness, so it only gates iOS requests —
+    // identified by the tamper-proof `plt` claim set at attestation. Android
+    // and other clients skip it entirely: they are not subject to iOS
+    // uniqueness and must never be rejected for a missing iOS device token.
+    // A "seen device" resolves to a 200 PAYMENT_REQUIRED outcome, never an
+    // error. This gate query only shapes the fast-path response: for a hard-mode
+    // fresh device the free slot is claimed under a serialized, re-checked
+    // advisory lock in `reserve`, so concurrent requests cannot double-spend it.
+    let is_ios = auth.platform.as_deref() == Some("ios");
+    let (mark_token, device_check_available): (Option<Vec<u8>>, Option<bool>) =
+        match state.device_check.as_ref().filter(|_| is_ios) {
+            Some(client) => {
+                let device_token = device_token_bytes(&headers);
+                let verdict = device_check::evaluate(client, device_token.as_deref()).await;
+                match device_check::decide_gate(verdict, state.config.enforce_auth) {
+                    Decision::Blocked => {
+                        return Ok((
+                            StatusCode::OK,
+                            Json(serde_json::json!({ "registrationOutcome": "PAYMENT_REQUIRED" })),
+                        )
+                            .into_response());
+                    }
+                    Decision::TokenRequired => return Err(UsernamesError::DeviceTokenRequired),
+                    Decision::Unavailable(cause) => {
+                        tracing::warn!(cause, "DeviceCheck unavailable (hard mode)");
+                        return Err(UsernamesError::DeviceCheckUnavailable);
+                    }
+                    Decision::Register => (
+                        Some(device_token.expect("Available verdict implies a device token")),
+                        Some(true),
+                    ),
+                    Decision::Proceed { available } => (None, available),
+                }
+            }
+            None => (None, None),
+        };
 
     let new = NewReservation {
         account_id: auth.subject.clone(),
@@ -199,31 +252,148 @@ pub async fn register(
         reserved_username: parsed.dotns.and_then(|d| d.reserved_username),
     };
 
-    match outbox::insert(&state.pool, &new).await {
-        Ok(id) => {
+    match reserve(&state, &new, mark_token.as_deref()).await? {
+        ReserveOutcome::Reserved(id) => {
             tracing::info!(id, username = %full_username, "username reserved");
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(RegisterResponse {
+                    base_username: parsed.username,
+                    digits,
+                    username: full_username,
+                    device_check_available,
+                }),
+            )
+                .into_response())
         }
-        Err(InsertError::Conflict) => {
-            return Err(UsernamesError::UsernameTaken {
-                base: parsed.username,
-                digits,
-            });
+        // Lost the serialized claim race: a concurrent request already took this
+        // device's free slot under the lock. Same outcome as a `Blocked`
+        // verdict — a 200 PAYMENT_REQUIRED, never an error.
+        ReserveOutcome::DeviceAlreadyClaimed => Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({ "registrationOutcome": "PAYMENT_REQUIRED" })),
+        )
+            .into_response()),
+    }
+}
+/// Advisory-lock key serializing hard-mode free-iOS DeviceCheck claims across
+/// replicas (identity-service database namespace).
+const FREE_IOS_CLAIM_LOCK_KEY: i64 = 0x1DEA_DC01;
+
+/// Outcome of [`reserve`]. `DeviceAlreadyClaimed` only arises on the serialized
+/// free-iOS claim path, when a concurrent request won the lock and took this
+/// device's free slot first.
+enum ReserveOutcome {
+    Reserved(i64),
+    DeviceAlreadyClaimed,
+}
+
+/// Persist the reservation.
+///
+/// Without a `mark_token` it is a plain insert. With one (a hard-mode fresh iOS
+/// device) the DeviceCheck free slot must be claimed at most once per device,
+/// so the whole claim is serialized:
+///
+/// 1. Take a transaction-scoped Postgres advisory lock so every hard-mode
+///    free-iOS claim runs one at a time across all replicas.
+/// 2. Re-query Apple *under the lock*. The gate's earlier query is already stale
+///    by the time a second contender acquires the lock, so this re-check is what
+///    actually closes the TOCTOU: a device that a concurrent request just marked
+///    reads back as used and yields `DeviceAlreadyClaimed` (mapped to a 200
+///    PAYMENT_REQUIRED) instead of a second free registration.
+/// 3. Insert the row, then mark the slot — an insert failure never reaches Apple
+///    and an Apple rejection rolls the reservation back.
+///
+/// Not fully atomic: Apple's mark is external, so a DB commit failure *after* a
+/// successful mark can consume the slot without a durable reservation. That
+/// fails safe (the device loses its free slot; it never gains an extra one).
+async fn reserve(
+    state: &AppState,
+    new: &NewReservation,
+    mark_token: Option<&[u8]>,
+) -> UsernamesResult<ReserveOutcome> {
+    let conflict = || UsernamesError::UsernameTaken {
+        base: new.base.clone(),
+        digits: new.digits.clone(),
+    };
+
+    let Some(token) = mark_token else {
+        return match outbox::insert(&state.pool, new).await {
+            Ok(id) => Ok(ReserveOutcome::Reserved(id)),
+            Err(InsertError::Conflict) => Err(conflict()),
+            Err(InsertError::Db(e)) => {
+                tracing::error!(error = ?e, "reservation outbox insert failed");
+                Err(UsernamesError::PersistenceFailed)
+            }
+        };
+    };
+
+    let client = state
+        .device_check
+        .as_ref()
+        .expect("a mark token implies DeviceCheck is enabled");
+    let mut tx = state.pool.begin().await.map_err(|e| {
+        tracing::error!(error = ?e, "begin reservation transaction failed");
+        UsernamesError::PersistenceFailed
+    })?;
+
+    // Serialize all hard-mode free-iOS claims: an xact-scoped advisory lock held
+    // until commit/rollback, so at most one claim runs this critical section at
+    // a time (safe across replicas).
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(FREE_IOS_CLAIM_LOCK_KEY)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "acquiring DeviceCheck claim lock failed");
+            UsernamesError::PersistenceFailed
+        })?;
+
+    // Authoritative re-check under the lock. The gate's pre-transaction query is
+    // stale here; this re-read is what prevents a concurrent double-spend.
+    match client.already_used(token).await {
+        Ok(true) => {
+            if let Err(rb) = tx.rollback().await {
+                tracing::error!(error = ?rb, "rollback after lost claim race failed");
+            }
+            return Ok(ReserveOutcome::DeviceAlreadyClaimed);
         }
+        Ok(false) => {}
+        Err(err) => {
+            tracing::warn!(error = %err, "DeviceCheck re-query under lock failed (hard mode)");
+            if let Err(rb) = tx.rollback().await {
+                tracing::error!(error = ?rb, "rollback after DeviceCheck re-query failure failed");
+            }
+            return Err(UsernamesError::DeviceCheckUnavailable);
+        }
+    }
+
+    // Insert first: an insert failure leaves the transaction untouched and
+    // never marks the device, so the slot is preserved.
+    let id = match outbox::insert(&mut *tx, new).await {
+        Ok(id) => id,
+        Err(InsertError::Conflict) => return Err(conflict()),
         Err(InsertError::Db(e)) => {
             tracing::error!(error = ?e, "reservation outbox insert failed");
             return Err(UsernamesError::PersistenceFailed);
         }
+    };
+
+    // Mark the free slot used only after the row exists; roll back if Apple
+    // rejects so the slot is never consumed without a durable reservation.
+    if let Err(err) = client.register_device(token).await {
+        tracing::error!(error = %err, "DeviceCheck register_device failed; rolling back reservation");
+        if let Err(rb) = tx.rollback().await {
+            tracing::error!(error = ?rb, "reservation rollback failed after DeviceCheck failure");
+        }
+        return Err(UsernamesError::DeviceRegistrationFailed);
     }
 
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(RegisterResponse {
-            base_username: parsed.username,
-            digits,
-            username: full_username,
-            device_check_available: None,
-        }),
-    ))
+    tx.commit().await.map_err(|e| {
+        tracing::error!(error = ?e, "commit reservation transaction failed");
+        UsernamesError::PersistenceFailed
+    })?;
+    Ok(ReserveOutcome::Reserved(id))
 }
 
 /// The fully-validated registration request, with hex fields decoded.
@@ -259,6 +429,17 @@ fn validate_device_token_header(headers: &HeaderMap) -> UsernamesResult<()> {
         detail: "Invalid base64-encoded string".to_string(),
         pointer: format!("#/{DEVICE_TOKEN_HEADER}"),
     }]))
+}
+
+/// Decode the (already shape-validated) `Device-Token-iOS` header to raw
+/// bytes for the DeviceCheck query. Absent or empty → `None` (legacy treats
+/// an empty header value as no token / `DeviceCheckInactive`).
+fn device_token_bytes(headers: &HeaderMap) -> Option<Vec<u8>> {
+    let raw = headers.get(DEVICE_TOKEN_HEADER)?.to_str().ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD.decode(raw).ok()
 }
 
 /// The zod v4 base64 rule: empty, or padded groups of four.
@@ -936,6 +1117,29 @@ mod tests {
         assert!(!is_zod_base64("not base64!!!"));
         assert!(!is_zod_base64("abc"));
         assert!(!is_zod_base64("a==="));
+    }
+
+    #[test]
+    fn device_token_bytes_decodes_present_and_ignores_absent_or_empty() {
+        use axum::http::HeaderValue;
+
+        // Absent header → no token (DeviceCheckInactive upstream).
+        assert_eq!(device_token_bytes(&HeaderMap::new()), None);
+
+        // Empty header value → treated as no token, matching legacy `!token`.
+        let mut empty = HeaderMap::new();
+        empty.insert(DEVICE_TOKEN_HEADER, HeaderValue::from_static(""));
+        assert_eq!(device_token_bytes(&empty), None);
+
+        // A valid base64 token decodes to its raw bytes.
+        let token = b"device-token-bytes";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(token);
+        let mut present = HeaderMap::new();
+        present.insert(
+            DEVICE_TOKEN_HEADER,
+            HeaderValue::from_str(&encoded).unwrap(),
+        );
+        assert_eq!(device_token_bytes(&present).as_deref(), Some(&token[..]));
     }
 
     #[test]

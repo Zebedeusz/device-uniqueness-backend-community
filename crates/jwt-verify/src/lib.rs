@@ -35,6 +35,10 @@ pub struct VerifiedClaims {
     pub account_id: String,
     /// Expiry (unix seconds).
     pub exp: i64,
+    /// Client platform (`"ios"`/`"android"`) from the token's `plt` claim,
+    /// set server-side at attestation. Absent when the issuer omitted it.
+    #[serde(rename = "plt", default)]
+    pub platform: Option<String>,
 }
 
 #[derive(Deserialize)]

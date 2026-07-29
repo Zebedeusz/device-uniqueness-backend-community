@@ -9,14 +9,15 @@
 //! is recorded before awaiting inclusion; an unknown
 //! outcome is reconciled against `UsernameOwnerOf`, never blindly resubmitted.
 //!
-//! Grounded in `.local/identity-chain-writer-outbox-spec.md` and the `flow-funder`
-//! reference (subxt 0.50, proxy signing, cached nonce reset on error).
+//! Follows an established chain-writer pattern (subxt 0.50, proxy signing,
+//! cached nonce reset on error).
 
 use std::str::FromStr as _;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use chain_types::{PeopleConfig, PeopleExtrinsicParamsBuilder};
+use secrecy::{ExposeSecret as _, SecretString};
 use sqlx::{PgPool, Row as _};
 use subxt::dynamic::{self, Value};
 use subxt::tx::{DynamicPayload, TransactionStatus};
@@ -31,12 +32,13 @@ use super::outbox::{self, Guard, Reservation};
 /// Chain-writer configuration, loaded from the environment.
 #[derive(Debug, Clone)]
 pub struct WriterConfig {
-    /// Postgres connection string (shared schema with identity-api).
-    pub database_url: String,
+    /// Postgres connection string (shared schema with identity-api). May embed a
+    /// password, so it is a secret.
+    pub database_url: SecretString,
     /// People Chain RPC endpoint.
     pub people_rpc_url: String,
     /// SURI of the hot signing key (the proxy key, or the primary in dev).
-    pub signer_suri: String,
+    pub signer_suri: SecretString,
     /// Optional cold attester authority: when set, calls are wrapped in
     /// `Proxy.proxy(real = this account, …)` and the SURI signs as its proxy.
     pub proxy_for: Option<[u8; 32]>,
@@ -74,9 +76,9 @@ impl WriterConfig {
         };
 
         Ok(Self {
-            database_url,
+            database_url: SecretString::from(database_url),
             people_rpc_url,
-            signer_suri,
+            signer_suri: SecretString::from(signer_suri),
             proxy_for,
             holder_id,
             lease_name: std::env::var("CHAIN_WRITER_LEASE_NAME")
@@ -99,9 +101,9 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
         holder = %config.holder_id,
         "starting identity-chain-writer"
     );
-    let pool = crate::db::connect(&config.database_url).await?;
+    let pool = crate::db::connect(config.database_url.expose_secret()).await?;
     let chain = ChainClient::connect(&config.people_rpc_url).await?;
-    let signer = WriterSigner::from_secret(&config.signer_suri)?;
+    let signer = WriterSigner::from_secret(config.signer_suri.expose_secret())?;
     let signer_account = AccountId32(signer.public_bytes());
     tracing::info!(signer = %hex_account(&signer_account.0), "identity-chain-writer connected");
 

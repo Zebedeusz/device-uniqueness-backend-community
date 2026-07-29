@@ -8,9 +8,12 @@
 
 pub(crate) mod app_attest;
 pub(crate) mod challenge;
+pub(crate) mod key_attest;
+pub(crate) mod play_integrity;
 mod proof;
 pub(crate) mod refresh;
 pub(crate) mod token;
+mod x509;
 
 use axum::http::HeaderMap;
 use axum::routing::post;

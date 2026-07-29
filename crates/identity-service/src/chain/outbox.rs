@@ -4,8 +4,7 @@
 //! `POST /api/v1/usernames` inserts a [`Status::Reserved`] row and returns 202;
 //! the `identity-chain-writer` binary claims due rows, submits `PeopleLite.attest`, and
 //! advances them. The row is the single source of truth — the chain is
-//! reconciled *to* the row, never the reverse (see
-//! `.local/identity-chain-writer-outbox-spec.md`).
+//! reconciled *to* the row, never the reverse.
 //!
 //! Writer mutations are guarded by the [`Guard`] lease check so a stale writer
 //! that lost the lease can never advance a row. The lease is a best-effort
@@ -96,7 +95,13 @@ pub enum InsertError {
 
 /// Insert a fresh `RESERVED` reservation. Maps a unique violation on
 /// `full_username` to [`InsertError::Conflict`] (the name was taken in a race).
-pub async fn insert(pool: &PgPool, r: &NewReservation) -> Result<i64, InsertError> {
+///
+/// Generic over the executor so it runs either directly on the pool or inside
+/// a caller's transaction (e.g. the DeviceCheck reserve-and-mark path).
+pub async fn insert<'e, E>(executor: E, r: &NewReservation) -> Result<i64, InsertError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     let row = sqlx::query(
         "INSERT INTO username_reservations \
            (account_id, candidate_account_id, base, digits, full_username, \
@@ -119,7 +124,7 @@ pub async fn insert(pool: &PgPool, r: &NewReservation) -> Result<i64, InsertErro
     .bind(&r.dotns_signature)
     .bind(r.dotns_signed_at)
     .bind(&r.reserved_username)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
     .map_err(|e| match &e {
         sqlx::Error::Database(db) if db.is_unique_violation() => InsertError::Conflict,

@@ -76,7 +76,7 @@
         "tags": [
           "Authentication"
         ],
-        "summary": "Accept the attestation payload and acknowledge with `202` (no-op for now).",
+        "summary": "Register an App Attest key: verify the attestation object and persist the\ncredential key (no-op `202 {}` while `AUTH_ENABLED=false`).",
         "operationId": "register",
         "requestBody": {
           "content": {
@@ -90,11 +90,23 @@
         },
         "responses": {
           "202": {
-            "description": "Accepted. No-op in M0 — payload is not verified against Apple/Google.",
+            "description": "Accepted. With attestation enabled, the key is verified against Apple and stored; while disabled, the payload is not verified.",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Attestation rejected (hard mode), or the challenge was unknown, expired, or already used. Soft mode logs failed verdicts and returns 202.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "_tag": "VERIFY_ATTESTATION_FAILED",
+                  "error": "attestation nonce mismatch"
+                }
               }
             }
           }
@@ -163,7 +175,55 @@
           {
             "name": "Auth-iOS-Package",
             "in": "header",
-            "description": "Optional platform signal, e.g. io.pcf.polkadotapp.",
+            "description": "iOS bundle id, e.g. io.pcf.polkadotapp. Selects the App Attest verification path.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Auth-Payload",
+            "in": "header",
+            "description": "Base64 App Attest assertion (iOS) or the raw classic Play Integrity token (Android play-integrity), verified when attestation is enabled.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Auth-iOS-KeyId",
+            "in": "header",
+            "description": "Base64 App Attest key id registered via /auth/app-attest/attestations.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Auth-Android-Package",
+            "in": "header",
+            "description": "Android package name; required for play-integrity and sets the JWT platform claim for Android clients.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Auth-Attestation-Type",
+            "in": "header",
+            "description": "Android attestation dispatch: `key-attestation` verifies the `attestationChain` field in the JSON body (base64 DER, leaf first); `play-integrity` verifies the token in Auth-Payload with self-managed response keys.",
             "required": false,
             "schema": {
               "type": [
@@ -174,7 +234,7 @@
           }
         ],
         "requestBody": {
-          "description": "Raw body covered by the proof; may be empty {}.",
+          "description": "Raw body covered by the proof; may be empty {}. Android key-attestation requests carry the certificate chain here as `attestationChain` (2-10 base64 DER entries, leaf first).",
           "content": {
             "application/json": {
               "schema": {},
@@ -208,6 +268,34 @@
                 "example": {
                   "error": "UNAUTHORIZED",
                   "message": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Platform attestation failed verification (hard enforcement).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "INTEGRITY_FAILED",
+                  "message": "attestation rejected"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Android attestation revocation list unavailable; retry with a fresh challenge (hard enforcement).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "ATTESTATION_CRL_UNAVAILABLE",
+                  "message": "attestation CRL unavailable"
                 }
               }
             }
@@ -282,6 +370,17 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "DeviceCheck free slot already used (hard mode): the device must pay to register. Not an error — a 200 outcome.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "registrationOutcome": "PAYMENT_REQUIRED"
+                }
+              }
+            }
+          },
           "202": {
             "description": "Reservation accepted into the outbox for on-chain registration.",
             "content": {
@@ -318,7 +417,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token (the frozen problem-details trio).",
+            "description": "Missing or invalid bearer token (the frozen problem-details trio), or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present.",
             "content": {
               "application/json": {
                 "schema": {}
@@ -351,6 +450,28 @@
                 "schema": {},
                 "example": {
                   "error": "Failed to persist username registration"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Hard-mode DeviceCheck could not reach Apple to resolve the device.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "iOS DeviceCheck verification failed"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The DeviceCheck free slot could not be marked used at Apple after a successful gate (upstream write failure; retryable).",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "Failed to mark iOS device as registered with Apple DeviceCheck"
                 }
               }
             }
@@ -915,7 +1036,7 @@
     "schemas": {
       "AppAttestRequest": {
         "type": "object",
-        "description": "iOS Apple App Attest key-registration payload. Shape-preserving; not verified\nwhile `AUTH_ENABLED` is false.",
+        "description": "iOS Apple App Attest key-registration payload.",
         "required": [
           "keyId",
           "challenge",
@@ -924,17 +1045,17 @@
         "properties": {
           "keyId": {
             "type": "string",
-            "description": "Client key identifier from App Attest enrollment.",
-            "example": "base64-or-client-key-id"
+            "description": "Base64 key identifier (SHA-256 of the credential public key).",
+            "example": "s/134MbeEEZDZKCvOTf+jZgNhpoDwdXZ8cKfTym8FUg="
           },
           "challenge": {
             "type": "string",
-            "description": "Challenge previously returned from `/auth/challenges`.",
+            "description": "Base64 challenge previously returned from `/auth/challenges`.",
             "example": "challenge-from-/auth/challenges"
           },
           "attestation": {
             "type": "string",
-            "description": "Base64 attestation object from the platform.",
+            "description": "Base64 CBOR attestation object from the platform.",
             "example": "base64-attestation-object"
           }
         }
@@ -1204,7 +1325,7 @@
               "boolean",
               "null"
             ],
-            "description": "Present only when the DeviceCheck free-slot gate applies (the\nattestation slice; deferred)."
+            "description": "Present only when the DeviceCheck free-slot gate ran and produced an\nadvisory availability (`Register`/`Proceed`); omitted when DeviceCheck\nis disabled or the outcome short-circuited (payment/token/unavailable)."
           }
         }
       },

@@ -10,6 +10,7 @@ mod auth;
 pub mod chain;
 pub mod config;
 pub mod db;
+pub mod device_check;
 pub mod http;
 pub mod jwt;
 pub mod openapi;

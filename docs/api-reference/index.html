@@ -1152,20 +1152,22 @@ table.params td.desc code{
           </div>
           <div class="endpoint-meta">
             <span class="chip green">202</span>
+            <span class="chip red">401</span>
             <span class="chip">public</span>
           </div>
         </div>
         <div class="endpoint-body">
-          <p class="endpoint-desc">Accept the attestation payload and acknowledge with <code>202</code> (no-op for now).</p>
+          <p class="endpoint-desc">Register an App Attest key: verify the attestation object and persist the
+credential key (no-op <code>202 {}</code> while <code>AUTH_ENABLED=false</code>).</p>
           <div class="tbl-wrap">
             <table class="params">
               <thead>
                 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
               </thead>
               <tbody>
-                <tr><td class="name">keyId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Client key identifier from App Attest enrollment.</td></tr>
-                <tr><td class="name">challenge</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Challenge previously returned from <code>/auth/challenges</code>.</td></tr>
-                <tr><td class="name">attestation</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 attestation object from the platform.</td></tr>
+                <tr><td class="name">keyId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 key identifier (SHA-256 of the credential public key).</td></tr>
+                <tr><td class="name">challenge</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 challenge previously returned from <code>/auth/challenges</code>.</td></tr>
+                <tr><td class="name">attestation</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 CBOR attestation object from the platform.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1175,7 +1177,7 @@ table.params td.desc code{
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"keyId"</span><span class="p">:</span> <span class="s">"base64-or-client-key-id"</span><span class="p">,</span>
+  <span class="s">"keyId"</span><span class="p">:</span> <span class="s">"s/134MbeEEZDZKCvOTf+jZgNhpoDwdXZ8cKfTym8FUg="</span><span class="p">,</span>
   <span class="s">"challenge"</span><span class="p">:</span> <span class="s">"challenge-from-/auth/challenges"</span><span class="p">,</span>
   <span class="s">"attestation"</span><span class="p">:</span> <span class="s">"base64-attestation-object"</span>
 <span class="p">}</span></pre>
@@ -1187,13 +1189,30 @@ table.params td.desc code{
             </div>
 <pre><span class="p">{}</span></pre>
           </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 401 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"_tag"</span><span class="p">:</span> <span class="s">"VERIFY_ATTESTATION_FAILED"</span><span class="p">,</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"attestation nonce mismatch"</span>
+<span class="p">}</span></pre>
+          </div>
           <div class="status-grid">
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c202">202</span>
                 <span class="sc-label">ACCEPTED</span>
               </div>
-              <div class="sc-desc">Accepted. No-op in M0 — payload is not verified against Apple/Google.</div>
+              <div class="sc-desc">Accepted. With attestation enabled, the key is verified against Apple and stored; while disabled, the payload is not verified.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c401">401</span>
+                <span class="sc-label">attestation nonce mismatch</span>
+              </div>
+              <div class="sc-desc">Attestation rejected (hard mode), or the challenge was unknown, expired, or already used. Soft mode logs failed verdicts and returns 202.</div>
             </div>
           </div>
         </div>
@@ -1242,6 +1261,8 @@ table.params td.desc code{
           <div class="endpoint-meta">
             <span class="chip green">200</span>
             <span class="chip red">401</span>
+            <span class="chip red">403</span>
+            <span class="chip red">503</span>
             <span class="chip">public</span>
           </div>
         </div>
@@ -1256,7 +1277,11 @@ table.params td.desc code{
                 <tr><td class="name">Auth-ClientId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 of the 32-byte sr25519 public key.</td></tr>
                 <tr><td class="name">Auth-ClientProof</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Base64 of the 64-byte sr25519 signature over the raw body.</td></tr>
                 <tr><td class="name">Auth-Challenge</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Challenge previously minted via /auth/challenges.</td></tr>
-                <tr><td class="name">Auth-iOS-Package</td><td class="type">string</td><td class="req">no</td><td class="desc">Optional platform signal, e.g. io.pcf.polkadotapp.</td></tr>
+                <tr><td class="name">Auth-iOS-Package</td><td class="type">string</td><td class="req">no</td><td class="desc">iOS bundle id, e.g. io.pcf.polkadotapp. Selects the App Attest verification path.</td></tr>
+                <tr><td class="name">Auth-Payload</td><td class="type">string</td><td class="req">no</td><td class="desc">Base64 App Attest assertion (iOS) or the raw classic Play Integrity token (Android play-integrity), verified when attestation is enabled.</td></tr>
+                <tr><td class="name">Auth-iOS-KeyId</td><td class="type">string</td><td class="req">no</td><td class="desc">Base64 App Attest key id registered via /auth/app-attest/attestations.</td></tr>
+                <tr><td class="name">Auth-Android-Package</td><td class="type">string</td><td class="req">no</td><td class="desc">Android package name; required for play-integrity and sets the JWT platform claim for Android clients.</td></tr>
+                <tr><td class="name">Auth-Attestation-Type</td><td class="type">string</td><td class="req">no</td><td class="desc">Android attestation dispatch: <code>key-attestation</code> verifies the <code>attestationChain</code> field in the JSON body (base64 DER, leaf first); <code>play-integrity</code> verifies the token in Auth-Payload with self-managed response keys.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1287,6 +1312,26 @@ table.params td.desc code{
   <span class="s">"message"</span><span class="p">:</span> <span class="s">"unauthorized"</span>
 <span class="p">}</span></pre>
           </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 403 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"INTEGRITY_FAILED"</span><span class="p">,</span>
+  <span class="s">"message"</span><span class="p">:</span> <span class="s">"attestation rejected"</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 503 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"ATTESTATION_CRL_UNAVAILABLE"</span><span class="p">,</span>
+  <span class="s">"message"</span><span class="p">:</span> <span class="s">"attestation CRL unavailable"</span>
+<span class="p">}</span></pre>
+          </div>
           <div class="status-grid">
             <div class="status-card">
               <div class="sc-head">
@@ -1301,6 +1346,20 @@ table.params td.desc code{
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
               <div class="sc-desc">Bad or spent challenge, or invalid client proof.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c403">403</span>
+                <span class="sc-label">INTEGRITY_FAILED</span>
+              </div>
+              <div class="sc-desc">Platform attestation failed verification (hard enforcement).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c503">503</span>
+                <span class="sc-label">ATTESTATION_CRL_UNAVAILABLE</span>
+              </div>
+              <div class="sc-desc">Android attestation revocation list unavailable; retry with a fresh challenge (hard enforcement).</div>
             </div>
           </div>
         </div>
@@ -1394,12 +1453,15 @@ table.params td.desc code{
             <span class="endpoint-path">/api/v1/usernames</span>
           </div>
           <div class="endpoint-meta">
+            <span class="chip green">200</span>
             <span class="chip green">202</span>
             <span class="chip red">400</span>
             <span class="chip red">401</span>
             <span class="chip blue">409</span>
             <span class="chip yellow">429</span>
             <span class="chip red">500</span>
+            <span class="chip red">502</span>
+            <span class="chip red">503</span>
             <span class="chip blue">bearer JWT</span>
           </div>
         </div>
@@ -1462,6 +1524,15 @@ table.params td.desc code{
           </div>
           <div class="code-block">
             <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"registrationOutcome"</span><span class="p">:</span> <span class="s">"PAYMENT_REQUIRED"</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
               <span class="code-head-label">Response · 202 · application/json</span>
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
@@ -1507,7 +1578,32 @@ table.params td.desc code{
   <span class="s">"error"</span><span class="p">:</span> <span class="s">"Failed to persist username registration"</span>
 <span class="p">}</span></pre>
           </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 502 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"iOS DeviceCheck verification failed"</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 503 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Failed to mark iOS device as registered with Apple DeviceCheck"</span>
+<span class="p">}</span></pre>
+          </div>
           <div class="status-grid">
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c200">200</span>
+                <span class="sc-label">OK</span>
+              </div>
+              <div class="sc-desc">DeviceCheck free slot already used (hard mode): the device must pay to register. Not an error — a 200 outcome.</div>
+            </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c202">202</span>
@@ -1527,7 +1623,7 @@ table.params td.desc code{
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio).</div>
+              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio), or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
@@ -1549,6 +1645,20 @@ table.params td.desc code{
                 <span class="sc-label">Failed to persist username registration</span>
               </div>
               <div class="sc-desc">Persistence failure or unexpected error.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c502">502</span>
+                <span class="sc-label">iOS DeviceCheck verification failed</span>
+              </div>
+              <div class="sc-desc">Hard-mode DeviceCheck could not reach Apple to resolve the device.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c503">503</span>
+                <span class="sc-label">Failed to mark iOS device as registered with Apple DeviceCheck</span>
+              </div>
+              <div class="sc-desc">The DeviceCheck free slot could not be marked used at Apple after a successful gate (upstream write failure; retryable).</div>
             </div>
           </div>
         </div>

@@ -61,6 +61,20 @@ pub enum UsernamesError {
     /// The reservation outbox insert failed (500, captured legacy body).
     #[error("registration persistence failed")]
     PersistenceFailed,
+    /// Hard-mode DeviceCheck required a usable `Device-Token-iOS` and none
+    /// was present (401, legacy body).
+    #[error("device token required")]
+    DeviceTokenRequired,
+    /// Hard-mode DeviceCheck could not reach Apple to resolve the device
+    /// (502, legacy body).
+    #[error("device check unavailable")]
+    DeviceCheckUnavailable,
+    /// The free-registration slot could not be marked used at Apple after a
+    /// successful gate. An upstream (Apple) write failure, so a 503 rather
+    /// than a generic 500 (diverges from legacy's 500 — the mark failure is
+    /// an upstream problem the client can retry).
+    #[error("device registration failed")]
+    DeviceRegistrationFailed,
     /// Unexpected internal failure; logged, surfaced opaquely (500).
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -104,6 +118,23 @@ impl IntoResponse for UsernamesError {
             UsernamesError::PersistenceFailed => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": "Failed to persist username registration" })),
+            )
+                .into_response(),
+            UsernamesError::DeviceTokenRequired => (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "A valid Device-Token-iOS header is required." })),
+            )
+                .into_response(),
+            UsernamesError::DeviceCheckUnavailable => (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "iOS DeviceCheck verification failed" })),
+            )
+                .into_response(),
+            UsernamesError::DeviceRegistrationFailed => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "error": "Failed to mark iOS device as registered with Apple DeviceCheck"
+                })),
             )
                 .into_response(),
             UsernamesError::Internal(err) => problem::internal(&err),

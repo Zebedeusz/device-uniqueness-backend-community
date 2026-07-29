@@ -132,14 +132,17 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 
 ## Remaining scope & legacy retirement
 
-Not-yet-started slices. Each gets its own ship-first plan under `docs/plans/` when work begins:
+Remaining slices. Each gets its own ship-first plan under `docs/plans/` when work begins:
 
-1. iOS App Attest and DeviceCheck verification.
-2. Android Play Integrity and TEE verification.
-3. Registration eligibility, queue, payment, and voucher behavior.
-4. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
-5. iOS and Android release-device validation.
-6. Data migration, rollback, route-by-route cutover, and legacy shutdown.
+1. Device attestation — **in flight**, see `docs/plans/active/attestation.md`: iOS App Attest
+   (Phase 1), Android hardware-keystore/TEE attestation (Phase 3), and Android Play Integrity
+   (Phase 2, self-managed keys — real-key demo pending the Play Console exchange) are
+   code-complete inside `identity-service`; Apple DeviceCheck (Phase 4) and the enforcement
+   flip (Phase 5) remain.
+2. Registration eligibility, queue, payment, and voucher behavior.
+3. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
+4. iOS and Android release-device validation.
+5. Data migration, rollback, route-by-route cutover, and legacy shutdown.
 
 The legacy backend is retired only after every required route has an owner, the gateway is validated, parity gates pass, rollback is proven, and release-device smokes succeed.
 
@@ -217,9 +220,8 @@ Operational invariants an agent must respect when touching the code.
 ## External references
 
 - **Canonical username-registration spec** (ground-truth for the `/usernames` write path + future
-  eligibility): Mike's "New JWT / Integrity / PoUD / Username Claim Logic" —
-  https://docs.google.com/document/d/1YQy0how-ItgThH5VfC1SR0yR6j_Xh9jLTOn35Oo9ubc — covers Android
-  TEE attestation (`POST /auth/android/attestation`), PoUD (Android `{androidId, widevineId}` / iOS
-  DeviceCheck), the INSTANT / PAYMENT_REQUIRED / QUEUED decision flow, the balance-priority queue
-  (G1<10 … G4≥1000), QR-voucher bypass, and `/usernames/payment-status` + `/registration/queue`.
-  Digest it fully before implementing the attestation/eligibility plan.
+  eligibility): the authoritative "New JWT / Integrity / PoUD / Username Claim Logic" spec — covers
+  Android TEE attestation (`POST /auth/android/attestation`), PoUD (Android `{androidId, widevineId}`
+  / iOS DeviceCheck), the INSTANT / PAYMENT_REQUIRED / QUEUED decision flow, the balance-priority
+  queue (G1<10 … G4≥1000), QR-voucher bypass, and `/usernames/payment-status` +
+  `/registration/queue`. Digest it fully before implementing the attestation/eligibility plan.

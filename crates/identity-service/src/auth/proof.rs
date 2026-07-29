@@ -10,7 +10,11 @@ use sha2::{Digest as _, Sha256};
 use subxt_signer::sr25519::{PublicKey, Signature};
 
 /// Recompute the signed message: `SHA256(challenge || clientId || SHA256(body))`.
-fn client_data_hash(challenge: &[u8], client_id: &[u8; 32], body: &[u8]) -> [u8; 32] {
+///
+/// Shared construction: the sr25519 proof signs exactly this hash, and the iOS
+/// App Attest assertion uses it as the `clientDataHash` (the shipping client's
+/// `AppAttestClientHashCalculator` builds the same bytes).
+pub(crate) fn client_data_hash(challenge: &[u8], client_id: &[u8; 32], body: &[u8]) -> [u8; 32] {
     let body_hash = Sha256::digest(body);
     let mut hasher = Sha256::new();
     hasher.update(challenge);
