@@ -5,7 +5,11 @@
 //! verifies the `candidateSignature` proves control of the beneficiary
 //! account, selects the discriminator, and persists a `RESERVED` row in the
 //! reservation outbox before returning `202`. The `identity-chain-writer`
-//! binary drains the outbox onto People Chain.
+//! binary drains the outbox onto People Chain. With `QUEUE_ENABLED` — and the
+//! `registration-queue` service alive — the row instead enters as `QUEUED`
+//! (the registration queue's intake lane, see [`crate::queue`]) and the 202
+//! body additionally reports `registrationOutcome: "QUEUED"` plus the claim's
+//! queue standing; a dead queue service falls back to the direct path here.
 //!
 //! Validation keeps the legacy three-phase zod semantics
 //! (`tests/fixtures/legacy-wire.json`):
@@ -40,6 +44,7 @@ use utoipa::ToSchema;
 use crate::chain::outbox::{self, InsertError, NewReservation};
 use crate::device_check::{self, Decision};
 use crate::http::state::AppState;
+use crate::queue;
 
 use super::error::{FieldError, UsernamesError, UsernamesResult};
 use super::{available_digits, taken_discriminators, MAX_BASE_LEN};
@@ -125,6 +130,20 @@ pub struct RegisterResponse {
     )]
     #[schema(rename = "device_check_available")]
     pub device_check_available: Option<bool>,
+    /// `"QUEUED"` when the registration queue is enabled and the claim is
+    /// waiting in it; absent on the direct-to-writer path. (The spec's
+    /// `INSTANT` / `PAYMENT_REQUIRED` outcomes ship with the attestation
+    /// slice.)
+    #[serde(
+        rename = "registrationOutcome",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schema(rename = "registrationOutcome", example = "QUEUED")]
+    pub registration_outcome: Option<String>,
+    /// Queue standing at claim time (present only with
+    /// `registrationOutcome: "QUEUED"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<crate::queue::QueueStatusResponse>,
 }
 
 /// Captured legacy zod messages (field checks + refinement issues).
@@ -146,7 +165,12 @@ const DEVICE_TOKEN_HEADER: &str = "Device-Token-iOS";
     security(("bearer_jwt" = [])),
     request_body = RegisterRequest,
     responses(
-        (status = 202, description = "Reservation accepted into the outbox for on-chain registration.",
+        (status = 202, description = "Reservation accepted into the outbox for on-chain registration. \
+          With the registration queue enabled (`QUEUE_ENABLED`) and the queue service live, the claim \
+          waits in the balance-priority queue and the body additionally carries \
+          `registrationOutcome: \"QUEUED\"` plus the claim's queue standing (poll \
+          `GET /api/v1/registration/queue` for updates). A down queue service falls back to the \
+          direct registration path (no queue fields).",
          body = RegisterResponse,
          example = json!({ "base_username": "tallesx", "digits": "07", "username": "tallesx.07" })),
         (status = 200, description = "DeviceCheck free slot already used (hard mode): the device must \
@@ -252,9 +276,48 @@ pub async fn register(
         reserved_username: parsed.dotns.and_then(|d| d.reserved_username),
     };
 
-    match reserve(&state, &new, mark_token.as_deref()).await? {
+    // Queue intake waits as `QUEUED` (the spec's PoUD-pass lane, the only
+    // lane until the attestation slice) — but only while the registration-
+    // queue service is actually alive (its lease is fresh). Disabled or dead,
+    // the claim takes the original direct-to-`RESERVED` path and wire.
+    let queue_lane = state.config.queue_enabled
+        && match queue::advancer_alive(&state.pool).await {
+            Ok(alive) => alive,
+            Err(e) => {
+                tracing::warn!(error = %e, "queue liveness probe failed; using direct intake");
+                false
+            }
+        };
+    let group = if queue_lane {
+        Some(queue::intake_group(&state.chain, &auth.subject).await)
+    } else {
+        None
+    };
+
+    match reserve(&state, &new, mark_token.as_deref(), group).await? {
         ReserveOutcome::Reserved(id) => {
-            tracing::info!(id, username = %full_username, "username reserved");
+            tracing::info!(id, username = %full_username, queued = queue_lane, "username reserved");
+
+            // The row is durably queued at this point, so a failed standing
+            // read only degrades the response (no `queue` data), never the
+            // claim itself.
+            let queue = match group {
+                Some(group) => match queue::queued_snapshot(&state.pool).await {
+                    Ok(snapshot) => queue::drain_estimate(&snapshot, id).map(|estimate| {
+                        queue::QueueStatusResponse {
+                            queue_position: estimate.position,
+                            group,
+                            estimated_iterations_remaining: estimate.iterations,
+                        }
+                    }),
+                    Err(e) => {
+                        tracing::warn!(id, error = %e, "queue standing read failed after enqueue");
+                        None
+                    }
+                },
+                None => None,
+            };
+
             Ok((
                 StatusCode::ACCEPTED,
                 Json(RegisterResponse {
@@ -262,6 +325,8 @@ pub async fn register(
                     digits,
                     username: full_username,
                     device_check_available,
+                    registration_outcome: queue_lane.then(|| "QUEUED".to_string()),
+                    queue,
                 }),
             )
                 .into_response())
@@ -311,6 +376,7 @@ async fn reserve(
     state: &AppState,
     new: &NewReservation,
     mark_token: Option<&[u8]>,
+    queue_group: Option<u8>,
 ) -> UsernamesResult<ReserveOutcome> {
     let conflict = || UsernamesError::UsernameTaken {
         base: new.base.clone(),
@@ -318,7 +384,7 @@ async fn reserve(
     };
 
     let Some(token) = mark_token else {
-        return match outbox::insert(&state.pool, new).await {
+        return match insert_reservation(&state.pool, new, queue_group).await {
             Ok(id) => Ok(ReserveOutcome::Reserved(id)),
             Err(InsertError::Conflict) => Err(conflict()),
             Err(InsertError::Db(e)) => {
@@ -370,7 +436,7 @@ async fn reserve(
 
     // Insert first: an insert failure leaves the transaction untouched and
     // never marks the device, so the slot is preserved.
-    let id = match outbox::insert(&mut *tx, new).await {
+    let id = match insert_reservation(&mut *tx, new, queue_group).await {
         Ok(id) => id,
         Err(InsertError::Conflict) => return Err(conflict()),
         Err(InsertError::Db(e)) => {
@@ -394,6 +460,23 @@ async fn reserve(
         UsernamesError::PersistenceFailed
     })?;
     Ok(ReserveOutcome::Reserved(id))
+}
+
+/// Insert the outbox row on either intake lane: `QUEUED` with its priority
+/// group when the queue lane is on, plain `RESERVED` otherwise. Generic over
+/// the executor so it runs on the pool or inside the DeviceCheck transaction.
+async fn insert_reservation<'e, E>(
+    executor: E,
+    new: &NewReservation,
+    queue_group: Option<u8>,
+) -> Result<i64, InsertError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    match queue_group {
+        Some(group) => outbox::insert_queued(executor, new, i32::from(group)).await,
+        None => outbox::insert(executor, new).await,
+    }
 }
 
 /// The fully-validated registration request, with hex fields decoded.

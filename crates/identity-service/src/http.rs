@@ -13,7 +13,7 @@ use http_common::layers;
 use http_common::problem::hono_not_found;
 
 use self::state::AppState;
-use crate::{auth, usernames};
+use crate::{auth, queue, usernames};
 
 /// Assemble the full router: health + JWKS at root, the `/api/v1` surface
 /// below, wrapped in the shared production middleware stack (request id →
@@ -24,6 +24,14 @@ pub fn routes(state: AppState) -> Router {
         .nest("/auth", auth::router(state.clone()))
         .route("/attester", get(usernames::attester))
         .nest("/usernames", usernames::router());
+    let api_v1 = if state.config.queue_enabled {
+        api_v1.route(
+            "/registration/queue",
+            get(queue::status).fallback(hono_not_found),
+        )
+    } else {
+        api_v1
+    };
 
     let router = Router::new()
         .merge(health::router())

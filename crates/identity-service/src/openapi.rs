@@ -70,6 +70,7 @@ All non-2xx responses share the `ErrorResponse` envelope: `{ error, message }`."
         crate::auth::refresh::rotate,
         crate::usernames::available::check,
         crate::usernames::register::register,
+        crate::queue::status,
     ),
     components(schemas(
         crate::http::error::ErrorResponse,
@@ -85,6 +86,7 @@ All non-2xx responses share the `ErrorResponse` envelope: `{ error, message }`."
         crate::usernames::register::RegisterRequest,
         crate::usernames::register::Dotns,
         crate::usernames::register::RegisterResponse,
+        crate::queue::QueueStatusResponse,
     )),
     modifiers(&SecurityAddon)
 )]

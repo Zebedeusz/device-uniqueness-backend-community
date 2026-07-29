@@ -19,6 +19,7 @@ use time::OffsetDateTime;
 /// Outbox state.
 ///
 /// ```text
+/// QUEUED ──queue advancer slot pick──▶ RESERVED
 /// RESERVED ──build+sign+broadcast──▶ SUBMITTING
 /// SUBMITTING ──included / AlreadyRegistered──▶ ASSIGNED     (terminal success)
 /// SUBMITTING ──transient / unknown──▶ RETRY_AFTER           (reconcile, backoff)
@@ -27,7 +28,11 @@ use time::OffsetDateTime;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
-    /// Validated + persisted, not yet submitted. Entry state.
+    /// Waiting in the registration queue (`QUEUE_ENABLED` intake). Entry state;
+    /// only the queue advancer moves it to `RESERVED`.
+    Queued,
+    /// Validated + persisted, not yet submitted. Entry state when the queue is
+    /// disabled; otherwise reached via the advancer.
     Reserved,
     /// Extrinsic built + signed + broadcast; recorded before awaiting inclusion.
     Submitting,
@@ -43,6 +48,7 @@ impl Status {
     /// The stored `status` string.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Status::Queued => "QUEUED",
             Status::Reserved => "RESERVED",
             Status::Submitting => "SUBMITTING",
             Status::Assigned => "ASSIGNED",
@@ -102,13 +108,40 @@ pub async fn insert<'e, E>(executor: E, r: &NewReservation) -> Result<i64, Inser
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
+    insert_with(executor, r, Status::Reserved, 1).await
+}
+
+/// Insert a fresh `QUEUED` reservation with its initial priority group
+/// (the `QUEUE_ENABLED` intake lane). Same conflict mapping and executor
+/// genericity as [`insert`].
+pub async fn insert_queued<'e, E>(
+    executor: E,
+    r: &NewReservation,
+    queue_group: i32,
+) -> Result<i64, InsertError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    insert_with(executor, r, Status::Queued, queue_group).await
+}
+
+async fn insert_with<'e, E>(
+    executor: E,
+    r: &NewReservation,
+    status: Status,
+    queue_group: i32,
+) -> Result<i64, InsertError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     let row = sqlx::query(
         "INSERT INTO username_reservations \
            (account_id, candidate_account_id, base, digits, full_username, \
             candidate_signature, ring_vrf_key, proof_of_ownership, \
             consumer_registration_signature, identifier_key, \
-            dotns_signature, dotns_signed_at, reserved_username) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) \
+            dotns_signature, dotns_signed_at, reserved_username, \
+            status, queue_group) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) \
          RETURNING id",
     )
     .bind(&r.account_id)
@@ -124,6 +157,8 @@ where
     .bind(&r.dotns_signature)
     .bind(r.dotns_signed_at)
     .bind(&r.reserved_username)
+    .bind(status.as_str())
+    .bind(queue_group)
     .fetch_one(executor)
     .await
     .map_err(|e| match &e {

@@ -58,7 +58,7 @@ create now. See "How the workspace grows" below.
 
 | Service | Responsibility | Status |
 |---|---|---|
-| `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. Bins: `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker). | **exists** |
+| `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. Bins: `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker) + `registration-queue` (single-instance queue advancer; **optional at runtime** — when it is down, api and writer fall back to the direct registration path). | **exists** |
 | `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, unauthenticated, per-IP rate limited). The deprecated single-username lookup (`GET /api/v1/usernames/{username}`) was removed 2026-07-23 in favour of `search` and now serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | **exists** |
 | `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. Independently deployable (own process/secrets, no `depends_on`). Bin: `notify-relay`. Real iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | **exists** (live device smokes pending) |
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. Bin: `turn-api`. Plan: `docs/plans/active/turn.md`. | **exists** |
@@ -125,8 +125,12 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 
 ## Open decisions (need the user)
 
-1. **Queue worker topology** — keep the queue-advancer as a separate daemon in V1 or consolidate
-   with the writer later. Does not change ownership.
+1. ~~**Queue worker topology**~~ — **resolved 2026-07-27 (user decision)**: the queue advancer
+   is its own single-instance daemon, the `registration-queue` bin/compose service, still inside
+   the identity-service crate/boundary. It is deliberately an **isolated failure domain**: its
+   Postgres lease is the liveness signal, and when it is down intake and the writer fall back to
+   the original direct registration path instead of blocking claims. See
+   `docs/plans/active/registration-queue.md`.
 2. **Database topology** — separate instances vs databases vs schemas. ("No shared tables" already decided.)
 3. **Migration/cutover** — migrate V1 data or start fresh, then route-by-route cutover + V1 shutdown.
 
@@ -139,7 +143,9 @@ Remaining slices. Each gets its own ship-first plan under `docs/plans/` when wor
    (Phase 2, self-managed keys — real-key demo pending the Play Console exchange) are
    code-complete inside `identity-service`; Apple DeviceCheck (Phase 4) and the enforcement
    flip (Phase 5) remain.
-2. Registration eligibility, queue, payment, and voucher behavior.
+2. Registration eligibility, payment, and voucher behavior (the **queue** itself shipped
+   2026-07-27 — `docs/plans/active/registration-queue.md`; the INSTANT/PAYMENT_REQUIRED lanes,
+   `payment-status` endpoint, and the spec's `200 {registrationOutcome}` claim envelope remain).
 3. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
 4. iOS and Android release-device validation.
 5. Data migration, rollback, route-by-route cutover, and legacy shutdown.
@@ -159,6 +165,41 @@ Operational invariants an agent must respect when touching the code.
   People Chain calls (`PeopleLite.attest` / `Resources.register_lite_person`), advancing
   `RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`. The DB row is source of truth;
   chain is reconciled to it. No service reads another service's tables.
+- **The registration queue is an outbox entry state, not a second pipeline.** With
+  `QUEUE_ENABLED` (default off), `POST /api/v1/usernames` inserts claims as `QUEUED` rows with a
+  `queue_group` (1–4) derived from the JWT subject's People Chain free balance (<10 DOT → 1,
+  ≥10 → 2, ≥100 → 3, ≥1000 → 4; fail-open to 1). The advancer — the standalone single-instance
+  `registration-queue` service — refreshes groups from chain and promotes up to 4 rows to
+  `RESERVED` per iteration (`QUEUE_ADVANCE_INTERVAL_SECS`): slot k serves groups ≥ 5−k,
+  earliest-enqueued wins, empty slots are skipped. Promotion is the only `QUEUED` exit; the
+  writer path is unchanged from `RESERVED` on. `GET /api/v1/registration/queue` (JWT) reports
+  position/group/ETA by simulating that drain over the current snapshot; the claim response
+  gains additive `registrationOutcome: "QUEUED"` + `queue` fields (the frozen queue-disabled
+  wire is untouched). Plan: `docs/plans/active/registration-queue.md`.
+- **The queue service can be down without bricking registration.** The `registration-queue`
+  advancer holds a `writer_lease` row (`registration-queue-advancer`) that doubles as its
+  liveness signal and single-instance guard. `identity-api` intake queues a claim **only while
+  that lease is fresh** — otherwise the claim inserts `RESERVED` directly (the original
+  behavior, original wire, no queue fields). The `identity-chain-writer` runs the second
+  fallback: once the lease has been **expired** longer than `QUEUE_FALLBACK_AFTER_SECS`
+  (default 60), it drains any stranded `QUEUED` rows to `RESERVED` itself, so claims queued
+  before the advancer died still register (an **absent** lease row — service never deployed
+  or state wiped — drains immediately: there is no timestamp to grace from, and the safe
+  direction is the direct path). `lease::renew` refuses an already-expired lease, so a
+  stalled-then-recovered advancer re-acquires a fresh epoch instead of silently resurrecting
+  a lease the fallbacks may have acted on; during long iterations the advancer renews
+  concurrently with the work. Both fallbacks are automatic and self-healing: a restarted
+  advancer re-acquires the lease and the queue lane reopens on its own.
+- **Flipping `QUEUE_ENABLED` off is safe with rows still queued, but degrades visibility.**
+  The flag gates only intake and the status route's mounting (`/api/v1/registration/queue`
+  unmounts → plain-text 404; clients are documented to treat any 404 as "no longer queued,
+  registration proceeding"). Promotion never consults the flag: a live advancer keeps draining
+  queued rows, and a stopped one hands off to the writer's lease-based fallback drain — so
+  nothing strands, but users mid-queue lose their standing display (and a rolling flag flip
+  serves mixed answers across replicas). Preferred sequence when retiring the queue: flag off
+  (intake stops), let the advancer drain the remainder, then stop the advancer. Known
+  API-shape limitation: an account with several queued claims sees only the earliest one's
+  standing (the spec's response is a single object).
 - **Registration is authorized by `candidateSignature`, not the JWT subject.** `POST
   /api/v1/usernames` verifies the beneficiary's sr25519 signature over `pop:people-lite:register
   using || candidatePubkey || ringVrfKey` (the message the chain reconstructs for `PeopleLite.attest`;

@@ -135,9 +135,18 @@ async fn dead_chain_client() -> ChainClient {
 /// The production router over a lazy pool that connects to nothing: no
 /// replayed offline fixture may complete a DB or chain read.
 async fn offline_app(dotns_enabled: bool, rate_limit: u32) -> axum::Router {
+    offline_app_with_queue(dotns_enabled, rate_limit, false).await
+}
+
+async fn offline_app_with_queue(
+    dotns_enabled: bool,
+    rate_limit: u32,
+    queue_enabled: bool,
+) -> axum::Router {
     let mut config = Config::test_default();
     config.dotns_gateway_enabled = dotns_enabled;
     config.auth_rate_limit = rate_limit;
+    config.queue_enabled = queue_enabled;
     let jwt = Jwt::new(&JWT_SEED, config.jwt_issuer.clone());
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_millis(50))
@@ -229,6 +238,36 @@ async fn replay(app: &axum::Router, fixture: &Fixture, token: &str) -> Observed 
     let body = fixture.request.body.clone().unwrap_or_default();
     let request = builder.body(Body::from(body)).expect("request");
     Observed::from(app.clone().oneshot(request).await.expect("response")).await
+}
+
+#[tokio::test]
+async fn registration_queue_route_is_mounted_only_when_enabled() {
+    let request = || {
+        Request::builder()
+            .method("GET")
+            .uri("/api/v1/registration/queue")
+            .body(Body::empty())
+            .expect("request")
+    };
+
+    let disabled = offline_app_with_queue(true, 100_000, false).await;
+    let observed = Observed::from(
+        disabled
+            .oneshot(request())
+            .await
+            .expect("disabled response"),
+    )
+    .await;
+    assert_eq!(observed.status, 404);
+    assert_eq!(observed.body_text, "404 Not Found");
+
+    let enabled = offline_app_with_queue(true, 100_000, true).await;
+    let observed =
+        Observed::from(enabled.oneshot(request()).await.expect("enabled response")).await;
+    assert_eq!(
+        observed.status, 401,
+        "enabled route reaches its JWT extractor"
+    );
 }
 
 /// Fixtures replayed through the full production router offline, expecting a
@@ -588,11 +627,15 @@ async fn register_202_bodies_match_the_capture() {
     ] {
         let fixture = find_fixture(name);
         assert_eq!(fixture.response.status, 202, "{name}");
+        // The queue fields are `None` here because the capture environment ran
+        // queue-disabled — the frozen bodies must stay byte-identical.
         let body = RegisterResponse {
             base_username: base.to_string(),
             digits: digits.to_string(),
             username: format!("{base}.{digits}"),
             device_check_available: None,
+            registration_outcome: None,
+            queue: None,
         };
         assert_eq!(
             serde_json::to_value(body).expect("serialize"),

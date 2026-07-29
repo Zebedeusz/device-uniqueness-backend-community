@@ -49,6 +49,10 @@ pub struct Config {
     pub auth_enabled: bool,
     /// Hard gate (`true`) vs soft/advisory gate (`false`).
     pub enforce_auth: bool,
+    /// Registration-queue gate: `true` routes claims into the balance-priority
+    /// queue (`QUEUED` intake + the `/api/v1/registration/queue` surface);
+    /// `false` (the M0 default) keeps the direct-to-writer flow and wire.
+    pub queue_enabled: bool,
     /// Whether registration accepts the optional `dotns` block (mirrors the
     /// legacy `DOTNS_GATEWAY_ENABLED` gate and its captured 400 message).
     pub dotns_gateway_enabled: bool,
@@ -191,6 +195,7 @@ impl Config {
             auth_rate_window: Duration::from_secs(parse_var("AUTH_RATE_WINDOW_SECS", "60")?),
             auth_enabled,
             enforce_auth: env_bool("ENFORCE_AUTH", false)?,
+            queue_enabled: env_bool("QUEUE_ENABLED", false)?,
             dotns_gateway_enabled: env_bool("DOTNS_GATEWAY_ENABLED", true)?,
             dotns_intake_freshness_max_age_secs: parse_var(
                 "DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS",
@@ -239,6 +244,7 @@ impl Config {
             auth_rate_window: Duration::from_secs(60),
             auth_enabled: false,
             enforce_auth: false,
+            queue_enabled: false,
             dotns_gateway_enabled: true,
             dotns_intake_freshness_max_age_secs: 600,
             dotns_max_future_skew_secs: 600,

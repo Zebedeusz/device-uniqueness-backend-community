@@ -14,6 +14,7 @@ pub mod device_check;
 pub mod http;
 pub mod jwt;
 pub mod openapi;
+pub mod queue;
 pub mod usernames;
 
 pub use chain::ChainClient;

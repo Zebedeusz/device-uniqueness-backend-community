@@ -58,6 +58,10 @@ pub enum UsernamesError {
         /// The selected two-digit suffix.
         digits: String,
     },
+    /// The authenticated account has no queued registration (404, new
+    /// `/api/v1/registration/queue` surface — no frozen dialect).
+    #[error("no queue entry")]
+    NoQueueEntry,
     /// The reservation outbox insert failed (500, captured legacy body).
     #[error("registration persistence failed")]
     PersistenceFailed,
@@ -113,6 +117,11 @@ impl IntoResponse for UsernamesError {
                         "Username {base}.{digits} already taken. Please try different digits."
                     )
                 })),
+            )
+                .into_response(),
+            UsernamesError::NoQueueEntry => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "No queue entry found" })),
             )
                 .into_response(),
             UsernamesError::PersistenceFailed => (

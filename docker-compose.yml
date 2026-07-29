@@ -54,6 +54,7 @@ services:
       AUTH_RATE_WINDOW_SECS: ${AUTH_RATE_WINDOW_SECS:-60}
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       ENFORCE_AUTH: ${ENFORCE_AUTH:-false}
+      QUEUE_ENABLED: ${QUEUE_ENABLED:-false}
       DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-true}
       DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: ${DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS:-600}
       DOTNS_MAX_FUTURE_SKEW_SECS: ${DOTNS_MAX_FUTURE_SKEW_SECS:-600}
@@ -96,6 +97,30 @@ services:
       CHAIN_WRITER_BATCH_SIZE: ${CHAIN_WRITER_BATCH_SIZE:-25}
       CHAIN_WRITER_FINALIZE_SECS: ${CHAIN_WRITER_FINALIZE_SECS:-120}
       CHAIN_WRITER_MAX_ATTEMPTS: ${CHAIN_WRITER_MAX_ATTEMPTS:-8}
+      QUEUE_FALLBACK_AFTER_SECS: ${QUEUE_FALLBACK_AFTER_SECS:-60}
+      RUST_LOG: ${RUST_LOG:-info}
+    deploy:
+      replicas: 1
+
+  # Registration-queue advancer: the optional-at-runtime queue service. Its
+  # Postgres lease is the queue's liveness signal — stop this service and
+  # identity-api + identity-chain-writer fall back to the original direct
+  # registration path on their own (nothing else depends on it). The lease
+  # also guards single-instance promotion; keep it at one replica.
+  registration-queue:
+    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    restart: unless-stopped
+    command: ["registration-queue"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Explicit allowlist: no signing secrets — this service only reads chain
+    # balances and flips queue rows in the identity DB.
+    environment:
+      DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      QUEUE_ADVANCE_INTERVAL_SECS: ${QUEUE_ADVANCE_INTERVAL_SECS:-6}
+      QUEUE_LEASE_TTL_SECS: ${QUEUE_LEASE_TTL_SECS:-30}
       RUST_LOG: ${RUST_LOG:-info}
     deploy:
       replicas: 1

@@ -809,6 +809,7 @@ table.params td.desc code{
 
     <div class="nav-section">
       <div class="nav-section-title">Usernames</div>
+      <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-api-v1-registration-queue"><span class="method-mini">GET</span><span class="path">/registration/queue</span></a>
       <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-api-v1-usernames"><span class="method-mini">POST</span><span class="path">/usernames</span></a>
       <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-api-v1-usernames-available"><span class="method-mini">POST</span><span class="path">/usernames/available</span></a>
       <a class="nav-item m-get" href="javascript:void(0)" data-scroll-to="ep-api-v1-usernames-search"><span class="method-mini">GET</span><span class="path">/usernames/search</span></a>
@@ -1443,7 +1444,80 @@ credential key (no-op <code>202 {}</code> while <code>AUTH_ENABLED=false</code>)
       <div class="section-header">
         <span class="section-num">05</span>
         <h2>Usernames</h2>
-        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="ep-api-v1-usernames">#</a>
+        <a class="section-anchor" href="javascript:void(0)" data-scroll-to="ep-api-v1-registration-queue">#</a>
+      </div>
+
+      <div class="endpoint" id="ep-api-v1-registration-queue">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-get">GET</span>
+            <span class="endpoint-path">/api/v1/registration/queue</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">200</span>
+            <span class="chip red">401</span>
+            <span class="chip red">404</span>
+            <span class="chip yellow">429</span>
+            <span class="chip blue">bearer JWT</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Queue standing for the caller's pending username claim. This route exists only on deployments with the registration queue enabled (<code>QUEUE_ENABLED</code>); with the queue disabled the path serves the standard plain-text 404. Clients should treat ANY 404 here as &quot;not (or no longer) queued&quot; and assume the registration is proceeding — queued claims keep draining even if the queue is later disabled. When an account has several queued claims, the response reports the earliest-enqueued one until it drains.</p>
+          <div class="auth-note">
+            <span class="auth-label">Auth</span>
+            <span class="auth-text">Bearer JWT required in the <code>Authorization</code> header.</span>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 200 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"queuePosition"</span><span class="p">:</span> <span class="n">17</span><span class="p">,</span>
+  <span class="s">"group"</span><span class="p">:</span> <span class="n">2</span><span class="p">,</span>
+  <span class="s">"estimatedIterationsRemaining"</span><span class="p">:</span> <span class="n">5</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 404 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"No queue entry found"</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="status-grid">
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c200">200</span>
+                <span class="sc-label">OK</span>
+              </div>
+              <div class="sc-desc">The caller's queued claim: position, priority group, and the estimated advancer iterations until it is promoted for on-chain registration.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c401">401</span>
+                <span class="sc-label">UNAUTHORIZED</span>
+              </div>
+              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c404">404</span>
+                <span class="sc-label">No queue entry found</span>
+              </div>
+              <div class="sc-desc">The account has no queued registration (JSON body), or the deployment runs queue-disabled (plain-text body). Either way: stop polling, the claim is proceeding without the queue.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c429">429</span>
+                <span class="sc-label">RATE_LIMITED</span>
+              </div>
+              <div class="sc-desc">Subject rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="endpoint" id="ep-api-v1-usernames">
@@ -1609,7 +1683,7 @@ credential key (no-op <code>202 {}</code> while <code>AUTH_ENABLED=false</code>)
                 <span class="sc-code c202">202</span>
                 <span class="sc-label">ACCEPTED</span>
               </div>
-              <div class="sc-desc">Reservation accepted into the outbox for on-chain registration.</div>
+              <div class="sc-desc">Reservation accepted into the outbox for on-chain registration. With the registration queue enabled (<code>QUEUE_ENABLED</code>) and the queue service live, the claim waits in the balance-priority queue and the body additionally carries <code>registrationOutcome: &quot;QUEUED&quot;</code> plus the claim's queue standing (poll <code>GET /api/v1/registration/queue</code> for updates). A down queue service falls back to the direct registration path (no queue fields).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">

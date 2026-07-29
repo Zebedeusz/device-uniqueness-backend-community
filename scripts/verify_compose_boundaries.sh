@@ -64,11 +64,26 @@ done
 # unrelated processes.
 for key in DOTNS_GATEWAY_ENABLED DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS DOTNS_MAX_FUTURE_SKEW_SECS; do
   require_key identity-api "$key"
-  for service in identity-chain-writer username-indexer dim-tickets-api dim-tickets-writer \
-                 invite-tickets-api invite-tickets-pool turn-api gateway; do
+  for service in identity-chain-writer registration-queue username-indexer dim-tickets-api \
+                 dim-tickets-writer invite-tickets-api invite-tickets-pool turn-api gateway; do
     forbid_key "$service" "$key"
   done
 done
+
+# registration-queue only reads chain balances and flips queue rows in the
+# identity DB — never signing secrets or JWT material. Its lease is the queue
+# liveness signal, so it needs its cadence knobs.
+for key in JWT_ED25519_SECRET JWT_ED25519_PUBLIC_KEY JWT_JWKS_JSON \
+           CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI INVITE_INVITER_SIGNER_SURI \
+           TURN_SECRET; do
+  forbid_key registration-queue "$key"
+done
+require_key registration-queue QUEUE_ADVANCE_INTERVAL_SECS
+require_key registration-queue QUEUE_LEASE_TTL_SECS
+# The two wires the queue's fallback story hinges on: intake gating on the
+# api, and the stranded-row drain grace on the writer.
+require_key identity-api QUEUE_ENABLED
+require_key identity-chain-writer QUEUE_FALLBACK_AFTER_SECS
 
 # username-indexer is a fully public read service: no JWT material at all.
 for key in JWT_ED25519_SECRET JWT_ED25519_PUBLIC_KEY JWT_JWKS_JSON TURN_SECRET; do

@@ -75,6 +75,23 @@ impl ChainClient {
         }
     }
 
+    /// The free balance of `account`, in planck (`0` for a non-existent account).
+    ///
+    /// Backs the registration queue's priority groups: the subject's balance
+    /// maps to a queue group at intake and on every advancer iteration.
+    pub async fn free_balance(&self, account: [u8; 32]) -> anyhow::Result<u128> {
+        let at = self.client.at_current_block().await?;
+        let address = people::storage().system().account();
+        let info = at
+            .storage()
+            .try_fetch(address, (subxt::utils::AccountId32(account),))
+            .await?;
+        match info {
+            Some(value) => Ok(value.decode()?.data.free),
+            None => Ok(0),
+        }
+    }
+
     /// Return the set of discriminators (`0`..`99`) already owned for `base`.
     ///
     /// Reads all 100 `{base}.{NN}` keys against one block snapshot.

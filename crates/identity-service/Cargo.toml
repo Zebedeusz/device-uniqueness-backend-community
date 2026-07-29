@@ -7,9 +7,11 @@ license.workspace = true
 publish.workspace = true
 autobins = false
 
-# identity-service is a library (shared domain: auth, usernames, outbox) plus two
-# deployable binaries: the N-replica `identity-api` and the single-instance
-# `identity-chain-writer` that drains the reservation outbox onto People Chain.
+# identity-service is a library (shared domain: auth, usernames, outbox) plus
+# three deployable binaries: the N-replica `identity-api`, the single-instance
+# `identity-chain-writer` that drains the reservation outbox onto People Chain,
+# and the single-instance `registration-queue` advancer (optional at runtime —
+# when it is down, api + writer fall back to the direct registration path).
 [lib]
 path = "src/lib.rs"
 
@@ -20,6 +22,10 @@ path = "src/bin/identity_api.rs"
 [[bin]]
 name = "identity-chain-writer"
 path = "src/bin/identity_chain_writer.rs"
+
+[[bin]]
+name = "registration-queue"
+path = "src/bin/registration_queue.rs"
 
 [dependencies]
 chain-types.workspace = true

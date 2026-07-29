@@ -352,6 +352,65 @@
         }
       }
     },
+    "/api/v1/registration/queue": {
+      "get": {
+        "tags": [
+          "Usernames"
+        ],
+        "summary": "Registration-queue standing for the authenticated account.",
+        "description": "Queue standing for the caller's pending username claim. This route exists only on deployments with the registration queue enabled (`QUEUE_ENABLED`); with the queue disabled the path serves the standard plain-text 404. Clients should treat ANY 404 here as \"not (or no longer) queued\" and assume the registration is proceeding — queued claims keep draining even if the queue is later disabled. When an account has several queued claims, the response reports the earliest-enqueued one until it drains.",
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "The caller's queued claim: position, priority group, and the estimated advancer iterations until it is promoted for on-chain registration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStatusResponse"
+                },
+                "example": {
+                  "queuePosition": 17,
+                  "group": 2,
+                  "estimatedIterationsRemaining": 5
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token (the frozen problem-details trio).",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "The account has no queued registration (JSON body), or the deployment runs queue-disabled (plain-text body). Either way: stop polling, the claim is proceeding without the queue.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "No queue entry found"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
     "/api/v1/usernames": {
       "post": {
         "tags": [
@@ -382,7 +441,7 @@
             }
           },
           "202": {
-            "description": "Reservation accepted into the outbox for on-chain registration.",
+            "description": "Reservation accepted into the outbox for on-chain registration. With the registration queue enabled (`QUEUE_ENABLED`) and the queue service live, the claim waits in the balance-priority queue and the body additionally carries `registrationOutcome: \"QUEUED\"` plus the claim's queue standing (poll `GET /api/v1/registration/queue` for updates). A down queue service falls back to the direct registration path (no queue fields).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1213,6 +1272,38 @@
           }
         }
       },
+      "QueueStatusResponse": {
+        "type": "object",
+        "description": "Queue standing for one claim, as served by `GET /api/v1/registration/queue`\nand embedded in the claim response's `queue` field.",
+        "required": [
+          "queuePosition",
+          "group",
+          "estimatedIterationsRemaining"
+        ],
+        "properties": {
+          "queuePosition": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based position in the drain order of the current queue snapshot.",
+            "example": 17,
+            "minimum": 0
+          },
+          "group": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Priority group `1..=4` (4 = highest; raised by topping up the account).",
+            "example": 2,
+            "minimum": 0
+          },
+          "estimatedIterationsRemaining": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Advancer iterations until promotion, per the snapshot simulation.",
+            "example": 5,
+            "minimum": 0
+          }
+        }
+      },
       "RefreshRequest": {
         "type": "object",
         "description": "`{ refreshToken }` — present a prior opaque refresh token to rotate it.",
@@ -1326,6 +1417,25 @@
               "null"
             ],
             "description": "Present only when the DeviceCheck free-slot gate ran and produced an\nadvisory availability (`Register`/`Proceed`); omitted when DeviceCheck\nis disabled or the outcome short-circuited (payment/token/unavailable)."
+          },
+          "registrationOutcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"QUEUED\"` when the registration queue is enabled and the claim is\nwaiting in it; absent on the direct-to-writer path. (The spec's\n`INSTANT` / `PAYMENT_REQUIRED` outcomes ship with the attestation\nslice.)",
+            "example": "QUEUED"
+          },
+          "queue": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueueStatusResponse",
+                "description": "Queue standing at claim time (present only with\n`registrationOutcome: \"QUEUED\"`)."
+              }
+            ]
           }
         }
       },

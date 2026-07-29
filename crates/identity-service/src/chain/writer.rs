@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use chain_types::{PeopleConfig, PeopleExtrinsicParamsBuilder};
 use secrecy::{ExposeSecret as _, SecretString};
-use sqlx::{PgPool, Row as _};
+use sqlx::PgPool;
 use subxt::dynamic::{self, Value};
 use subxt::tx::{DynamicPayload, TransactionStatus};
 use subxt::utils::AccountId32;
@@ -27,6 +27,7 @@ use time::OffsetDateTime;
 use chain_client::WriterSigner;
 
 use super::client::ChainClient;
+use super::lease;
 use super::outbox::{self, Guard, Reservation};
 
 /// Chain-writer configuration, loaded from the environment.
@@ -56,6 +57,10 @@ pub struct WriterConfig {
     pub finalize_timeout: Duration,
     /// Max submit attempts before a row is failed terminally.
     pub max_attempts: i32,
+    /// How long the registration-queue advancer's lease may be expired before
+    /// this writer drains `QUEUED` rows itself (the queue-service-down
+    /// fallback to the original direct registration behavior).
+    pub queue_fallback_after: Duration,
 }
 
 impl WriterConfig {
@@ -70,9 +75,16 @@ impl WriterConfig {
             Ok(v) if !v.trim().is_empty() => Some(parse_account(v.trim())?),
             _ => None,
         };
+        // The default must be unique per boot: in a container the PID is
+        // always 1, and identical holder ids let overlapping instances steal
+        // each other's live lease through the "already ours" arm.
         let holder_id = match std::env::var("CHAIN_WRITER_HOLDER_ID") {
             Ok(value) if !value.trim().is_empty() => value,
-            _ => format!("writer-{}", std::process::id()),
+            _ => format!(
+                "writer-{}-{:08x}",
+                std::process::id(),
+                rand::random::<u32>()
+            ),
         };
 
         Ok(Self {
@@ -88,6 +100,10 @@ impl WriterConfig {
             batch_size: env_u64("CHAIN_WRITER_BATCH_SIZE", 25) as i64,
             finalize_timeout: Duration::from_secs(env_u64("CHAIN_WRITER_FINALIZE_SECS", 120)),
             max_attempts: env_u64("CHAIN_WRITER_MAX_ATTEMPTS", 8) as i32,
+            queue_fallback_after: Duration::from_secs(crate::queue::env_u64_strict(
+                "QUEUE_FALLBACK_AFTER_SECS",
+                60,
+            )?),
         })
     }
 }
@@ -170,30 +186,19 @@ impl Writer {
     /// Claim (or renew) the single-writer lease, taking it only when free,
     /// expired, or already ours. Waits and retries while another writer holds it.
     async fn acquire_lease(&self) -> anyhow::Result<Guard> {
-        let ttl = self.config.lease_ttl.as_secs() as i64;
         loop {
-            let row = sqlx::query(
-                "INSERT INTO writer_lease (name, holder_id, lease_epoch, expires_at, heartbeat_at) \
-                 VALUES ($1, $2, 1, now() + ($3 * interval '1 second'), now()) \
-                 ON CONFLICT (name) DO UPDATE \
-                   SET holder_id = EXCLUDED.holder_id, \
-                       lease_epoch = writer_lease.lease_epoch + 1, \
-                       expires_at = now() + ($3 * interval '1 second'), \
-                       heartbeat_at = now() \
-                   WHERE writer_lease.expires_at < now() OR writer_lease.holder_id = $2 \
-                 RETURNING lease_epoch",
+            let epoch = lease::try_acquire(
+                &self.pool,
+                &self.config.lease_name,
+                &self.config.holder_id,
+                self.config.lease_ttl,
             )
-            .bind(&self.config.lease_name)
-            .bind(&self.config.holder_id)
-            .bind(ttl)
-            .fetch_optional(&self.pool)
             .await?;
-
-            if let Some(row) = row {
+            if let Some(epoch) = epoch {
                 return Ok(Guard {
                     lease_name: self.config.lease_name.clone(),
                     holder_id: self.config.holder_id.clone(),
-                    epoch: row.try_get("lease_epoch")?,
+                    epoch,
                 });
             }
             tracing::info!("writer lease held by another instance; waiting");
@@ -203,25 +208,31 @@ impl Writer {
 
     /// Renew the lease. Returns `false` if it is no longer ours.
     async fn heartbeat(&self, guard: &Guard) -> anyhow::Result<bool> {
-        let ttl = self.config.lease_ttl.as_secs() as i64;
-        let done = sqlx::query(
-            "UPDATE writer_lease \
-             SET expires_at = now() + ($4 * interval '1 second'), heartbeat_at = now() \
-             WHERE name = $1 AND holder_id = $2 AND lease_epoch = $3",
+        Ok(lease::renew(
+            &self.pool,
+            &guard.lease_name,
+            &guard.holder_id,
+            guard.epoch,
+            self.config.lease_ttl,
         )
-        .bind(&guard.lease_name)
-        .bind(&guard.holder_id)
-        .bind(guard.epoch)
-        .bind(ttl)
-        .execute(&self.pool)
-        .await?;
-        Ok(done.rows_affected() == 1)
+        .await?)
     }
 
     async fn active_loop(&mut self, guard: &Guard) -> anyhow::Result<()> {
         loop {
             if !self.heartbeat(guard).await? {
                 anyhow::bail!("lost writer lease");
+            }
+            // Queue-service-down fallback: if the registration-queue advancer
+            // has been dead past the grace window, drain its QUEUED rows into
+            // the normal path so no claim is ever stranded behind a dead queue.
+            match crate::queue::fallback_drain(&self.pool, self.config.queue_fallback_after).await {
+                Ok(0) => {}
+                Ok(drained) => tracing::warn!(
+                    drained,
+                    "queue advancer is down; promoted queued claims directly"
+                ),
+                Err(e) => tracing::warn!(error = %e, "queue fallback drain failed"),
             }
             let due = outbox::claim_due(&self.pool, self.config.batch_size).await?;
             if due.is_empty() {

@@ -30,6 +30,8 @@ test-live:
     done
     IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
         cargo test -p identity-service --test allocation_live -- --ignored
+    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
+        cargo test -p identity-service --test queue_live -- --ignored
     for _ in $(seq 1 30); do
         docker compose exec -T username-indexer-postgres pg_isready -U username_indexer -d username_indexer >/dev/null 2>&1 && break
         sleep 1

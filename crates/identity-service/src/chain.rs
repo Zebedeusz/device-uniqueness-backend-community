@@ -4,6 +4,7 @@
 //! single-instance [`writer`] worker that drains the outbox onto chain.
 
 pub mod client;
+pub mod lease;
 pub mod outbox;
 pub mod writer;
 
