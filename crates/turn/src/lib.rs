@@ -6,7 +6,7 @@
 //! HMAC credential minting over a secret shared with the TURN relay, and no
 //! persistence at all — N replicas need no coordination.
 //!
-//! Plan: `docs/plans/active/turn.md`. Boundaries and invariants:
+//! Plan: `docs/plans/done/turn.md`. Boundaries and invariants:
 //! `docs/architecture.md`.
 
 pub mod config;

@@ -3,6 +3,10 @@
 > Current architecture, scope, service boundaries, naming, and data-flow invariants for humans and
 > agents. Code and tests remain the source of truth; update this file in the same change whenever
 > implementation changes make it inaccurate.
+>
+> **No delivery status here.** Whether a slice is in flight, demoed, or shipped lives in
+> `docs/plans/` (`active/` vs `done/`) — this file describes the system as designed, so it does not
+> go stale every time a phase lands.
 
 ## Vision
 
@@ -44,36 +48,34 @@ create now. See "How the workspace grows" below.
 
 ### Shared library crates (product-agnostic, imported by services)
 
-| Concept | Name | Status |
+| Concept | Name | Where it lives |
 |---|---|---|
-| generated People Chain (subxt) typed surface | `chain-types` | **exists** (shared by identity-service + username-indexer + dim-tickets + invite-tickets) |
-| chain connection / RPC transport + writer signing key | `chain-client` | **exists** (crate: reconnecting connect + `WriterSigner`; extracted when dim-tickets became the second consumer; invite-tickets is the third) |
-| Postgres connection + bootstrap | `postgres` | module in identity-service/username-indexer today |
-| config loading + fail-fast validation | `config` | module today |
-| telemetry (logs / metrics / tracing) | `telemetry` | not yet |
-| JWT + JWKS verification (for verify-only services) | `jwt-verify` | **exists** (crate; identity-service delegates its own verification to it; dim-tickets, invite-tickets, and notifications consume it) |
-| frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | **exists** (crate; extracted 2026-07-22 when invite-tickets became the second consumer of dim-tickets' scaffolding; dim-tickets, invite-tickets, turn, and notifications consume it — the dialect bodies are golden-captured, change only with a fresh capture) |
+| generated People Chain (subxt) typed surface | `chain-types` | crate; consumed by identity-service, username-indexer, dim-tickets, invite-tickets |
+| chain connection / RPC transport + writer signing key | `chain-client` | crate (reconnecting connect + `WriterSigner`) |
+| Postgres connection + bootstrap | `postgres` | still a module inside identity-service / username-indexer |
+| config loading + fail-fast validation | `config` | still a module per service |
+| telemetry (logs / metrics / tracing) | `telemetry` | not extracted |
+| JWT + JWKS verification (for verify-only services) | `jwt-verify` | crate; the cross-service auth contract — identity-service delegates its own verification to it; dim-tickets, invite-tickets, turn, and notifications consume it |
+| frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | crate; consumed by dim-tickets, invite-tickets, turn, notifications. The dialect bodies are golden-captured — change only with a fresh capture |
 
 ### Deployable services (plain domain word)
 
-| Service | Responsibility | Status |
+| Service | Responsibility | Processes |
 |---|---|---|
-| `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. Bins: `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker) + `registration-queue` (single-instance queue advancer; **optional at runtime** — when it is down, api and writer fall back to the direct registration path). | **exists** |
-| `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, unauthenticated, per-IP rate limited). The deprecated single-username lookup (`GET /api/v1/usernames/{username}`) was removed 2026-07-23 in favour of `search` and now serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | **exists** |
-| `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. Independently deployable (own process/secrets, no `depends_on`). Bin: `notify-relay`. Real iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | **exists** (live device smokes pending) |
-| `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. Bin: `turn-api`. Plan: `docs/plans/active/turn.md`. | **exists** |
-| `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. Bins: `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar). Plan: `docs/plans/active/invite-claim.md`. | **exists** (pool refill demo pending a funded inviter) |
-| `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine; single-instance chain writer (`dim-tickets-writer`: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`). No known client consumer — the apps use the `invite-tickets` claim route (see the plan's correction note). Plan: `docs/plans/active/dim-tickets.md`. | **exists** |
-| gateway | Public-URL path routing via **Caddy** (reverse proxy). The route table is the committed `gateway/Caddyfile` (env-parameterized; used by prod's host Caddy AND the compose `gateway` service on :8000): migrated routes → their service (:8081–8085), unmigrated legacy routes → `LEGACY_BACKEND_ORIGIN` (route-by-route cutover lane), everything else → `identity-api` (:8080). Holds no secrets (enforced by the compose boundary script). Plan: `docs/plans/active/gateway.md`. | **exists** (committed artifact + compose service) |
+| `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. | `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker) + `registration-queue` (single-instance queue advancer; **optional at runtime** — with it down, api and writer fall back to the direct registration path) |
+| `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, unauthenticated, per-IP rate limited). The single-username lookup (`GET /api/v1/usernames/{username}`) is retired in favour of `search` and serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | `username-indexer` (+ own Postgres) |
+| `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. No `depends_on`. iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | `notify-relay` |
+| `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. | `turn-api` |
+| `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. | `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar) |
+| `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine. No known client consumer — the apps use the `invite-tickets` claim route. | `dim-tickets-api` + `dim-tickets-writer` (single-instance: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`) |
+| gateway | Public-URL path routing via **Caddy** (reverse proxy). The route table is the committed `gateway/Caddyfile` (env-parameterized; used by prod's host Caddy AND the compose `gateway` service on :8000): username GET reads → :8081, DIM tickets → :8082, invitation tickets → :8083, TURN → :8084, notify → :8085, identity-owned writes/availability/root preflight → :8080; unmigrated legacy routes → `LEGACY_BACKEND_ORIGIN` (route-by-route cutover lane). Holds no secrets (enforced by the compose boundary script). | host Caddy (prod) / `gateway` (compose) |
 
 
 ## How the workspace grows (lazy extraction)
 
 The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 
-- **Today there are 11 crates:** `chain-types`, `chain-client`, `jwt-verify`, `http-common`,
-  `identity-service`, `username-indexer`, `dim-tickets`, `invite-tickets`, `turn`,
-  `notifications`, and `apidoc-gen`.
+- The crate list as it stands today is in `AGENTS.md` → Workspace.
 - **Services** become crates **when you build them** — a service gets a folder the day work
   starts, not before.
 - **Shared libs are extracted lazily — only when a *second* service needs the code.** Until then
@@ -85,9 +87,8 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
   - ❌ one `common`/`shared` grab-bag (every service recompiles + pulls everything).
   - ✅ a handful (realistically **3–4** over time) that each do one clear thing. `chain-types`,
     `jwt-verify` (the cross-service auth contract), and `chain-client` (reconnecting transport +
-    writer signing key) are shared today — each extracted when dim-tickets became its second
-    consumer; next candidate is optionally a small `platform` grouping of
-    `config`+`telemetry`(+`postgres`) **only if** they always travel together.
+    writer signing key) are shared today; next candidate is optionally a small `platform` grouping
+    of `config`+`telemetry`(+`postgres`) **only if** they always travel together.
 
 ## Classification quick-reference
 
@@ -97,10 +98,11 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 - **username read/search** → `username-indexer` — true carve-out.
 - **free-reg eligibility/queue** → `identity-service` product logic.
 - **chain-writer** → worker (`identity-chain-writer`) *inside* the `identity-service` boundary.
-- **notifications** → independent thin service; **turn / invites** → future independent services.
+- **notifications / turn / invites** → independent thin services, each outside the identity
+  boundary.
 - **DIM tickets (game/personhood)** → the `/api/v1/dim-ticket` routes live in the `dim-tickets`
   service — not `identity-service`. But the apps' game/personhood **claims** go through
-  `/api/v1/invitation-ticket/claim`, which is the `invites` service.
+  `/api/v1/invitation-ticket/claim`, which is the `invite-tickets` service.
 - **gateway** → Caddy path routing (infra).
 
 ### Guardrails — do NOT create these as separate crates/services
@@ -108,53 +110,26 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 `attestation`, `availability`, `eligibility`, `queue`, `payment`, `writer` all live **inside**
 `identity-service`. Splitting any out contradicts the design (single identity failure/secret boundary).
 
-## Current → target names
-
-| On disk today | Target | Action |
-|---|---|---|
-| `chain-types` | `chain-types` | unchanged |
-| `identity-service` (+ `identity-api`, `identity-chain-writer`) | unchanged | already correct |
-| `username-read` → `username-indexer` | done | renamed |
-| `notifications` | `notifications` | created; bin `notify-relay` |
-| *(future)* turn / invites | `turn` / `invites` | name on creation |
-| `jwt-verify` | `jwt-verify` | extracted (crate) |
-| `chain-client` | `chain-client` | extracted (crate) |
-| `http-common` | `http-common` | extracted (crate) |
-| *(future)* shared libs | `postgres` / `config` / `telemetry` | extract lazily, per above |
-| gateway | Caddy | routes username GET reads → :8081, DIM tickets → :8082, invitation tickets → :8083, TURN → :8084, notify → :8085, and identity-owned writes/availability/root preflight → :8080; unmigrated routes use the legacy cutover lane |
-
 ## Open decisions (need the user)
 
-1. ~~**Queue worker topology**~~ — **resolved 2026-07-27 (user decision)**: the queue advancer
-   is its own single-instance daemon, the `registration-queue` bin/compose service, still inside
-   the identity-service crate/boundary. It is deliberately an **isolated failure domain**: its
-   Postgres lease is the liveness signal, and when it is down intake and the writer fall back to
-   the original direct registration path instead of blocking claims. See
-   `docs/plans/active/registration-queue.md`.
-2. **Database topology** — separate instances vs databases vs schemas. ("No shared tables" already decided.)
-3. **Migration/cutover** — migrate V1 data or start fresh, then route-by-route cutover + V1 shutdown.
+1. **Database topology** — separate instances vs databases vs schemas. ("No shared tables" already decided.)
+2. **Migration/cutover** — migrate V1 data or start fresh, then route-by-route cutover + V1 shutdown.
 
 ## Remaining scope & legacy retirement
 
-Remaining slices. Each gets its own ship-first plan under `docs/plans/` when work begins:
+Remaining slices. Each gets its own ship-first plan under `docs/plans/` when work begins; that plan
+(not this list) tracks how far it has got:
 
-1. Device attestation — **in flight**, see `docs/plans/active/attestation.md`: iOS App Attest
-   (Phase 1), Android hardware-keystore/TEE attestation (Phase 3), and Android Play Integrity
-   (Phase 2, self-managed keys — real-key demo pending the Play Console exchange) are
-   code-complete inside `identity-service`; Apple DeviceCheck (Phase 4) and the enforcement
-   flip (Phase 5) remain.
-2. Registration eligibility, payment, and voucher behavior (the **queue** itself shipped
-   2026-07-27 — `docs/plans/active/registration-queue.md`; the INSTANT/PAYMENT_REQUIRED lanes,
-   `payment-status` endpoint, and the spec's `200 {registrationOutcome}` claim envelope remain).
+1. Device attestation inside `identity-service`: iOS App Attest, Android hardware-keystore/TEE
+   attestation, Android Play Integrity (self-managed keys), Apple DeviceCheck, and the enforcement
+   flip.
+2. Registration eligibility, payment, and voucher behavior: the INSTANT / PAYMENT_REQUIRED lanes,
+   the `payment-status` endpoint, and the spec's `200 {registrationOutcome}` claim envelope.
 3. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
 4. iOS and Android release-device validation.
 5. Data migration, rollback, route-by-route cutover, and legacy shutdown.
 
 The legacy backend is retired only after every required route has an owner, the gateway is validated, parity gates pass, rollback is proven, and release-device smokes succeed.
-
-## Follow-up
-
-- (done) `AGENTS.md` now lists all three crates including `username-indexer`.
 
 ## Implementation notes (data flow & invariants)
 
@@ -175,7 +150,7 @@ Operational invariants an agent must respect when touching the code.
   writer path is unchanged from `RESERVED` on. `GET /api/v1/registration/queue` (JWT) reports
   position/group/ETA by simulating that drain over the current snapshot; the claim response
   gains additive `registrationOutcome: "QUEUED"` + `queue` fields (the frozen queue-disabled
-  wire is untouched). Plan: `docs/plans/active/registration-queue.md`.
+  wire is untouched).
 - **The queue service can be down without bricking registration.** The `registration-queue`
   advancer holds a `writer_lease` row (`registration-queue-advancer`) that doubles as its
   liveness signal and single-instance guard. `identity-api` intake queues a claim **only while

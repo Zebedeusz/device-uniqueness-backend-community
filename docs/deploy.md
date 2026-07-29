@@ -59,6 +59,13 @@ INVITE_INVITER_ADDRESS=<invite inviter SS58>   # funds set_invite_ticket; stampe
 INVITE_INVITER_SIGNER_SURI=<secret>            # hot invite inviter key (or its proxy delegate)
 INVITE_INVITER_PROXY_FOR=<inviter primary SS58 or empty>
 
+# turn-api (stateless credential issuer; the secret is shared with the coturn relay)
+TURN_SECRET=<base64 of the relay's coturn static-auth-secret>   # base64 the RAW secret string; do not hex-decode it first
+TURN_AUTH_ALGORITHM=SHA1                  # must match the relay
+TURN_TTL_SECS=1800
+TURN_REALM=<relay realm, e.g. turn-dev-b.novasama-tech.org>
+ICE_SERVERS=stun:<relay>:3478,turn:<relay>:3478?transport=udp,turns:<relay>:5349?transport=tcp
+
 # notify-relay (stateless push relay; service-owned secrets)
 NOTIFY_RATE_LIMIT=60                      # per-subject requests per window
 NOTIFY_RATE_LIMIT_WINDOW_SECS=60
@@ -78,6 +85,8 @@ FCM_SERVICE_ACCOUNT_JSON=<json or empty>  # Android; unset -> Android pushes rep
 The signer (or its proxy target) must be a registered attester authority with funds; the proxy relationship must already exist on-chain. Likewise each inviter (or the primary its `…PROXY_FOR` points at) must hold `AvailableInvites` on the `Game` / `ProofOfInk` pallets and funds for fees. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
 
 The `notify-relay` provider secrets are optional: with none set the relay still boots and reports per-request provider failure for the unconfigured platform. `JWT_ED25519_PUBLIC_KEY` must be the public half of `identity-api`'s `JWT_ED25519_SECRET`.
+
+The `turn-api` variables have compose dev defaults (placeholder secret, `example.org` realm, `example.com` ICE URLs), so leaving them unset boots a service that mints credentials **no real relay accepts**. `TURN_SECRET` is the base64 encoding of the relay's raw `static-auth-secret` string — base64-encoding a hex-decoded form produces different HMAC keys and the relay answers 401 to every Allocate.
 
 ## 3. Run
 

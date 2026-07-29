@@ -51,6 +51,13 @@ the other verify-only services.
   registration + regenerated reference (tag "TURN"). ✅ Demo (2026-07-22): `docker compose
   config -q` validates. Remaining for the slice: a side-by-side smoke vs the deployed legacy
   backend (same env, diff the wire), rolled into the migration-wide parity gate.
+- [x] (2026-07-29) **Real relay verification.** The test deployment was pointed at the real coturn
+  `dev-b` relay (`TURN_SECRET` = base64 of its `static-auth-secret`, realm
+  `turn-dev-b.novasama-tech.org`, its 3478/5349 ICE URLs). ✅ Demo (2026-07-29): `POST
+  /api/v1/turn/issue` on `identity.dotspark.app` returned 201; the password recomputed
+  independently from the relay secret matched; a raw STUN/TURN **Allocate** against
+  `turn-dev-b:3478` returned `0x0103` success with `XOR-RELAYED-ADDRESS 51.15.72.62:<port>` —
+  the relay accepts our credentials end to end.
 
 ## Risks / notes
 

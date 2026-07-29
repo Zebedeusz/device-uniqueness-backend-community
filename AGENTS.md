@@ -21,6 +21,8 @@ lives in docs, not here:
 The **code is the source of truth**; the docs must be kept in sync with it. When a change alters behavior, architecture, service boundaries, naming, or invariants, update the matching doc in the **same change**, not later:
 
 - Architecture, scope, service boundaries, naming, or data-flow invariants → `docs/architecture.md`.
+  It carries **no delivery status** (no "exists"/"pending"/"in flight", no plan links, no dated
+  demo notes) — it describes the system as designed, so only a design change touches it.
 - Delivery status → the plan under `docs/plans/` (move it `active/` → `done/` when it ships). Remaining/not-yet-started scope + the legacy-retirement bar → `docs/architecture.md`.
 - Commands, conventions, config, workspace layout, or gotchas → this file.
 - **Public HTTP surface** (routes, request/response fields, status codes, examples) → the API reference is **generated from the code**, not hand-written. Annotate the handler with `#[utoipa::path(...)]` and its bodies with `#[derive(ToSchema)]`; register new handlers in the `paths(...)` list and new types in `components(schemas(...))` in `crates/<service>/src/openapi.rs`; then run `just openapi` and commit the regenerated `docs/api-reference/{openapi.json,index.html}` in the same change. Never hand-edit those two files (a test enforces this — see Gotchas). Edit the page **design** in `docs/api-reference/template.html` (the `<!--@NAV-->` / `<!--@ENDPOINTS-->` placeholders are filled by the generator).
