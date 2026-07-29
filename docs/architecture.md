@@ -63,7 +63,7 @@ create now. See "How the workspace grows" below.
 | Service | Responsibility | Processes |
 |---|---|---|
 | `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. | `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker) + `registration-queue` (single-instance queue advancer; **optional at runtime** — with it down, api and writer fall back to the direct registration path) |
-| `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, unauthenticated, per-IP rate limited). The single-username lookup (`GET /api/v1/usernames/{username}`) is retired in favour of `search` and serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | `username-indexer` (+ own Postgres) |
+| `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, rate limited) plus the optional proof-of-compute gate and its `POST /api/v1/poc/issue` puzzle issuance. The single-username lookup (`GET /api/v1/usernames/{username}`) is retired in favour of `search` and serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | `username-indexer` (+ own Postgres) |
 | `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. No `depends_on`. iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | `notify-relay` |
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. | `turn-api` |
 | `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. | `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar) |
@@ -96,6 +96,7 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 - **availability** → `identity-service` (People Chain plus durable reservation-outbox read).
 - **username write** → `identity-service`.
 - **username read/search** → `username-indexer` — true carve-out.
+- **proof of compute** → `username-indexer` (the gate protects its public read; issuance lives with it).
 - **free-reg eligibility/queue** → `identity-service` product logic.
 - **chain-writer** → worker (`identity-chain-writer`) *inside* the `identity-service` boundary.
 - **notifications / turn / invites** → independent thin services, each outside the identity
@@ -195,7 +196,9 @@ Operational invariants an agent must respect when touching the code.
   (request-id → trace → 30s timeout) with graceful shutdown. Health at `/livez`, `/readyz` (gates on
   a live Postgres `SELECT 1`), `/healthcheck`; JWKS at `/.well-known/jwks.json`. `AppState` =
   Postgres pool + `ChainClient` + `Jwt` + `Config`. `username-indexer` uses the same tower-http
-  stack, but its `/readyz` also reports index freshness and it has no JWT/JWKS.
+  stack, but its `/readyz` also reports index freshness and it never publishes JWKS — it holds
+  **verify-only** key material (`JWT_JWKS_JSON` / `JWT_ED25519_PUBLIC_KEY`), and only when
+  `POC_ENABLED=true`, so authenticated callers can bypass the proof-of-compute gate.
 - **invite-tickets: the pool has two states and the claim is one transaction.** A ticket row is
   `available` (generated, registered on-chain) or `claimed` — nothing else; failed registrations
   are never inserted. The claim is: pre-check count (`0` → 422 `Pool exhausted`) → one transaction
@@ -222,9 +225,24 @@ Operational invariants an agent must respect when touching the code.
   `sync_state` checkpoint is empty**, and each sync pass takes the lock with `pg_try_advisory_lock`
   (skips the pass if another instance holds it). So the service is safe as N replicas on one shared
   Postgres, and restarts resume incrementally from the checkpoint (no full re-scan).
-- **`username-indexer` public reads share one per-IP rate-limit bucket.** Search and single-username
-  lookup are deliberately JWT-free; the gateway forwards both GET surfaces to the indexer, while
-  identity-owned POST/OPTIONS traffic falls through to `identity-api`.
+- **`username-indexer` public reads are rate limited per verified subject, else per IP.** Search
+  requires no JWT; when a caller does present a valid bearer the limiter keys on its subject instead
+  of the shared-egress IP. The gateway forwards the GET surface to the indexer, while identity-owned
+  POST/OPTIONS traffic falls through to `identity-api`.
+- **The proof-of-compute gate is either-or, and off by default.** With `POC_ENABLED=false` (the
+  shipping default) there is no `/api/v1/poc/issue` route and search behaves exactly as before. With
+  it on, `GET /api/v1/usernames/search` admits a caller that presents **either** a valid
+  identity-service JWT **or** a solved puzzle: `POST /api/v1/poc/issue` returns an HMAC-signed
+  `{sessionId, timestamp, difficulty, checksum}` (no row written — issuance is stateless), and the
+  client returns `Proof-Of-Compute: base64(sessionId:timestamp:difficulty:counter:checksum)` where
+  `sha256(sessionId || timestamp || counter)` has at least `difficulty` leading zero bits.
+  Verification order is checksum → expiry → work → **one-shot consume** (`spent_puzzles`, a
+  primary-key insert, so a puzzle cannot be replayed against another replica — legacy's in-memory
+  map could). A bearer token that fails verification degrades to *anonymous* and never yields a
+  `401`: search must not become an authenticated route. Rejections are `400` for a malformed header
+  and `402` for everything else, with the legacy detail strings. Both shipping mobile apps
+  authenticate search, so the gate costs them nothing; the anonymous callers are the Desktop/host
+  path (and Android's `DISABLE_AUTH` nightly build).
 - **`notifications` is an isolated failure domain.** It is stateless, DB-free, and shares no
   `depends_on` with any other service, so `/readyz` needs no external probe (readiness = the bound
   listener; provider outages are per-request `200 success:false`, never unreadiness) and stopping it

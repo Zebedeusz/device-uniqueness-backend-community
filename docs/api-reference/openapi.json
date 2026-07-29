@@ -741,6 +741,43 @@
         }
       }
     },
+    "/api/v1/poc/issue": {
+      "post": {
+        "tags": [
+          "Proof of compute"
+        ],
+        "summary": "Issue a proof-of-compute puzzle for an unauthenticated caller.",
+        "operationId": "issue_puzzle",
+        "responses": {
+          "201": {
+            "description": "A fresh puzzle to solve. Mine a `counter` whose `sha256(sessionId || timestamp || counter)` has at least `difficulty` leading zero bits, then send `Proof-Of-Compute: base64(sessionId:timestamp:difficulty:counter:checksum)` on the search request. Callers holding an identity-service JWT do not need a puzzle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Puzzle"
+                },
+                "example": {
+                  "sessionId": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
+                  "timestamp": 1700000000000,
+                  "difficulty": 16,
+                  "checksum": "c8828951fd6c123fdbf6501f111d27dd3f260839344a7370e0dd8f20e2c40482"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Proof of compute is disabled on this deployment (`POC_ENABLED=false`): the route is not mounted and the service-wide plain-text 404 answers instead.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/usernames/search": {
       "get": {
         "tags": [
@@ -1477,6 +1514,41 @@
           }
         }
       },
+      "Puzzle": {
+        "type": "object",
+        "description": "A freshly issued puzzle, serialized as the frozen `201` body.",
+        "required": [
+          "sessionId",
+          "timestamp",
+          "difficulty",
+          "checksum"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "Opaque puzzle identifier (UUID); the replay-protection key.",
+            "example": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed"
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issue time in unix milliseconds; bounds the puzzle's validity.",
+            "example": 1700000000000
+          },
+          "difficulty": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Required number of leading zero bits in the work digest.",
+            "example": 16,
+            "minimum": 0
+          },
+          "checksum": {
+            "type": "string",
+            "description": "Lowercase-hex HMAC-SHA256 over the puzzle fields; proves this server\nissued the puzzle, so nothing is stored at issue time.",
+            "example": "c8828951fd6c123fdbf6501f111d27dd3f260839344a7370e0dd8f20e2c40482"
+          }
+        }
+      },
       "SearchResponse": {
         "type": "object",
         "description": "Public search response envelope.",
@@ -2037,7 +2109,11 @@
     },
     {
       "name": "Usernames",
-      "description": "Public username search over the finalized chain projection. Unauthenticated; IP rate-limited."
+      "description": "Public username search over the finalized chain projection. Served to callers with an identity-service JWT or, when proof of compute is enabled, a solved puzzle; rate-limited per subject or client IP."
+    },
+    {
+      "name": "Proof of compute",
+      "description": "Puzzle issuance for callers that hold no bearer token. Mounted only when `POC_ENABLED=true`."
     },
     {
       "name": "Invitation Tickets",

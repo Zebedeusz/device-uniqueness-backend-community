@@ -112,6 +112,36 @@ pub fn rate_limited(retry_after_secs: u64) -> Response {
     )
 }
 
+/// 400: a plain bad-request problem details body (no `errors` array) — the
+/// dialect the legacy proof-of-compute middleware used for a malformed header.
+pub fn bad_request(detail: &str) -> Response {
+    problem(
+        StatusCode::BAD_REQUEST,
+        json!({
+            "type": format!("{PROBLEM_REGISTRY}/bad-request"),
+            "title": "Bad Request",
+            "detail": detail,
+            "status": 400,
+        }),
+        &[],
+    )
+}
+
+/// 402: the caller must present (more) proof before the route serves them —
+/// the legacy proof-of-compute middleware's rejection dialect.
+pub fn payment_required(detail: &str) -> Response {
+    problem(
+        StatusCode::PAYMENT_REQUIRED,
+        json!({
+            "type": format!("{PROBLEM_REGISTRY}/payment-required"),
+            "title": "Payment Required",
+            "detail": detail,
+            "status": 402,
+        }),
+        &[],
+    )
+}
+
 /// 400 problem details with an `errors` array — the shape shared by the four
 /// zod validation dialects (body / query / path param / header).
 fn invalid_with_errors(slug: &str, title: &str, detail: &str, errors: &[FieldError]) -> Response {

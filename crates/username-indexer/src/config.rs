@@ -13,6 +13,9 @@ const DEFAULT_SYNC_INTERVAL_SECS: &str = "30";
 const MAX_SYNC_INTERVAL_SECS: u32 = 86_400;
 const DEFAULT_SEARCH_RATE_LIMIT: &str = "60";
 const DEFAULT_SEARCH_RATE_LIMIT_WINDOW_SECS: &str = "60";
+const DEFAULT_POC_DIFFICULTY_BITS: &str = "16";
+const DEFAULT_POC_SESSION_TTL_SECS: &str = "60";
+const DEFAULT_POC_CLOCK_SKEW_SECS: &str = "30";
 
 /// Validated username-indexer runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +34,20 @@ pub struct Config {
     pub search_rate_limit: u32,
     /// Rate-limit window, in seconds, for the public search route.
     pub search_rate_limit_window_secs: u32,
+    /// Whether the proof-of-compute gate and its issuance route are mounted.
+    ///
+    /// Off by default: with it off the service behaves exactly as it did before
+    /// the gate existed (no `/api/v1/poc/issue`, no header parsing on search).
+    pub poc_enabled: bool,
+    /// Required leading zero bits in a puzzle solution (1–32).
+    pub poc_difficulty_bits: u8,
+    /// Puzzle validity, in seconds.
+    pub poc_session_ttl_secs: u32,
+    /// Extra tolerance, in seconds, for client/server clock skew.
+    pub poc_clock_skew_secs: u32,
+    /// Input keying material for the puzzle HMAC; required only when the gate
+    /// is enabled.
+    pub poc_hmac_secret: Option<String>,
 }
 
 pub use http_common::config::ConfigError;
@@ -101,6 +118,45 @@ impl Config {
             });
         }
 
+        let poc_enabled = parse_bool(&get, "POC_ENABLED", false)?;
+        let poc_difficulty_bits = parse(
+            "POC_DIFFICULTY_BITS",
+            get("POC_DIFFICULTY_BITS")
+                .as_deref()
+                .unwrap_or(DEFAULT_POC_DIFFICULTY_BITS),
+        )?;
+        if !(1..=32).contains(&poc_difficulty_bits) {
+            return Err(ConfigError::Invalid {
+                key: "POC_DIFFICULTY_BITS",
+                reason: "must be between 1 and 32".to_string(),
+            });
+        }
+        let poc_session_ttl_secs = parse(
+            "POC_SESSION_TTL_SECS",
+            get("POC_SESSION_TTL_SECS")
+                .as_deref()
+                .unwrap_or(DEFAULT_POC_SESSION_TTL_SECS),
+        )?;
+        if poc_session_ttl_secs == 0 {
+            return Err(ConfigError::Invalid {
+                key: "POC_SESSION_TTL_SECS",
+                reason: "must be at least 1".to_string(),
+            });
+        }
+        let poc_clock_skew_secs = parse(
+            "POC_CLOCK_SKEW_SECS",
+            get("POC_CLOCK_SKEW_SECS")
+                .as_deref()
+                .unwrap_or(DEFAULT_POC_CLOCK_SKEW_SECS),
+        )?;
+        // Required only with the gate on, so existing deployments keep booting
+        // untouched while `POC_ENABLED` stays false.
+        let poc_hmac_secret = if poc_enabled {
+            Some(required(&get, "POC_HMAC_SECRET")?)
+        } else {
+            None
+        };
+
         Ok(Self {
             bind_addr,
             database_url,
@@ -109,7 +165,32 @@ impl Config {
             sync_interval_secs,
             search_rate_limit,
             search_rate_limit_window_secs,
+            poc_enabled,
+            poc_difficulty_bits,
+            poc_session_ttl_secs,
+            poc_clock_skew_secs,
+            poc_hmac_secret,
         })
+    }
+}
+
+/// Parse a boolean env var strictly: only `true`/`false` (any case) are
+/// accepted, so a typo can never silently disable a security gate.
+fn parse_bool<F>(get: &F, key: &'static str, default: bool) -> Result<bool, ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    match get(key) {
+        None => Ok(default),
+        Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "" => Ok(default),
+            "true" => Ok(true),
+            "false" => Ok(false),
+            other => Err(ConfigError::Invalid {
+                key,
+                reason: format!("expected `true` or `false`, got `{other}`"),
+            }),
+        },
     }
 }
 
@@ -171,6 +252,11 @@ mod tests {
         assert_eq!(defaults.sync_interval_secs, 30);
         assert_eq!(defaults.search_rate_limit, 60);
         assert_eq!(defaults.search_rate_limit_window_secs, 60);
+        assert!(!defaults.poc_enabled);
+        assert_eq!(defaults.poc_difficulty_bits, 16);
+        assert_eq!(defaults.poc_session_ttl_secs, 60);
+        assert_eq!(defaults.poc_clock_skew_secs, 30);
+        assert_eq!(defaults.poc_hmac_secret, None);
 
         let overridden = config(&[
             ("DATABASE_URL", "postgres://localhost/read"),
@@ -242,5 +328,59 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn poc_secret_is_required_only_when_the_gate_is_enabled() {
+        let base = [
+            ("DATABASE_URL", "postgres://localhost/read"),
+            ("PEOPLE_RPC_URL", "ws://localhost:9944"),
+        ];
+        let enabled_without_secret = config(&[base[0], base[1], ("POC_ENABLED", "true")])
+            .expect_err("secret is required with the gate on");
+        assert!(matches!(
+            enabled_without_secret,
+            ConfigError::Missing("POC_HMAC_SECRET")
+        ));
+
+        let enabled = config(&[
+            base[0],
+            base[1],
+            ("POC_ENABLED", "true"),
+            ("POC_HMAC_SECRET", "ikm"),
+            ("POC_DIFFICULTY_BITS", "8"),
+            ("POC_SESSION_TTL_SECS", "120"),
+            ("POC_CLOCK_SKEW_SECS", "0"),
+        ])
+        .expect("valid gate config");
+        assert!(enabled.poc_enabled);
+        assert_eq!(enabled.poc_hmac_secret.as_deref(), Some("ikm"));
+        assert_eq!(enabled.poc_difficulty_bits, 8);
+        assert_eq!(enabled.poc_session_ttl_secs, 120);
+        assert_eq!(enabled.poc_clock_skew_secs, 0);
+    }
+
+    #[test]
+    fn rejects_malformed_poc_flag_and_difficulty() {
+        let base = [
+            ("DATABASE_URL", "postgres://localhost/read"),
+            ("PEOPLE_RPC_URL", "ws://localhost:9944"),
+        ];
+        assert!(matches!(
+            config(&[base[0], base[1], ("POC_ENABLED", "treu")]),
+            Err(ConfigError::Invalid {
+                key: "POC_ENABLED",
+                ..
+            })
+        ));
+        for value in ["0", "33"] {
+            assert!(matches!(
+                config(&[base[0], base[1], ("POC_DIFFICULTY_BITS", value)]),
+                Err(ConfigError::Invalid {
+                    key: "POC_DIFFICULTY_BITS",
+                    ..
+                })
+            ));
+        }
     }
 }

@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use tracing_subscriber::EnvFilter;
 
 use username_indexer::http::middleware::RateLimiter;
+use username_indexer::poc::{self, Poc};
 use username_indexer::sync::{self, Freshness, FreshnessSnapshot};
 use username_indexer::{db, ensure_seeded, routes, AppState, ChainClient, Config};
 
@@ -72,14 +73,61 @@ async fn main() -> anyhow::Result<()> {
         config.search_rate_limit,
         Duration::from_secs(config.search_rate_limit_window_secs.into()),
     );
-    axum::serve(
-        listener,
-        routes(AppState::new(pool, chain, freshness, limiter)),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("server error")?;
+    let mut state = AppState::new(pool.clone(), chain, freshness, limiter);
+    if let Some(poc) = build_poc(&config)? {
+        tracing::info!(
+            difficulty_bits = config.poc_difficulty_bits,
+            session_ttl_secs = config.poc_session_ttl_secs,
+            clock_skew_secs = config.poc_clock_skew_secs,
+            "proof-of-compute gate enabled on public search (a valid JWT also satisfies it)"
+        );
+        tokio::spawn(prune_spent_puzzles(
+            pool.clone(),
+            Duration::from_secs(config.poc_session_ttl_secs.into()),
+        ));
+        state = state.with_poc(poc);
+    }
+    axum::serve(listener, routes(state))
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("server error")?;
     Ok(())
+}
+
+/// Build the proof-of-compute gate when it is enabled.
+///
+/// Requires verify-only JWT material (`JWT_JWKS_JSON` or
+/// `JWT_ED25519_PUBLIC_KEY`) so authenticated callers keep bypassing the puzzle;
+/// missing key material is a boot failure rather than a silent gate that would
+/// force the shipping apps to mine.
+fn build_poc(config: &Config) -> anyhow::Result<Option<Poc>> {
+    let Some(secret) = config.poc_hmac_secret.as_deref() else {
+        return Ok(None);
+    };
+    let verifier = http_common::config::jwt_verifier_from_env()
+        .context("POC_ENABLED=true requires verify-only JWT material")?;
+    Ok(Some(Poc::new(
+        poc::derive_secret(secret),
+        config.poc_difficulty_bits,
+        config.poc_session_ttl_secs,
+        config.poc_clock_skew_secs,
+        verifier,
+    )))
+}
+
+/// Periodically drop spent-puzzle rows whose validity window has passed.
+async fn prune_spent_puzzles(pool: sqlx::PgPool, every: Duration) {
+    let mut interval = tokio::time::interval(every);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval.tick().await;
+    loop {
+        interval.tick().await;
+        match poc::store::prune_expired(&pool).await {
+            Ok(0) => {}
+            Ok(pruned) => tracing::debug!(pruned, "pruned expired spent puzzles"),
+            Err(error) => tracing::warn!(%error, "pruning expired spent puzzles failed"),
+        }
+    }
 }
 
 async fn shutdown_signal() {

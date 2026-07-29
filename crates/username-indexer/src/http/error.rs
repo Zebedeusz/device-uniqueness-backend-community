@@ -29,6 +29,9 @@ pub enum AppError {
         /// Seconds until the window resets (also the `Retry-After` header).
         retry_after_secs: u64,
     },
+    /// The proof-of-compute gate refused the request (400 malformed / 402 rest).
+    #[error(transparent)]
+    Poc(#[from] crate::poc::Rejection),
     /// Unexpected internal failure; logged, surfaced opaquely (500).
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -44,6 +47,10 @@ impl IntoResponse for AppError {
             )
                 .into_response(),
             AppError::RateLimited { retry_after_secs } => problem::rate_limited(retry_after_secs),
+            AppError::Poc(rejection) => match rejection {
+                crate::poc::Rejection::Malformed => problem::bad_request(rejection.detail()),
+                other => problem::payment_required(other.detail()),
+            },
             AppError::Internal(err) => problem::internal(&err),
         }
     }

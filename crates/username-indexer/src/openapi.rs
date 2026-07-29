@@ -10,12 +10,14 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     tags(
-        (name = "Usernames", description = "Public username search over the finalized chain projection. Unauthenticated; IP rate-limited.")
+        (name = "Usernames", description = "Public username search over the finalized chain projection. Served to callers with an identity-service JWT or, when proof of compute is enabled, a solved puzzle; rate-limited per subject or client IP."),
+        (name = "Proof of compute", description = "Puzzle issuance for callers that hold no bearer token. Mounted only when `POC_ENABLED=true`.")
     ),
-    paths(crate::http::search_usernames),
+    paths(crate::http::search_usernames, crate::http::issue_puzzle),
     components(schemas(
         crate::search::SearchResponse,
         crate::search::SearchUsername,
+        crate::poc::Puzzle,
     ))
 )]
 pub struct ApiDoc;

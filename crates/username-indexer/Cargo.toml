@@ -17,6 +17,7 @@ path = "src/bin/username_indexer.rs"
 [dependencies]
 chain-types.workspace = true
 http-common.workspace = true
+jwt-verify.workspace = true
 subxt.workspace = true
 subxt-rpcs.workspace = true
 
@@ -38,15 +39,26 @@ sqlx = { version = "0.8", default-features = false, features = [
     "macros",
     "migrate",
     "time",
+    "uuid",
 ] }
 base64 = "0.22"
 blake2 = "0.10"
 bs58 = "0.5"
+hex = "0.4"
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
 time = { version = "0.3", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[[example]]
+name = "poc_solve"
+path = "examples/poc_solve.rs"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+ed25519-dalek = "2"
 subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
 
 [lints]
