@@ -55,7 +55,7 @@ create now. See "How the workspace grows" below.
 | Postgres connection + bootstrap | `postgres` | still a module inside identity-service / username-indexer |
 | config loading + fail-fast validation | `config` | still a module per service |
 | telemetry (logs / metrics / tracing) | `telemetry` | not extracted |
-| JWT + JWKS verification (for verify-only services) | `jwt-verify` | crate; the cross-service auth contract — identity-service delegates its own verification to it; dim-tickets, invite-tickets, turn, and notifications consume it |
+| JWT + JWKS verification (for verify-only services) | `jwt-verify` | crate; the cross-service auth contract — identity-service delegates its own verification to it; dim-tickets, invite-tickets, turn, notifications, and username-indexer (for the proof-of-compute bypass) consume it |
 | frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | crate; consumed by dim-tickets, invite-tickets, turn, notifications. The dialect bodies are golden-captured — change only with a fresh capture |
 
 ### Deployable services (plain domain word)
@@ -63,7 +63,7 @@ create now. See "How the workspace grows" below.
 | Service | Responsibility | Processes |
 |---|---|---|
 | `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. | `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker) + `registration-queue` (single-instance queue advancer; **optional at runtime** — with it down, api and writer fall back to the direct registration path) |
-| `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, rate limited) plus the optional proof-of-compute gate and its `POST /api/v1/poc/issue` puzzle issuance. The single-username lookup (`GET /api/v1/usernames/{username}`) is retired in favour of `search` and serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | `username-indexer` (+ own Postgres) |
+| `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, per-IP rate limited) plus the optional proof-of-compute gate and its `POST /api/v1/poc/issue` puzzle issuance. The single-username lookup (`GET /api/v1/usernames/{username}`) is retired in favour of `search` and serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | `username-indexer` (+ own Postgres) |
 | `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. No `depends_on`. iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | `notify-relay` |
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. | `turn-api` |
 | `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. | `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar) |
@@ -225,10 +225,10 @@ Operational invariants an agent must respect when touching the code.
   `sync_state` checkpoint is empty**, and each sync pass takes the lock with `pg_try_advisory_lock`
   (skips the pass if another instance holds it). So the service is safe as N replicas on one shared
   Postgres, and restarts resume incrementally from the checkpoint (no full re-scan).
-- **`username-indexer` public reads are rate limited per verified subject, else per IP.** Search
-  requires no JWT; when a caller does present a valid bearer the limiter keys on its subject instead
-  of the shared-egress IP. The gateway forwards the GET surface to the indexer, while identity-owned
-  POST/OPTIONS traffic falls through to `identity-api`.
+- **`username-indexer` public reads share one per-IP rate-limit bucket, and it is the outermost
+  layer on the route.** It does no cryptography by design, so a caller that has exhausted its window
+  cannot force JWT verification or puzzle hashing. The gateway forwards the GET surface to the
+  indexer, while identity-owned POST/OPTIONS traffic falls through to `identity-api`.
 - **The proof-of-compute gate is either-or, and off by default.** With `POC_ENABLED=false` (the
   shipping default) there is no `/api/v1/poc/issue` route and search behaves exactly as before. With
   it on, `GET /api/v1/usernames/search` admits a caller that presents **either** a valid

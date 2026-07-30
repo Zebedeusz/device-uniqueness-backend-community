@@ -100,9 +100,12 @@ require_key username-indexer SEARCH_RATE_LIMIT_WINDOW_SECS
 require_key username-indexer POC_ENABLED
 require_key username-indexer JWT_ED25519_PUBLIC_KEY
 require_key username-indexer POC_HMAC_SECRET
+# Every other service in the compose file, application and database alike.
 for service in identity-api identity-chain-writer registration-queue \
                dim-tickets-api dim-tickets-writer invite-tickets-api \
-               invite-tickets-pool turn-api notify-relay gateway; do
+               invite-tickets-pool turn-api notify-relay gateway \
+               postgres username-indexer-postgres dim-tickets-postgres \
+               invite-tickets-postgres; do
   forbid_key "$service" POC_HMAC_SECRET
 done
 

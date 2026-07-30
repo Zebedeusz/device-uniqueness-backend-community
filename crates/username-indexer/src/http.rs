@@ -32,15 +32,14 @@ use crate::search::{SearchQuery, SearchResponse};
 /// (`GET /api/v1/usernames/{username}`, deprecated in favour of paginated
 /// `search`).
 pub fn routes(state: AppState) -> Router {
-    // Method fallbacks keep wrong-method requests on the Hono 404 dialect
-    // (Hono routes were method-specific: never a 405).
-    let api = Router::new()
-        .route(
-            "/api/v1/usernames/search",
-            get(search_usernames).fallback(hono_not_found),
-        )
-        // Layer order: the later `route_layer` is the outer one, so the cheap
-        // per-key rate limit runs before any signature or HMAC work.
+    // Layer order: the later `route_layer` is the outer one, so the cheap per-IP
+    // rate limit runs before any signature or HMAC work.
+    //
+    // Both layers wrap the GET handler only — NOT the method fallback. Layering
+    // the whole method router would make a wrong-method request answer the
+    // gate's 402 instead of the frozen Hono 404, so `fallback` is attached
+    // afterwards and stays outside them.
+    let search = get(search_usernames)
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::poc_gate,
@@ -48,7 +47,9 @@ pub fn routes(state: AppState) -> Router {
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::rate_limit,
-        ));
+        ))
+        .fallback(hono_not_found);
+    let api = Router::new().route("/api/v1/usernames/search", search);
     let poc_api = if state.poc.is_some() {
         Router::new().route(
             "/api/v1/poc/issue",
@@ -105,12 +106,25 @@ pub(crate) async fn issue_puzzle(
     get,
     path = "/api/v1/usernames/search",
     tag = "Usernames",
-    params(SearchQuery),
+    params(
+        SearchQuery,
+        ("Authorization" = Option<String>, Header,
+         description = "Optional `Bearer <JWT>` from identity-service. When proof of compute is \
+            enabled, a valid token satisfies this route and no puzzle is needed. An unverifiable \
+            token is treated as anonymous — this route never answers 401."),
+        ("Proof-Of-Compute" = Option<String>, Header,
+         description = "Solved puzzle, required only when proof of compute is enabled and no valid \
+            bearer token is presented: \
+            `base64(sessionId:timestamp:difficulty:counter:checksum)` for a puzzle from \
+            `POST /api/v1/poc/issue`. Single-use.")
+    ),
     responses(
         (status = 200, description = "Matching assigned usernames in continuation order.",
          body = SearchResponse,
          example = json!({ "usernames": [], "nextCursor": null })),
-        (status = 400, description = "Invalid query parameter (problem details with `errors`) or invalid cursor (`{\"error\":\"Invalid cursor\"}`).",
+        (status = 400, description = "Invalid query parameter (problem details with `errors`), \
+            invalid cursor (`{\"error\":\"Invalid cursor\"}`), or a malformed `Proof-Of-Compute` \
+            header (`bad-request` problem details).",
          body = serde_json::Value,
          example = json!({
              "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
@@ -118,6 +132,17 @@ pub(crate) async fn issue_puzzle(
              "detail": "The request query contains an invalid parameter value.",
              "status": 400,
              "errors": [{ "detail": "Prefix is required", "pointer": "#/prefix" }]
+         })),
+        (status = 402, description = "Proof of compute is enabled and the caller presented neither a \
+            valid bearer token nor an acceptable puzzle. The `detail` names the reason: missing \
+            proof, checksum mismatch, expired puzzle, already-used puzzle, or insufficient \
+            difficulty.",
+         body = serde_json::Value,
+         example = json!({
+             "type": "https://problems-registry.smartbear.com/payment-required",
+             "title": "Payment Required",
+             "detail": "Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header.",
+             "status": 402
          })),
         (status = 429, description = "Public rate limit exceeded (problem details with `Retry-After`).",
          body = serde_json::Value,

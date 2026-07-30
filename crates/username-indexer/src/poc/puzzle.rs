@@ -32,7 +32,7 @@ pub struct Puzzle {
     #[schema(example = 1700000000000i64)]
     pub timestamp: i64,
     /// Required number of leading zero bits in the work digest.
-    #[schema(example = 16)]
+    #[schema(minimum = 1, maximum = 32, example = 16)]
     pub difficulty: u8,
     /// Lowercase-hex HMAC-SHA256 over the puzzle fields; proves this server
     /// issued the puzzle, so nothing is stored at issue time.

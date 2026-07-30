@@ -199,6 +199,71 @@ async fn issues_a_puzzle_this_server_can_verify() {
 }
 
 #[tokio::test]
+async fn wrong_method_on_search_keeps_the_frozen_404_with_the_gate_on() {
+    // The gate must wrap the GET handler only. Layering the whole method router
+    // would answer a wrong-method request with the gate's 402 and silently
+    // change the frozen Hono dialect the moment the flag flips.
+    for method in ["PUT", "POST", "DELETE", "PATCH"] {
+        let response = app(true)
+            .await
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/api/v1/usernames/search?prefix=a")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let observed = Observed::from(response).await;
+        assert_eq!(observed.status, 404, "{method} must not hit the gate");
+        assert_eq!(observed.body, "404 Not Found");
+    }
+}
+
+#[tokio::test]
+async fn dropped_username_endpoints_keep_the_frozen_404_with_the_gate_on() {
+    for uri in ["/api/v1/usernames", "/api/v1/usernames/alice.1"] {
+        let response = app(true)
+            .await
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let observed = Observed::from(response).await;
+        assert_eq!(observed.status, 404, "{uri} must not hit the gate");
+        assert_eq!(observed.body, "404 Not Found");
+    }
+}
+
+#[tokio::test]
+async fn health_endpoints_are_never_gated() {
+    for uri in ["/livez", "/healthcheck"] {
+        let response = app(true)
+            .await
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(
+            response.status().as_u16(),
+            200,
+            "{uri} must stay reachable with the gate on"
+        );
+    }
+}
+
+#[tokio::test]
 async fn issue_route_is_absent_when_the_gate_is_disabled() {
     let response = app(false)
         .await

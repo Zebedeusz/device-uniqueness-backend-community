@@ -14,8 +14,11 @@
 //!   the router asserting the DIVERGENT response; the captures are retained
 //!   as evidence of the retired wire contract.
 //! - **Live-DB parity** — the search 200s and the search header probes need
-//!   real rows; their envelope/date/digit-render shapes are pinned by unit
-//!   tests in `src/search.rs` and by the manual `pagination_live` test.
+//!   real rows, so they are classified here but NOT replayed. Their
+//!   envelope/date/digit-render shapes are pinned by unit tests in
+//!   `src/search.rs`; ordering/pagination by the manual `pagination_live` test
+//!   (which calls `search()` directly, not the router). Router-level auth and
+//!   gate behavior is pinned separately in `tests/poc_gate.rs`.
 //!
 //! The 429 dialect is pinned without a captured fixture (the capture ran the
 //! rate limiters as pass-through probes; the body is transcribed from the

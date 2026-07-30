@@ -145,7 +145,7 @@ services:
       retries: 10
 
   # Independent public username-read service. Bootstraps a finalized projection
-  # from People Chain, then serves rate-limited search and single-name lookup.
+  # from People Chain, then serves rate-limited prefix search.
   # Reuses the image built by identity-api. Runs on host port 8081.
   username-indexer:
     build: .

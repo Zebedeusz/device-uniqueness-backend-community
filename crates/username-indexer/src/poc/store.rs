@@ -34,13 +34,25 @@ pub async fn consume(
     Ok(result.rows_affected() == 1)
 }
 
-/// Delete spent-puzzle rows whose validity window has passed.
+/// Grace period added on top of a row's validity window before it is pruned.
 ///
-/// Safe to run from any replica at any time: an expired row can never admit a
-/// replay, because verification rejects the puzzle on expiry first.
+/// Expiry is evaluated against the *process* clock before the consume insert, so
+/// a request that passes that check just before the boundary — or a replica whose
+/// clock lags Postgres — could still be inserting while a pruner deletes the
+/// original row, which would let the puzzle be spent twice. The grace period
+/// keeps rows well past any in-flight request (the router's request timeout is
+/// 30s) and costs only a few extra short-lived rows.
+const PRUNE_GRACE: &str = "10 minutes";
+
+/// Delete spent-puzzle rows whose validity window passed more than
+/// [`PRUNE_GRACE`] ago.
+///
+/// Safe to run from any replica at any time.
 pub async fn prune_expired(pool: &PgPool) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM spent_puzzles WHERE expires_at < now()")
-        .execute(pool)
-        .await?;
+    let result = sqlx::query(&format!(
+        "DELETE FROM spent_puzzles WHERE expires_at < now() - interval '{PRUNE_GRACE}'"
+    ))
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected())
 }

@@ -16,6 +16,7 @@ const DEFAULT_SEARCH_RATE_LIMIT_WINDOW_SECS: &str = "60";
 const DEFAULT_POC_DIFFICULTY_BITS: &str = "16";
 const DEFAULT_POC_SESSION_TTL_SECS: &str = "60";
 const DEFAULT_POC_CLOCK_SKEW_SECS: &str = "30";
+const MIN_POC_HMAC_SECRET_LEN: usize = 32;
 
 /// Validated username-indexer runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,7 +153,20 @@ impl Config {
         // Required only with the gate on, so existing deployments keep booting
         // untouched while `POC_ENABLED` stays false.
         let poc_hmac_secret = if poc_enabled {
-            Some(required(&get, "POC_HMAC_SECRET")?)
+            let secret = required(&get, "POC_HMAC_SECRET")?;
+            // HKDF spreads the input over the key but adds no entropy, and every
+            // issued puzzle hands out a known message/HMAC pair — so a short
+            // secret is recoverable offline, after which anyone can mint
+            // `difficulty = 1` puzzles. Require real key material.
+            if secret.len() < MIN_POC_HMAC_SECRET_LEN {
+                return Err(ConfigError::Invalid {
+                    key: "POC_HMAC_SECRET",
+                    reason: format!(
+                        "must be at least {MIN_POC_HMAC_SECRET_LEN} characters of random material"
+                    ),
+                });
+            }
+            Some(secret)
         } else {
             None
         };
@@ -181,9 +195,11 @@ where
     F: Fn(&str) -> Option<String>,
 {
     match get(key) {
+        // Only an *absent* variable takes the default. An explicitly empty value
+        // is a deployment mistake, and defaulting it would fail open on a
+        // security gate.
         None => Ok(default),
         Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
-            "" => Ok(default),
             "true" => Ok(true),
             "false" => Ok(false),
             other => Err(ConfigError::Invalid {
@@ -219,6 +235,9 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{Config, ConfigError};
+
+    /// A secret long enough to satisfy the minimum-length gate.
+    const POC_SECRET: &str = "0123456789abcdef0123456789abcdef";
 
     fn config(values: &[(&str, &str)]) -> Result<Config, ConfigError> {
         let values = values
@@ -347,17 +366,63 @@ mod tests {
             base[0],
             base[1],
             ("POC_ENABLED", "true"),
-            ("POC_HMAC_SECRET", "ikm"),
+            ("POC_HMAC_SECRET", POC_SECRET),
             ("POC_DIFFICULTY_BITS", "8"),
             ("POC_SESSION_TTL_SECS", "120"),
             ("POC_CLOCK_SKEW_SECS", "0"),
         ])
         .expect("valid gate config");
         assert!(enabled.poc_enabled);
-        assert_eq!(enabled.poc_hmac_secret.as_deref(), Some("ikm"));
+        assert_eq!(enabled.poc_hmac_secret.as_deref(), Some(POC_SECRET));
         assert_eq!(enabled.poc_difficulty_bits, 8);
         assert_eq!(enabled.poc_session_ttl_secs, 120);
         assert_eq!(enabled.poc_clock_skew_secs, 0);
+    }
+
+    #[test]
+    fn rejects_short_or_empty_poc_secret() {
+        let base = [
+            ("DATABASE_URL", "postgres://localhost/read"),
+            ("PEOPLE_RPC_URL", "ws://localhost:9944"),
+        ];
+        assert!(matches!(
+            config(&[
+                base[0],
+                base[1],
+                ("POC_ENABLED", "true"),
+                ("POC_HMAC_SECRET", "too-short"),
+            ]),
+            Err(ConfigError::Invalid {
+                key: "POC_HMAC_SECRET",
+                ..
+            })
+        ));
+        assert!(matches!(
+            config(&[
+                base[0],
+                base[1],
+                ("POC_ENABLED", "true"),
+                ("POC_HMAC_SECRET", "   "),
+            ]),
+            Err(ConfigError::Missing("POC_HMAC_SECRET"))
+        ));
+    }
+
+    #[test]
+    fn an_explicitly_empty_poc_flag_is_rejected_not_defaulted() {
+        // Failing open on an accidentally-blank deployment variable would
+        // silently disable the gate.
+        assert!(matches!(
+            config(&[
+                ("DATABASE_URL", "postgres://localhost/read"),
+                ("PEOPLE_RPC_URL", "ws://localhost:9944"),
+                ("POC_ENABLED", ""),
+            ]),
+            Err(ConfigError::Invalid {
+                key: "POC_ENABLED",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -257,9 +257,19 @@ Two facts that shape the plan:
   passes the derived key in. Both layers are now pinned separately — the checksum vector
   (`c8828951…`) against a literal key, and HKDF-SHA256 with legacy's `info` string against an
   independently computed RFC 5869 vector (`7fff0dec…`).
-- **Bearer verification happens once per request.** `rate_limit` resolves the subject (it needs it
-  for keying anyway) and stashes it in the request extensions; `poc_gate` reads that instead of
-  verifying again, but still falls back to verifying itself so the gate is correct standalone.
+- **The rate limiter is strictly cheaper than the gate.** It runs outermost, keys on client IP, and
+  performs no signature work; `poc_gate` inside it does the JWT verify and the puzzle checks. An
+  earlier revision keyed the limiter on the verified JWT subject, which meant verifying a signature
+  *before* the limit was applied — removed after review.
+- **The layers wrap the GET handler only, never the method fallback.** Layering the whole method
+  router made a wrong-method request answer the gate's `402` instead of the frozen Hono `404` as
+  soon as the flag flipped; `tests/poc_gate.rs` now pins wrong-method, the dropped username
+  endpoints, and the health routes with the gate **on**.
+- **`POC_HMAC_SECRET` must be at least 32 characters** and `POC_ENABLED` rejects an explicitly empty
+  value rather than defaulting to `false`: both were fail-open paths on a security gate.
+- **Spent puzzles are pruned with a 10-minute grace** past their validity window, because expiry is
+  checked against the process clock before the consume insert — without the grace, a request that
+  passed that check just before the boundary could insert after the pruner deleted the row.
 - **Pruning runs as its own interval task** in the bin (period = `POC_SESSION_TTL_SECS`) rather than
   on the sync loop tick, which keeps `sync.rs` free of gate concerns.
 - **Issuance is deliberately not rate limited** (legacy parity: its `/poc` router had no limiter).

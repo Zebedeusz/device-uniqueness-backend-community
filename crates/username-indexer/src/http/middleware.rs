@@ -5,10 +5,11 @@
 //!
 //! The rate limiter is a per-instance fixed window keyed on client IP. It is the
 //! outermost anti-abuse backstop on the **public**
-//! `GET /api/v1/usernames/search` route — cheap to evaluate, so it runs before
-//! any crypto. Inside it, [`poc_gate`] admits callers that present either a
-//! valid identity-service JWT or a solved puzzle (only when `POC_ENABLED`).
-//! Edge rules (e.g. Cloudflare) remain the outer defence.
+//! `GET /api/v1/usernames/search` route and does **no** cryptography, so an
+//! exhausted bucket cannot be made to burn CPU. Inside it, [`poc_gate`] admits
+//! callers that present either a valid identity-service JWT or a solved puzzle
+//! (only when `POC_ENABLED`). Edge rules (e.g. Cloudflare) remain the outer
+//! defence.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -61,45 +62,20 @@ impl RateLimiter {
     }
 }
 
-/// Reject public read requests over the limit.
+/// Reject public read requests over the per-IP limit.
 ///
-/// Keyed on the verified JWT subject when the caller presents one, otherwise on
-/// the best-effort client IP — so one authenticated client cannot exhaust a
-/// shared-egress IP bucket, and anonymous traffic keeps today's behavior. The
-/// 429 renders the frozen legacy problem-details body with `Retry-After`.
-///
-/// When a bearer verifies, the subject is stashed in the request extensions so
-/// [`poc_gate`] does not verify the same token twice.
-pub async fn rate_limit(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
-    let subject = verified_subject(&state, &req);
-    let key = match &subject {
-        Some(subject) => format!("sub:{subject}"),
-        None => client_ip(&req),
-    };
-    if !state.limiter.allow(&key) {
+/// Keyed on the best-effort client IP and deliberately doing no signature work:
+/// it must be the cheapest layer on the route so a client that has exhausted its
+/// window cannot force JWT verification or puzzle hashing. The 429 renders the
+/// frozen legacy problem-details body with `Retry-After`.
+pub async fn rate_limit(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    if !state.limiter.allow(&client_ip(&req)) {
         return AppError::RateLimited {
             retry_after_secs: state.limiter.window_secs(),
         }
         .into_response();
     }
-    if let Some(subject) = subject {
-        req.extensions_mut().insert(VerifiedSubject(subject));
-    }
     next.run(req).await
-}
-
-/// A verified JWT subject, attached to the request by [`rate_limit`].
-#[derive(Clone, Debug)]
-pub struct VerifiedSubject(pub String);
-
-/// The verified JWT subject on this request, if any.
-///
-/// Requires the proof-of-compute gate's verify-only key material; without it
-/// the service holds no JWT material at all and every caller is anonymous.
-fn verified_subject(state: &AppState, req: &Request) -> Option<String> {
-    let poc = state.poc.as_ref()?;
-    let token = bearer_token(req)?;
-    poc.jwt().verify(token).ok().map(|claims| claims.account_id)
 }
 
 /// Best-effort client IP from proxy headers (edge terminates TLS).
@@ -131,11 +107,7 @@ pub async fn poc_gate(State(state): State<AppState>, req: Request, next: Next) -
         return next.run(req).await;
     };
 
-    // `rate_limit` already verified the bearer when it ran ahead of this layer;
-    // fall back to verifying here so the gate is correct on its own too.
-    let authenticated = req.extensions().get::<VerifiedSubject>().is_some()
-        || bearer_token(&req).is_some_and(|token| poc.jwt().verify(token).is_ok());
-    if authenticated {
+    if bearer_token(&req).is_some_and(|token| poc.jwt().verify(token).is_ok()) {
         return next.run(req).await;
     }
 

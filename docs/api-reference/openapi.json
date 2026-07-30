@@ -825,6 +825,30 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Optional `Bearer <JWT>` from identity-service. When proof of compute is enabled, a valid token satisfies this route and no puzzle is needed. An unverifiable token is treated as anonymous — this route never answers 401.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Proof-Of-Compute",
+            "in": "header",
+            "description": "Solved puzzle, required only when proof of compute is enabled and no valid bearer token is presented: `base64(sessionId:timestamp:difficulty:counter:checksum)` for a puzzle from `POST /api/v1/poc/issue`. Single-use.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -843,7 +867,7 @@
             }
           },
           "400": {
-            "description": "Invalid query parameter (problem details with `errors`) or invalid cursor (`{\"error\":\"Invalid cursor\"}`).",
+            "description": "Invalid query parameter (problem details with `errors`), invalid cursor (`{\"error\":\"Invalid cursor\"}`), or a malformed `Proof-Of-Compute` header (`bad-request` problem details).",
             "content": {
               "application/json": {
                 "schema": {},
@@ -858,6 +882,20 @@
                       "pointer": "#/prefix"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Proof of compute is enabled and the caller presented neither a valid bearer token nor an acceptable puzzle. The `detail` names the reason: missing proof, checksum mismatch, expired puzzle, already-used puzzle, or insufficient difficulty.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "type": "https://problems-registry.smartbear.com/payment-required",
+                  "title": "Payment Required",
+                  "detail": "Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header.",
+                  "status": 402
                 }
               }
             }
@@ -1540,7 +1578,8 @@
             "format": "int32",
             "description": "Required number of leading zero bits in the work digest.",
             "example": 16,
-            "minimum": 0
+            "maximum": 32,
+            "minimum": 1
           },
           "checksum": {
             "type": "string",
