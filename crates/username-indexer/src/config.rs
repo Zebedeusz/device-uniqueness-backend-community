@@ -14,8 +14,6 @@ const MAX_SYNC_INTERVAL_SECS: u32 = 86_400;
 const DEFAULT_SEARCH_RATE_LIMIT: &str = "60";
 const DEFAULT_SEARCH_RATE_LIMIT_WINDOW_SECS: &str = "60";
 const DEFAULT_POC_DIFFICULTY_BITS: &str = "16";
-const DEFAULT_POC_SESSION_TTL_SECS: &str = "60";
-const DEFAULT_POC_CLOCK_SKEW_SECS: &str = "30";
 const MIN_POC_HMAC_SECRET_LEN: usize = 32;
 
 /// Validated username-indexer runtime configuration.
@@ -35,19 +33,13 @@ pub struct Config {
     pub search_rate_limit: u32,
     /// Rate-limit window, in seconds, for the public search route.
     pub search_rate_limit_window_secs: u32,
-    /// Whether the proof-of-compute gate and its issuance route are mounted.
-    ///
-    /// Off by default: with it off the service behaves exactly as it did before
-    /// the gate existed (no `/api/v1/poc/issue`, no header parsing on search).
-    pub poc_enabled: bool,
     /// Required leading zero bits in a puzzle solution (1–32).
     pub poc_difficulty_bits: u8,
-    /// Puzzle validity, in seconds.
-    pub poc_session_ttl_secs: u32,
-    /// Extra tolerance, in seconds, for client/server clock skew.
-    pub poc_clock_skew_secs: u32,
-    /// Input keying material for the puzzle HMAC; required only when the gate
-    /// is enabled.
+    /// Input keying material for the puzzle HMAC.
+    ///
+    /// `Some` exactly when `POC_ENABLED=true`, which is what mounts the gate and
+    /// its issuance route; `None` (the default) leaves the service behaving as
+    /// it did before the gate existed.
     pub poc_hmac_secret: Option<String>,
 }
 
@@ -132,24 +124,6 @@ impl Config {
                 reason: "must be between 1 and 32".to_string(),
             });
         }
-        let poc_session_ttl_secs = parse(
-            "POC_SESSION_TTL_SECS",
-            get("POC_SESSION_TTL_SECS")
-                .as_deref()
-                .unwrap_or(DEFAULT_POC_SESSION_TTL_SECS),
-        )?;
-        if poc_session_ttl_secs == 0 {
-            return Err(ConfigError::Invalid {
-                key: "POC_SESSION_TTL_SECS",
-                reason: "must be at least 1".to_string(),
-            });
-        }
-        let poc_clock_skew_secs = parse(
-            "POC_CLOCK_SKEW_SECS",
-            get("POC_CLOCK_SKEW_SECS")
-                .as_deref()
-                .unwrap_or(DEFAULT_POC_CLOCK_SKEW_SECS),
-        )?;
         // Required only with the gate on, so existing deployments keep booting
         // untouched while `POC_ENABLED` stays false.
         let poc_hmac_secret = if poc_enabled {
@@ -179,10 +153,7 @@ impl Config {
             sync_interval_secs,
             search_rate_limit,
             search_rate_limit_window_secs,
-            poc_enabled,
             poc_difficulty_bits,
-            poc_session_ttl_secs,
-            poc_clock_skew_secs,
             poc_hmac_secret,
         })
     }
@@ -271,10 +242,7 @@ mod tests {
         assert_eq!(defaults.sync_interval_secs, 30);
         assert_eq!(defaults.search_rate_limit, 60);
         assert_eq!(defaults.search_rate_limit_window_secs, 60);
-        assert!(!defaults.poc_enabled);
         assert_eq!(defaults.poc_difficulty_bits, 16);
-        assert_eq!(defaults.poc_session_ttl_secs, 60);
-        assert_eq!(defaults.poc_clock_skew_secs, 30);
         assert_eq!(defaults.poc_hmac_secret, None);
 
         let overridden = config(&[
@@ -368,15 +336,10 @@ mod tests {
             ("POC_ENABLED", "true"),
             ("POC_HMAC_SECRET", POC_SECRET),
             ("POC_DIFFICULTY_BITS", "8"),
-            ("POC_SESSION_TTL_SECS", "120"),
-            ("POC_CLOCK_SKEW_SECS", "0"),
         ])
         .expect("valid gate config");
-        assert!(enabled.poc_enabled);
         assert_eq!(enabled.poc_hmac_secret.as_deref(), Some(POC_SECRET));
         assert_eq!(enabled.poc_difficulty_bits, 8);
-        assert_eq!(enabled.poc_session_ttl_secs, 120);
-        assert_eq!(enabled.poc_clock_skew_secs, 0);
     }
 
     #[test]

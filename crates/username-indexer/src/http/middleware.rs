@@ -1,14 +1,8 @@
-//! HTTP middleware: the public-read rate limiter and the proof-of-compute gate.
+//! HTTP middleware for the public search route: a per-instance fixed-window rate
+//! limiter keyed on client IP, and the proof-of-compute gate inside it.
 //!
-//! Request tracing/access logging is handled by `tower_http::trace::TraceLayer`
-//! in [`crate::http::routes`], not here.
-//!
-//! The rate limiter is a per-instance fixed window keyed on client IP. It is the
-//! outermost anti-abuse backstop on the **public**
-//! `GET /api/v1/usernames/search` route and does **no** cryptography, so an
-//! exhausted bucket cannot be made to burn CPU. Inside it, [`poc_gate`] admits
-//! callers that present either a valid identity-service JWT or a solved puzzle
-//! (only when `POC_ENABLED`). Edge rules (e.g. Cloudflare) remain the outer
+//! The limiter is outermost and does **no** cryptography, so an exhausted bucket
+//! cannot be made to burn CPU. Edge rules (e.g. Cloudflare) remain the outer
 //! defence.
 
 use std::collections::HashMap;

@@ -172,8 +172,6 @@ services:
       POC_ENABLED: ${POC_ENABLED:-false}
       POC_HMAC_SECRET: ${POC_HMAC_SECRET:-}
       POC_DIFFICULTY_BITS: ${POC_DIFFICULTY_BITS:-16}
-      POC_SESSION_TTL_SECS: ${POC_SESSION_TTL_SECS:-60}
-      POC_CLOCK_SKEW_SECS: ${POC_CLOCK_SKEW_SECS:-30}
       # VERIFY-ONLY key material for that bypass — the public half only, never
       # JWT_ED25519_SECRET: this service can verify identity-service tokens but
       # can never mint one (enforced by scripts/verify_compose_boundaries.sh).

@@ -24,8 +24,6 @@ use uuid::Uuid;
 
 const IKM: &str = "test-poc-ikm";
 const DIFFICULTY: u8 = 8;
-const TTL_SECS: u32 = 60;
-const SKEW_SECS: u32 = 30;
 
 fn gate() -> Poc {
     // A throwaway verifier: this test drives the puzzle lane, never the bypass.
@@ -33,8 +31,6 @@ fn gate() -> Poc {
     Poc::new(
         derive_secret(IKM),
         DIFFICULTY,
-        TTL_SECS,
-        SKEW_SECS,
         jwt_verify::Verifier::from_verifying_key(verifying_key),
     )
 }

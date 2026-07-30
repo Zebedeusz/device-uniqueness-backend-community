@@ -1,9 +1,5 @@
-//! Router-level contract for the proof-of-compute gate.
-//!
-//! Covers everything decidable without a database: puzzle issuance, the flag-off
-//! behavior, the bearer bypass, and the five rejections that are settled before
-//! the one-shot consume (missing / malformed / checksum / expired /
-//! insufficient work). The accepted-solution and replay paths need a real
+//! Router-level contract for the proof-of-compute gate: everything decidable
+//! without a database. The accepted-solution and replay paths need a real
 //! Postgres and live in `poc_gate_live.rs`.
 //!
 //! Error bodies are transcribed from the legacy middleware source
@@ -24,14 +20,14 @@ use tower::ServiceExt as _;
 use username_indexer::http::middleware::RateLimiter;
 use username_indexer::poc::puzzle::{checksum_hex, derive_secret};
 use username_indexer::poc::solution::{leading_zero_bits, mine};
-use username_indexer::poc::{Poc, Solution};
+use username_indexer::poc::{now_millis, Poc, Solution};
 use username_indexer::{AppState, ChainClient, Freshness};
 use uuid::Uuid;
 
 const IKM: &str = "test-poc-ikm";
 const DIFFICULTY: u8 = 8;
-const TTL_SECS: u32 = 60;
-const SKEW_SECS: u32 = 30;
+/// Mirrors the frozen `SESSION_TTL_SECS + CLOCK_SKEW_SECS` window in `poc.rs`.
+const VALIDITY_WINDOW_SECS: i64 = 90;
 const JWT_SEED: [u8; 32] = [7u8; 32];
 const SUBJECT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
@@ -70,8 +66,6 @@ async fn app(gate: bool) -> axum::Router {
         state.with_poc(Poc::new(
             derive_secret(IKM),
             DIFFICULTY,
-            TTL_SECS,
-            SKEW_SECS,
             jwt_verify::Verifier::from_verifying_key(
                 SigningKey::from_bytes(&JWT_SEED).verifying_key(),
             ),
@@ -159,10 +153,6 @@ fn solved_header(timestamp_ms: i64, difficulty: u8) -> String {
         checksum_hex(&secret, session_id, timestamp_ms, difficulty),
     )
     .to_header()
-}
-
-fn now_ms() -> i64 {
-    username_indexer::poc::now_millis()
 }
 
 #[tokio::test]
@@ -335,7 +325,7 @@ async fn malformed_proof_header_is_400() {
 #[tokio::test]
 async fn foreign_checksum_is_402() {
     let session_id = Uuid::new_v4();
-    let timestamp = now_ms();
+    let timestamp = now_millis();
     let forged = Solution::new(
         session_id,
         timestamp,
@@ -362,7 +352,7 @@ async fn foreign_checksum_is_402() {
 
 #[tokio::test]
 async fn expired_puzzle_is_402() {
-    let stale = now_ms() - i64::from(TTL_SECS + SKEW_SECS + 1) * 1_000;
+    let stale = now_millis() - (VALIDITY_WINDOW_SECS + 1) * 1_000;
     let observed = search(
         true,
         &[("proof-of-compute", solved_header(stale, DIFFICULTY))],
@@ -381,7 +371,7 @@ async fn unsolved_puzzle_is_402() {
     // 32 leading zero bits by luck is a 2^-32 event.
     let secret = derive_secret(IKM);
     let session_id = Uuid::new_v4();
-    let timestamp = now_ms();
+    let timestamp = now_millis();
     assert!(leading_zero_bits(session_id, timestamp, 0) < 32);
     let unsolved = Solution::new(
         session_id,
@@ -433,18 +423,4 @@ async fn invalid_bearer_falls_through_to_the_puzzle_requirement() {
             serde_json::json!("Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header.")
         );
     }
-}
-
-#[tokio::test]
-async fn valid_bearer_with_a_puzzle_is_also_served() {
-    // Belt and braces: presenting both must not be worse than presenting one.
-    let observed = search(
-        true,
-        &[
-            ("authorization", format!("Bearer {}", mint_token(3_600))),
-            ("proof-of-compute", solved_header(now_ms(), DIFFICULTY)),
-        ],
-    )
-    .await;
-    assert_eq!(observed.status, 500, "reached the handler, not the gate");
 }

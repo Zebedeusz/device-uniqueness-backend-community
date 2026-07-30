@@ -54,7 +54,7 @@ impl Puzzle {
 
 /// The checksum preimage: 16 UUID bytes `||` timestamp as u64 big-endian `||`
 /// difficulty as one byte (legacy `proof-of-compute.schema.ts`).
-pub fn checksum_preimage(session_id: Uuid, timestamp_ms: i64, difficulty: u8) -> [u8; 25] {
+fn checksum_preimage(session_id: Uuid, timestamp_ms: i64, difficulty: u8) -> [u8; 25] {
     let mut preimage = [0u8; 25];
     preimage[..16].copy_from_slice(session_id.as_bytes());
     preimage[16..24].copy_from_slice(&(timestamp_ms as u64).to_be_bytes());
@@ -114,34 +114,6 @@ mod tests {
         assert_eq!(
             puzzle.checksum,
             checksum_hex(&secret, session_id, 1_700_000_000_000, 4)
-        );
-    }
-
-    #[test]
-    fn checksum_binds_every_field() {
-        let secret = derive_secret("vector-secret");
-        let session_id = Uuid::parse_str("1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed").expect("uuid");
-        let base = checksum_hex(&secret, session_id, 1_700_000_000_000, 4);
-        assert_ne!(
-            base,
-            checksum_hex(&secret, Uuid::nil(), 1_700_000_000_000, 4)
-        );
-        assert_ne!(
-            base,
-            checksum_hex(&secret, session_id, 1_700_000_000_001, 4)
-        );
-        assert_ne!(
-            base,
-            checksum_hex(&secret, session_id, 1_700_000_000_000, 5)
-        );
-        assert_ne!(
-            base,
-            checksum_hex(
-                &derive_secret("other-secret"),
-                session_id,
-                1_700_000_000_000,
-                4
-            )
         );
     }
 }

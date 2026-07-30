@@ -18,6 +18,5 @@ pub use chain::{ChainClient, ChainError};
 pub use config::{Config, ConfigError};
 pub use http::{routes, AppState};
 pub use incremental::{index_finalized_range, IndexError, IndexReport};
-pub use poc::{Poc, Puzzle, Solution};
 pub use projection::AssignedUsername;
 pub use sync::{run as run_sync, Freshness, FreshnessSnapshot};

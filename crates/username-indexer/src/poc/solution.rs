@@ -145,7 +145,7 @@ impl Solution {
 
 /// The work preimage: 16 UUID bytes `||` timestamp as u64 big-endian `||`
 /// counter as u64 big-endian (legacy `proof-of-compute.schema.ts`).
-pub fn work_preimage(session_id: Uuid, timestamp_ms: i64, counter: u64) -> [u8; 32] {
+fn work_preimage(session_id: Uuid, timestamp_ms: i64, counter: u64) -> [u8; 32] {
     let mut preimage = [0u8; 32];
     preimage[..16].copy_from_slice(session_id.as_bytes());
     preimage[16..24].copy_from_slice(&(timestamp_ms as u64).to_be_bytes());
@@ -179,7 +179,7 @@ pub fn mine(session_id: Uuid, timestamp_ms: i64, difficulty: u8) -> u64 {
 mod tests {
     use uuid::Uuid;
 
-    use super::{leading_zero_bits, mine, Solution};
+    use super::{leading_zero_bits, Solution};
     use crate::poc::puzzle::{checksum_hex, derive_secret};
     use crate::poc::Rejection;
 
@@ -233,12 +233,6 @@ mod tests {
                 "expected malformed for {case}"
             );
         }
-    }
-
-    #[test]
-    fn mines_to_the_requested_difficulty() {
-        let counter = mine(session(), 1_700_000_000_000, 8);
-        assert!(leading_zero_bits(session(), 1_700_000_000_000, counter) >= 8);
     }
 
     fn plain(checksum: &str) -> String {

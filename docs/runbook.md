@@ -56,9 +56,8 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
 - A new writer key must be an authorized attester (or proxy) with funds.
 - Rotating `TURN_SECRET` invalidates outstanding TURN credentials (≤ `TURN_TTL_SECS` old): update
   the relay (coturn `--use-auth-secret`) and `turn-api` together, then `sudo docker compose up -d`.
-- Rotating `POC_HMAC_SECRET` invalidates outstanding puzzles (≤ `POC_SESSION_TTL_SECS +
-  POC_CLOCK_SKEW_SECS` old): in-flight solvers get `402` "checksum does not match" and simply
-  request a new puzzle. Safe to rotate at any time.
+- Rotating `POC_HMAC_SECRET` invalidates outstanding puzzles (≤ 90s old): in-flight solvers get
+  `402` "checksum does not match" and simply request a new puzzle. Safe to rotate at any time.
 
 ## Database backup (manual)
 

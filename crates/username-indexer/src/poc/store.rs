@@ -18,9 +18,12 @@ pub async fn consume(
     session_id: Uuid,
     retain_until_ms: i64,
 ) -> Result<bool, sqlx::Error> {
+    // Unreachable for a puzzle that passed checksum verification: the timestamp
+    // came from this server's own clock. Clamping instead would silently store a
+    // 1970 row that the pruner drops on sight, reopening the replay it guards.
     let expires_at =
         OffsetDateTime::from_unix_timestamp_nanos(i128::from(retain_until_ms) * 1_000_000)
-            .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+            .expect("a verified puzzle timestamp is a representable instant");
 
     let result = sqlx::query(
         "INSERT INTO spent_puzzles (session_id, expires_at) \

@@ -1,22 +1,16 @@
-//! Proof-of-compute: stateless puzzle issuance and one-shot verification.
+//! Proof-of-compute: stateless puzzle issuance and one-shot verification for
+//! `GET /api/v1/usernames/search`.
 //!
-//! The gate protects the public, unauthenticated `GET /api/v1/usernames/search`
-//! read for callers that hold no bearer token (the Desktop/host path). It is
-//! **either-or**: a valid identity-service JWT satisfies the route just as a
-//! solved puzzle does, which is why the shipping mobile apps — both of which
+//! The gate is **either-or**: a valid identity-service JWT satisfies the route
+//! just as a solved puzzle does, so the shipping mobile apps — both of which
 //! authenticate search — need no client change.
 //!
-//! The wire contract is ported byte-for-byte from the legacy TypeScript
-//! backend (`paritytech/identity-backend`,
-//! `src/proof-of-compute/*`, `src/middleware/proof-of-compute.middleware.ts`):
-//! issuance is a signed (HMAC) puzzle so no state is written, and the work
-//! function is leading-zero-bit search over SHA-256.
-//!
-//! Two deliberate divergences from legacy:
-//! - replay protection is a Postgres consume ([`store`]) instead of legacy's
-//!   per-process in-memory map, so it holds across replicas;
-//! - a valid bearer token bypasses the puzzle (legacy intended this via route
-//!   composition but never wired the middleware onto any route).
+//! The wire contract is ported byte-for-byte from the legacy TypeScript backend
+//! (`paritytech/identity-backend`, `src/proof-of-compute/*`,
+//! `src/middleware/proof-of-compute.middleware.ts`). Two deliberate divergences:
+//! replay protection is a Postgres consume ([`store`]) rather than legacy's
+//! per-process map, so it holds across replicas; and the bearer bypass is
+//! actually wired, which legacy intended but never installed on a route.
 
 pub mod puzzle;
 pub mod solution;
@@ -26,7 +20,18 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub use puzzle::{derive_secret, Puzzle};
-pub use solution::{leading_zero_bits, Solution};
+pub use solution::Solution;
+
+/// Puzzle validity, seconds — legacy's `POC_SESSION_TTL` default.
+const SESSION_TTL_SECS: i64 = 60;
+/// Tolerance for client/server clock skew, seconds — legacy's `POC_CLOCK_SKEW`
+/// default. Frozen with the TTL: both exist to match legacy, not to be tuned.
+const CLOCK_SKEW_SECS: i64 = 30;
+
+/// How long a solved puzzle stays valid, in milliseconds.
+const fn validity_window_ms() -> i64 {
+    (SESSION_TTL_SECS + CLOCK_SKEW_SECS) * 1_000
+}
 
 /// Why a proof-of-compute-gated request was refused.
 ///
@@ -84,8 +89,6 @@ impl Rejection {
 pub struct Poc {
     secret: [u8; 32],
     difficulty: u8,
-    ttl_secs: u32,
-    clock_skew_secs: u32,
     jwt: jwt_verify::Verifier,
 }
 
@@ -94,56 +97,40 @@ impl std::fmt::Debug for Poc {
         f.debug_struct("Poc")
             .field("secret", &"<redacted>")
             .field("difficulty", &self.difficulty)
-            .field("ttl_secs", &self.ttl_secs)
-            .field("clock_skew_secs", &self.clock_skew_secs)
             .finish()
     }
 }
 
 impl Poc {
-    /// Build the gate from the derived HMAC secret, puzzle parameters, and the
-    /// verify-only JWT verifier that admits authenticated callers.
-    pub fn new(
-        secret: [u8; 32],
-        difficulty: u8,
-        ttl_secs: u32,
-        clock_skew_secs: u32,
-        jwt: jwt_verify::Verifier,
-    ) -> Self {
+    /// Build the gate from the derived HMAC secret, the required difficulty, and
+    /// the verify-only JWT verifier that admits authenticated callers.
+    pub fn new(secret: [u8; 32], difficulty: u8, jwt: jwt_verify::Verifier) -> Self {
         Self {
             secret,
             difficulty,
-            ttl_secs,
-            clock_skew_secs,
             jwt,
         }
     }
 
     /// The verifier used for the bearer bypass.
-    pub fn jwt(&self) -> &jwt_verify::Verifier {
+    pub(crate) fn jwt(&self) -> &jwt_verify::Verifier {
         &self.jwt
-    }
-
-    /// Issue a fresh puzzle for `now_ms`, stamped with the configured difficulty.
-    pub fn issue_at(&self, session_id: Uuid, now_ms: i64) -> Puzzle {
-        Puzzle::new(&self.secret, session_id, now_ms, self.difficulty)
     }
 
     /// Issue a fresh puzzle for the current time with a random session id.
     pub fn issue(&self) -> Puzzle {
-        self.issue_at(Uuid::new_v4(), now_millis())
+        Puzzle::new(&self.secret, Uuid::new_v4(), now_millis(), self.difficulty)
     }
 
-    /// Verify everything that needs no database: checksum, then expiry, then
-    /// work — the legacy order, so the reported reason matches legacy's.
-    pub fn verify_offline(&self, solution: &Solution, now_ms: i64) -> Result<(), Rejection> {
+    /// Verify everything that needs no database, in the legacy order so the
+    /// reported reason matches legacy's: checksum, then expiry, then work.
+    fn verify_offline(&self, solution: &Solution, now_ms: i64) -> Result<(), Rejection> {
         if !solution.checksum_matches(&self.secret) {
             return Err(Rejection::Checksum);
         }
-        let max_age = i64::from(self.ttl_secs) * 1_000 + i64::from(self.clock_skew_secs) * 1_000;
         // No lower bound, as legacy: a future timestamp is accepted because the
         // checksum already proves this server issued it.
-        if now_ms - solution.timestamp_ms() > max_age {
+        if now_ms - solution.timestamp_ms() > validity_window_ms() {
             return Err(Rejection::Expired);
         }
         if solution.work_bits() < u32::from(solution.difficulty()) {
@@ -163,9 +150,7 @@ impl Poc {
         if let Err(rejection) = self.verify_offline(solution, now_ms) {
             return Ok(Err(rejection));
         }
-        let retain_until_ms = solution.timestamp_ms()
-            + i64::from(self.ttl_secs) * 1_000
-            + i64::from(self.clock_skew_secs) * 1_000;
+        let retain_until_ms = solution.timestamp_ms() + validity_window_ms();
         if store::consume(pool, solution.session_id(), retain_until_ms).await? {
             Ok(Ok(()))
         } else {

@@ -151,9 +151,9 @@ Two facts that shape the plan:
         is deployed during cutover.
   - [x] Config in `username-indexer/src/config.rs` via the existing helpers: `POC_ENABLED`
         (default `false`), `POC_DIFFICULTY_BITS` (default `16`, validated `1..=32` — note legacy's
-        `proof-of-compute/AGENTS.md` claim of 4 is stale vs `config.ts:901`), `POC_SESSION_TTL_SECS`
-        (default `60`), `POC_CLOCK_SKEW_SECS` (default `30`), `POC_HMAC_SECRET`
-        (**required only when `POC_ENABLED=true`**, fail-fast otherwise unchanged).
+        `proof-of-compute/AGENTS.md` claim of 4 is stale vs `config.ts:901`), and `POC_HMAC_SECRET`
+        (**required only when `POC_ENABLED=true`**, minimum 32 chars). Validity (60s) and clock
+        skew (30s) are **constants**, not env knobs: they exist to match legacy, not to be tuned.
   - [x] Route `POST /api/v1/poc/issue` mounted **only when `POC_ENABLED`** → `201`
         `{sessionId, timestamp, difficulty, checksum}` (`timestamp` = unix **millis**);
         flag off ⇒ route absent ⇒ existing `hono_not_found`. Method fallback keeps wrong-method
@@ -265,13 +265,16 @@ Two facts that shape the plan:
   router made a wrong-method request answer the gate's `402` instead of the frozen Hono `404` as
   soon as the flag flipped; `tests/poc_gate.rs` now pins wrong-method, the dropped username
   endpoints, and the health routes with the gate **on**.
+- **The public surface is deliberately small.** Only `Poc::{new, issue, verify}`, `derive_secret`,
+  `Puzzle`, `Solution`, and (for the solver/tests) `mine` are exported; preimages, the offline
+  verification step, and the JWT accessor are private or crate-local.
 - **`POC_HMAC_SECRET` must be at least 32 characters** and `POC_ENABLED` rejects an explicitly empty
   value rather than defaulting to `false`: both were fail-open paths on a security gate.
 - **Spent puzzles are pruned with a 10-minute grace** past their validity window, because expiry is
   checked against the process clock before the consume insert — without the grace, a request that
   passed that check just before the boundary could insert after the pruner deleted the row.
-- **Pruning runs as its own interval task** in the bin (period = `POC_SESSION_TTL_SECS`) rather than
-  on the sync loop tick, which keeps `sync.rs` free of gate concerns.
+- **Pruning runs as its own 60s interval task** in the bin rather than on the sync loop tick, which
+  keeps `sync.rs` free of gate concerns.
 - **Issuance is deliberately not rate limited** (legacy parity: its `/poc` router had no limiter).
   Issuance writes nothing and is one HMAC; revisit if it is ever abused.
 - **Phase 4 config work landed 2026-07-29**: gateway route, compose wiring, boundary script, and

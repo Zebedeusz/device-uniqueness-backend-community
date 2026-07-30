@@ -77,14 +77,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(poc) = build_poc(&config)? {
         tracing::info!(
             difficulty_bits = config.poc_difficulty_bits,
-            session_ttl_secs = config.poc_session_ttl_secs,
-            clock_skew_secs = config.poc_clock_skew_secs,
             "proof-of-compute gate enabled on public search (a valid JWT also satisfies it)"
         );
-        tokio::spawn(prune_spent_puzzles(
-            pool.clone(),
-            Duration::from_secs(config.poc_session_ttl_secs.into()),
-        ));
+        tokio::spawn(prune_spent_puzzles(pool.clone(), PRUNE_INTERVAL));
         state = state.with_poc(poc);
     }
     axum::serve(listener, routes(state))
@@ -109,11 +104,12 @@ fn build_poc(config: &Config) -> anyhow::Result<Option<Poc>> {
     Ok(Some(Poc::new(
         poc::derive_secret(secret),
         config.poc_difficulty_bits,
-        config.poc_session_ttl_secs,
-        config.poc_clock_skew_secs,
         verifier,
     )))
 }
+
+/// How often expired spent-puzzle rows are swept.
+const PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Periodically drop spent-puzzle rows whose validity window has passed.
 async fn prune_spent_puzzles(pool: sqlx::PgPool, every: Duration) {
