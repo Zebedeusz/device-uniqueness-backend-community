@@ -19,6 +19,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::from_env().context("invalid configuration")?;
+    // Resolved before any I/O so a misconfigured gate fails at startup rather
+    // than after the finalized bootstrap scan (which can take minutes).
+    let poc = build_poc(&config)?;
     tracing::info!(
         bind = %config.bind_addr,
         people_rpc = %config.people_rpc_url,
@@ -74,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(config.search_rate_limit_window_secs.into()),
     );
     let mut state = AppState::new(pool.clone(), chain, freshness, limiter);
-    if let Some(poc) = build_poc(&config)? {
+    if let Some(poc) = poc {
         tracing::info!(
             difficulty_bits = config.poc_difficulty_bits,
             "proof-of-compute gate enabled on public search (a valid JWT also satisfies it)"
