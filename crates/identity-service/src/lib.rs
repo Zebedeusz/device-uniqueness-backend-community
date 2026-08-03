@@ -11,9 +11,11 @@ pub mod chain;
 pub mod config;
 pub mod db;
 pub mod device_check;
+pub mod eligibility;
 pub mod http;
 pub mod jwt;
 pub mod openapi;
+pub mod payment;
 pub mod queue;
 pub mod usernames;
 

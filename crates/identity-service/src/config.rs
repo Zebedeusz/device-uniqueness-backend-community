@@ -53,6 +53,10 @@ pub struct Config {
     /// queue (`QUEUED` intake + the `/api/v1/registration/queue` surface);
     /// `false` (the M0 default) keeps the direct-to-writer flow and wire.
     pub queue_enabled: bool,
+    /// Registration-voucher gate (the eligibility slice's INSTANT lane):
+    /// `true` recognises `lifetimePoUDVoucher` on `POST /api/v1/usernames`;
+    /// `false` (default) ignores the field, keeping the frozen wire.
+    pub registration_vouchers_enabled: bool,
     /// Whether registration accepts the optional `dotns` block (mirrors the
     /// legacy `DOTNS_GATEWAY_ENABLED` gate and its captured 400 message).
     pub dotns_gateway_enabled: bool,
@@ -98,6 +102,26 @@ pub struct Config {
     /// Apple DeviceCheck (iOS uniqueness at username claim). `None` while
     /// `DEVICE_CHECK_IOS_ENABLED=false`; required key material otherwise.
     pub device_check: Option<DeviceCheckConfig>,
+    /// Payment lane (the eligibility slice's PAYMENT_REQUIRED quote). `None`
+    /// while `PAYMENT_LANE_ENABLED=false` — device-gate blocks then keep the
+    /// frozen bare `PAYMENT_REQUIRED` body (a dead end); enabled, blocks
+    /// return a deposit address + amount and store the claim for the watcher.
+    pub payment: Option<PaymentConfig>,
+}
+
+/// Payment-lane parameters (all required when `PAYMENT_LANE_ENABLED=true`).
+#[derive(Debug, Clone)]
+pub struct PaymentConfig {
+    /// Cold master account (`PAYMENT_MASTER_ACCOUNT`, SS58): deposit
+    /// addresses are its threshold-1 multisigs with a keyless per-subject
+    /// dummy; the service never holds a key for it or the deposits.
+    pub master_account: [u8; 32],
+    /// Required deposit per registration in planck
+    /// (`PAYMENT_AMOUNT_PLANCK`, > 0; must clear the existential deposit).
+    pub amount_planck: u64,
+    /// Quote lifetime (`PAYMENT_REQUEST_TTL_SECS`); an unpaid request past
+    /// this expires and the client must re-claim.
+    pub request_ttl: Duration,
 }
 
 /// Apple DeviceCheck key material and endpoint (legacy env names).
@@ -196,6 +220,7 @@ impl Config {
             auth_enabled,
             enforce_auth: env_bool("ENFORCE_AUTH", false)?,
             queue_enabled: env_bool("QUEUE_ENABLED", false)?,
+            registration_vouchers_enabled: env_bool("REGISTRATION_VOUCHERS_ENABLED", false)?,
             dotns_gateway_enabled: env_bool("DOTNS_GATEWAY_ENABLED", true)?,
             dotns_intake_freshness_max_age_secs: parse_var(
                 "DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS",
@@ -224,6 +249,7 @@ impl Config {
             play_integrity_verification_key,
             google_credentials: parse_google_credentials()?,
             device_check: parse_device_check()?,
+            payment: parse_payment()?,
         })
     }
 
@@ -245,6 +271,7 @@ impl Config {
             auth_enabled: false,
             enforce_auth: false,
             queue_enabled: false,
+            registration_vouchers_enabled: false,
             dotns_gateway_enabled: true,
             dotns_intake_freshness_max_age_secs: 600,
             dotns_max_future_skew_secs: 600,
@@ -261,6 +288,7 @@ impl Config {
             play_integrity_verification_key: None,
             google_credentials: None,
             device_check: None,
+            payment: None,
         }
     }
 
@@ -440,6 +468,55 @@ fn parse_device_check() -> Result<Option<DeviceCheckConfig>, ConfigError> {
         base_url: std::env::var("DEVICE_CHECK_URL")
             .map(|v| v.trim().trim_end_matches('/').to_string())
             .unwrap_or_else(|_| "https://api.devicecheck.apple.com/v1".to_string()),
+    }))
+}
+
+/// Parse the payment-lane block: `None` while `PAYMENT_LANE_ENABLED` is
+/// false; enabled, the master account and amount are required and validated
+/// (fail-fast — a mistyped master would quote unsweepable addresses).
+fn parse_payment() -> Result<Option<PaymentConfig>, ConfigError> {
+    use std::str::FromStr as _;
+
+    if !env_bool("PAYMENT_LANE_ENABLED", false)? {
+        return Ok(None);
+    }
+    let master_raw = std::env::var("PAYMENT_MASTER_ACCOUNT")
+        .map(|v| v.trim().to_string())
+        .ok()
+        .filter(|v| !v.is_empty())
+        .ok_or(ConfigError::Missing("PAYMENT_MASTER_ACCOUNT"))?;
+    let master_account = subxt::utils::AccountId32::from_str(&master_raw)
+        .map_err(|e| ConfigError::Invalid {
+            key: "PAYMENT_MASTER_ACCOUNT",
+            reason: format!("expected an SS58 address: {e}"),
+        })?
+        .0;
+    let amount_planck: u64 = std::env::var("PAYMENT_AMOUNT_PLANCK")
+        .map_err(|_| ConfigError::Missing("PAYMENT_AMOUNT_PLANCK"))?
+        .trim()
+        .parse()
+        .map_err(|e| ConfigError::Invalid {
+            key: "PAYMENT_AMOUNT_PLANCK",
+            reason: format!("expected planck as an integer: {e}"),
+        })?;
+    if amount_planck == 0 {
+        return Err(ConfigError::Invalid {
+            key: "PAYMENT_AMOUNT_PLANCK",
+            reason: "must be greater than zero".to_string(),
+        });
+    }
+    // The quote row stores the amount in a BIGINT column; refuse a value the
+    // database cannot hold rather than letting the insert clamp or fail late.
+    if i64::try_from(amount_planck).is_err() {
+        return Err(ConfigError::Invalid {
+            key: "PAYMENT_AMOUNT_PLANCK",
+            reason: "must fit a signed 64-bit integer (database BIGINT)".to_string(),
+        });
+    }
+    Ok(Some(PaymentConfig {
+        master_account,
+        amount_planck,
+        request_ttl: Duration::from_secs(parse_var("PAYMENT_REQUEST_TTL_SECS", "86400")?),
     }))
 }
 

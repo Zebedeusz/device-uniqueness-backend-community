@@ -39,10 +39,13 @@
 	# else on /api/v1/usernames — the POST write/availability surface, the
 	# collection-root CORS preflight (OPTIONS), and wrong-method 404s — falls
 	# through to identity-api below. The matcher lists the bare path
-	# explicitly: a `/*` pattern alone does not match it.
+	# explicitly: a `/*` pattern alone does not match it. The payment-status
+	# poll is identity-owned despite being a GET under /usernames — carved
+	# out so it falls through to identity-api instead of the indexer.
 	@username_reads {
 		method GET
 		path /api/v1/usernames /api/v1/usernames/*
+		not path /api/v1/usernames/payment-status
 	}
 	handle @username_reads {
 		reverse_proxy {$USERNAME_INDEXER_UPSTREAM:127.0.0.1:8081}

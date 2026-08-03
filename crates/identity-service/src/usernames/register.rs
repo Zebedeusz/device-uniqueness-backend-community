@@ -43,7 +43,9 @@ use utoipa::ToSchema;
 
 use crate::chain::outbox::{self, InsertError, NewReservation};
 use crate::device_check::{self, Decision};
+use crate::eligibility;
 use crate::http::state::AppState;
+use crate::payment;
 use crate::queue;
 
 use super::error::{FieldError, UsernamesError, UsernamesResult};
@@ -88,6 +90,12 @@ pub struct RegisterRequest {
     #[serde(rename = "identifierKey")]
     #[schema(rename = "identifierKey", example = "0x...65 bytes...")]
     identifier_key: String,
+    /// Optional single-use registration voucher (the INSTANT lane): bypasses
+    /// the PoUD gate and the registration queue. Ignored unless
+    /// `REGISTRATION_VOUCHERS_ENABLED`.
+    #[serde(rename = "lifetimePoUDVoucher")]
+    #[schema(rename = "lifetimePoUDVoucher", example = "base64url-voucher-key")]
+    lifetime_poud_voucher: Option<String>,
     /// Optional DotNS reservation block.
     dotns: Option<Dotns>,
 }
@@ -131,9 +139,10 @@ pub struct RegisterResponse {
     #[schema(rename = "device_check_available")]
     pub device_check_available: Option<bool>,
     /// `"QUEUED"` when the registration queue is enabled and the claim is
-    /// waiting in it; absent on the direct-to-writer path. (The spec's
-    /// `INSTANT` / `PAYMENT_REQUIRED` outcomes ship with the attestation
-    /// slice.)
+    /// waiting in it; `"INSTANT"` when a voucher bypassed the gate and the
+    /// queue; absent on the plain direct-to-writer path. (The
+    /// `PAYMENT_REQUIRED` outcome is a separate `200` body, not this 202
+    /// shape — see the route's 200 response.)
     #[serde(
         rename = "registrationOutcome",
         skip_serializing_if = "Option::is_none"
@@ -170,14 +179,23 @@ const DEVICE_TOKEN_HEADER: &str = "Device-Token-iOS";
           waits in the balance-priority queue and the body additionally carries \
           `registrationOutcome: \"QUEUED\"` plus the claim's queue standing (poll \
           `GET /api/v1/registration/queue` for updates). A down queue service falls back to the \
-          direct registration path (no queue fields).",
+          direct registration path (no queue fields). With `REGISTRATION_VOUCHERS_ENABLED`, a valid \
+          `lifetimePoUDVoucher` bypasses the device gate and the queue: the reservation goes straight \
+          to the writer and the body carries `registrationOutcome: \"INSTANT\"`.",
          body = RegisterResponse,
          example = json!({ "base_username": "tallesx", "digits": "07", "username": "tallesx.07" })),
-        (status = 200, description = "DeviceCheck free slot already used (hard mode): the device must \
-            pay to register. Not an error — a 200 outcome.",
+        (status = 200, description = "The device must pay to register (hard-mode DeviceCheck: free \
+            slot already used, or — with the payment lane on — a missing device token). Not an \
+            error — a 200 outcome. With `PAYMENT_LANE_ENABLED` the body carries the deposit \
+            instructions (`paymentAddress`, `amountRequired` in planck as a string) and the claim \
+            is stored; registration proceeds automatically on the confirmed deposit (poll \
+            `GET /api/v1/usernames/payment-status`). Lane off: the bare outcome, no payment path.",
          body = serde_json::Value,
-         example = json!({ "registrationOutcome": "PAYMENT_REQUIRED" })),
-        (status = 400, description = "Validation failed (problem details with `errors`) or malformed JSON.",
+         example = json!({ "registrationOutcome": "PAYMENT_REQUIRED",
+                           "paymentAddress": "5F...", "amountRequired": "10000000000" })),
+        (status = 400, description = "Validation failed (problem details with `errors`), malformed JSON, \
+            or a `lifetimePoUDVoucher` that is unknown, already used, or expired \
+            (`{\"error\": \"Voucher already used\"}` — a voucher failure rejects the claim outright).",
          body = serde_json::Value,
          example = json!({
              "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
@@ -187,7 +205,9 @@ const DEVICE_TOKEN_HEADER: &str = "Device-Token-iOS";
              "errors": [{ "detail": "Invalid signature.", "pointer": "#/candidateSignature" }]
          })),
         (status = 401, description = "Missing or invalid bearer token (the frozen problem-details trio), \
-            or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present.",
+            or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present (payment \
+            lane off — with `PAYMENT_LANE_ENABLED` a missing token resolves to the 200 \
+            PAYMENT_REQUIRED outcome instead).",
          body = serde_json::Value),
         (status = 409, description = "Preferred digits taken, no digits available, or username taken.",
          body = serde_json::Value,
@@ -216,12 +236,77 @@ pub async fn register(
     validate_device_token_header(&headers)?;
 
     let value = super::parse_json_body(&body)?;
-    let parsed = validate_register(&value, &state.config)?;
+    let mut parsed = validate_register(&value, &state.config)?;
 
     let taken = taken_discriminators(&state, &parsed.username).await?;
     let digit = select_digit(&taken, parsed.preferred_digits.as_deref(), &parsed.username)?;
     let digits = format!("{digit:02}");
     let full_username = format!("{}.{digits}", parsed.username);
+    let voucher = parsed.voucher.take();
+    let preferred_digits = parsed.preferred_digits.clone();
+    let new = build_reservation(&auth, parsed, &digits, &full_username);
+
+    // Voucher precedence (spec + legacy `decideClaim` order): a submitted
+    // voucher resolves the claim before the DeviceCheck/PoUD gate ever runs —
+    // a redeemable one registers instantly (no queue, no device bit spent), a
+    // bad one rejects the claim outright and never falls through to another
+    // lane. Only reachable with `REGISTRATION_VOUCHERS_ENABLED` (validation
+    // ignores the field otherwise).
+    if let Some(key) = voucher.as_deref() {
+        let voucher_state = eligibility::voucher_state(&state.pool, key).await?;
+        match eligibility::decide(Some(voucher_state)) {
+            Err(reason) => return Err(UsernamesError::Voucher(reason)),
+            Ok(eligibility::Lane::Instant) => {}
+            // Impossible by the decision table; a 500 (not a panic, not a
+            // silent redeem) if a future `decide` change breaks it.
+            Ok(eligibility::Lane::Standard) => {
+                debug_assert!(false, "a submitted voucher never selects the standard lane");
+                return Err(UsernamesError::Internal(anyhow::anyhow!(
+                    "eligibility returned the standard lane for a submitted voucher"
+                )));
+            }
+        }
+        let id = match eligibility::redeem_and_reserve(&state.pool, key, &new).await {
+            Ok(id) => id,
+            Err(eligibility::RedeemError::Conflict) => {
+                return Err(UsernamesError::UsernameTaken {
+                    base: new.base.clone(),
+                    digits: digits.clone(),
+                })
+            }
+            Err(eligibility::RedeemError::Voucher(reason)) => {
+                return Err(UsernamesError::Voucher(reason))
+            }
+            Err(eligibility::RedeemError::Db(e)) => {
+                tracing::error!(error = ?e, "voucher redeem + reservation insert failed");
+                return Err(UsernamesError::PersistenceFailed);
+            }
+        };
+        tracing::info!(id, username = %full_username, "username reserved via voucher (INSTANT)");
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(RegisterResponse {
+                base_username: new.base.clone(),
+                digits,
+                username: full_username,
+                device_check_available: None,
+                registration_outcome: Some("INSTANT".to_string()),
+                queue: None,
+            }),
+        )
+            .into_response());
+    }
+
+    // Spec FR-005: a non-store install routes straight to the payment
+    // outcome, without any device-identity check. Only consulted when the
+    // payment lane is on — the outcome must be payable, never a dead end —
+    // and only a definite `false` verdict routes: `None` (old token, no-op
+    // posture) passes while attestation soft mode lasts. Revisit that
+    // default together with the `ENFORCE_AUTH` hard flip (attestation plan
+    // Phase 5).
+    if state.config.payment.is_some() && auth.app_from_official_store == Some(false) {
+        return payment_required(&state, &auth, &new, preferred_digits.as_deref()).await;
+    }
 
     // DeviceCheck is Apple iOS uniqueness, so it only gates iOS requests —
     // identified by the tamper-proof `plt` claim set at attestation. Android
@@ -238,14 +323,21 @@ pub async fn register(
                 let device_token = device_token_bytes(&headers);
                 let verdict = device_check::evaluate(client, device_token.as_deref()).await;
                 match device_check::decide_gate(verdict, state.config.enforce_auth) {
+                    // "Seen device" is the payment outcome, never an error.
                     Decision::Blocked => {
-                        return Ok((
-                            StatusCode::OK,
-                            Json(serde_json::json!({ "registrationOutcome": "PAYMENT_REQUIRED" })),
-                        )
-                            .into_response());
+                        return payment_required(&state, &auth, &new, preferred_digits.as_deref())
+                            .await;
                     }
-                    Decision::TokenRequired => return Err(UsernamesError::DeviceTokenRequired),
+                    // Payment lane on: the spec's "no error codes for
+                    // unrecognized device tokens — these simply resolve to
+                    // PAYMENT_REQUIRED". Lane off: the legacy-parity 401.
+                    Decision::TokenRequired => {
+                        return if state.config.payment.is_some() {
+                            payment_required(&state, &auth, &new, preferred_digits.as_deref()).await
+                        } else {
+                            Err(UsernamesError::DeviceTokenRequired)
+                        };
+                    }
                     Decision::Unavailable(cause) => {
                         tracing::warn!(cause, "DeviceCheck unavailable (hard mode)");
                         return Err(UsernamesError::DeviceCheckUnavailable);
@@ -259,22 +351,6 @@ pub async fn register(
             }
             None => (None, None),
         };
-
-    let new = NewReservation {
-        account_id: auth.subject.clone(),
-        candidate_account_id: parsed.candidate_account_id,
-        base: parsed.username.clone(),
-        digits: digits.clone(),
-        full_username: full_username.clone(),
-        candidate_signature: parsed.candidate_signature,
-        ring_vrf_key: parsed.ring_vrf_key,
-        proof_of_ownership: parsed.proof_of_ownership,
-        consumer_registration_signature: parsed.consumer_registration_signature,
-        identifier_key: parsed.identifier_key,
-        dotns_signature: parsed.dotns.as_ref().map(|d| d.signature.clone()),
-        dotns_signed_at: parsed.dotns.as_ref().map(|d| d.signed_at),
-        reserved_username: parsed.dotns.and_then(|d| d.reserved_username),
-    };
 
     // Queue intake waits as `QUEUED` (the spec's PoUD-pass lane, the only
     // lane until the attestation slice) — but only while the registration-
@@ -321,7 +397,7 @@ pub async fn register(
             Ok((
                 StatusCode::ACCEPTED,
                 Json(RegisterResponse {
-                    base_username: parsed.username,
+                    base_username: new.base.clone(),
                     digits,
                     username: full_username,
                     device_check_available,
@@ -334,12 +410,54 @@ pub async fn register(
         // Lost the serialized claim race: a concurrent request already took this
         // device's free slot under the lock. Same outcome as a `Blocked`
         // verdict — a 200 PAYMENT_REQUIRED, never an error.
-        ReserveOutcome::DeviceAlreadyClaimed => Ok((
+        ReserveOutcome::DeviceAlreadyClaimed => {
+            payment_required(&state, &auth, &new, preferred_digits.as_deref()).await
+        }
+    }
+}
+
+/// The PAYMENT_REQUIRED outcome. Lane off (`PAYMENT_LANE_ENABLED=false`):
+/// the frozen bare body — a dead end, pinned by the parked
+/// `register-200-devicecheck-payment-required` fixture. Lane on: mint (or
+/// return) the subject's durable quote — the spec's deposit instructions;
+/// the Phase-3 watcher registers the stored claim once the deposit lands.
+async fn payment_required(
+    state: &AppState,
+    auth: &AuthSubject,
+    new: &NewReservation,
+    preferred_digits: Option<&str>,
+) -> UsernamesResult<Response> {
+    let Some(config) = state.config.payment.as_ref() else {
+        return Ok((
             StatusCode::OK,
             Json(serde_json::json!({ "registrationOutcome": "PAYMENT_REQUIRED" })),
         )
-            .into_response()),
-    }
+            .into_response());
+    };
+    let payload = payment::ClaimPayload::from_reservation(new, preferred_digits);
+    let quote = payment::quote(&state.pool, config, &auth.subject, &payload)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "payment quote failed");
+            UsernamesError::PersistenceFailed
+        })?;
+    tracing::info!(
+        subject = %auth.subject,
+        base = %new.base,
+        address = %quote.payment_address,
+        "payment quote issued"
+    );
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "registrationOutcome": "PAYMENT_REQUIRED",
+            "paymentAddress": quote.payment_address,
+            // Planck as a string (the legacy unmounted route's shape),
+            // pending the client-team unit ruling recorded in the plan.
+            "amountRequired": quote.amount_planck.to_string(),
+        })),
+    )
+        .into_response())
 }
 /// Advisory-lock key serializing hard-mode free-iOS DeviceCheck claims across
 /// replicas (identity-service database namespace).
@@ -489,7 +607,35 @@ struct ParsedRegister {
     proof_of_ownership: Vec<u8>,
     consumer_registration_signature: Vec<u8>,
     identifier_key: Vec<u8>,
+    /// `lifetimePoUDVoucher`, populated only when
+    /// `REGISTRATION_VOUCHERS_ENABLED` (the frozen wire ignores the field).
+    voucher: Option<String>,
     dotns: Option<ParsedDotns>,
+}
+
+/// Assemble the outbox row from the validated request (shared by the voucher
+/// INSTANT path and the standard gate/queue path).
+fn build_reservation(
+    auth: &AuthSubject,
+    parsed: ParsedRegister,
+    digits: &str,
+    full_username: &str,
+) -> NewReservation {
+    NewReservation {
+        account_id: auth.subject.clone(),
+        candidate_account_id: parsed.candidate_account_id,
+        base: parsed.username,
+        digits: digits.to_string(),
+        full_username: full_username.to_string(),
+        candidate_signature: parsed.candidate_signature,
+        ring_vrf_key: parsed.ring_vrf_key,
+        proof_of_ownership: parsed.proof_of_ownership,
+        consumer_registration_signature: parsed.consumer_registration_signature,
+        identifier_key: parsed.identifier_key,
+        dotns_signature: parsed.dotns.as_ref().map(|d| d.signature.clone()),
+        dotns_signed_at: parsed.dotns.as_ref().map(|d| d.signed_at),
+        reserved_username: parsed.dotns.and_then(|d| d.reserved_username),
+    }
 }
 
 struct ParsedDotns {
@@ -779,6 +925,28 @@ fn validate_register(
         }
     };
 
+    // `lifetimePoUDVoucher` (the INSTANT lane): only recognised when the
+    // voucher feature is on — the frozen wire ignores unknown body fields, so
+    // flag-off requests carrying it validate exactly as before. An empty
+    // string is treated as absent (the Device-Token-iOS precedent).
+    let voucher = if config.registration_vouchers_enabled {
+        match get("lifetimePoUDVoucher") {
+            None => None,
+            Some(Value::String(s)) if s.is_empty() => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(other) => {
+                errors.push(FieldError {
+                    detail: zod::invalid_input("string", zod::type_name(other)),
+                    pointer: "#/lifetimePoUDVoucher".to_string(),
+                });
+                refine_skipped = true;
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // --- refinement phase ----------------------------------------------
     if !refine_skipped {
         let account_id = candidate_account_id.as_deref().unwrap_or_default();
@@ -858,6 +1026,7 @@ fn validate_register(
             consumer_registration_signature_raw.as_deref(),
         ),
         identifier_key: decode_prefixed_hex(identifier_key_raw.as_deref()),
+        voucher,
         dotns: dotns.map(|(signature, signed_at, reserved_username)| ParsedDotns {
             signature: decode_prefixed_hex(signature.as_deref()),
             signed_at: signed_at.unwrap_or_default(),
@@ -1189,6 +1358,53 @@ mod tests {
             select_digit(&all, None, "base"),
             Err(UsernamesError::NoDigitsAvailable { .. })
         ));
+    }
+
+    #[test]
+    fn voucher_field_is_ignored_when_the_feature_is_off() {
+        // The frozen wire: an unknown `lifetimePoUDVoucher` body field must
+        // not change validation at all while the flag is off.
+        let mut body = valid_body();
+        body["lifetimePoUDVoucher"] = json!("some-voucher-key");
+        let parsed = validate_register(&body, &config()).expect("valid");
+        assert_eq!(parsed.voucher, None);
+
+        // Even a wrong-typed value stays invisible with the flag off.
+        let mut body = valid_body();
+        body["lifetimePoUDVoucher"] = json!(42);
+        assert!(validate_register(&body, &config()).is_ok());
+    }
+
+    #[test]
+    fn voucher_field_is_recognised_when_the_feature_is_on() {
+        let mut on = config();
+        on.registration_vouchers_enabled = true;
+
+        let mut body = valid_body();
+        body["lifetimePoUDVoucher"] = json!("some-voucher-key");
+        let parsed = validate_register(&body, &on).expect("valid");
+        assert_eq!(parsed.voucher.as_deref(), Some("some-voucher-key"));
+
+        // Absent and empty both mean "no voucher".
+        assert_eq!(validate_register(&valid_body(), &on).unwrap().voucher, None);
+        let mut empty = valid_body();
+        empty["lifetimePoUDVoucher"] = json!("");
+        assert_eq!(validate_register(&empty, &on).unwrap().voucher, None);
+
+        // A wrong-typed voucher is a normal zod type error.
+        let mut bad = valid_body();
+        bad["lifetimePoUDVoucher"] = json!(42);
+        match validate_register(&bad, &on) {
+            Err(UsernamesError::InvalidBody(errors)) => {
+                assert_eq!(errors.len(), 1);
+                assert_eq!(errors[0].pointer, "#/lifetimePoUDVoucher");
+                assert_eq!(
+                    errors[0].detail,
+                    "Invalid input: expected string, received number"
+                );
+            }
+            other => panic!("expected InvalidBody, got {other:?}", other = other.err()),
+        }
     }
 
     #[test]

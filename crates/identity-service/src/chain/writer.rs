@@ -61,6 +61,10 @@ pub struct WriterConfig {
     /// this writer drains `QUEUED` rows itself (the queue-service-down
     /// fallback to the original direct registration behavior).
     pub queue_fallback_after: Duration,
+    /// Cadence of the payment watch pass (deposit detection + expiry over
+    /// `payment_requests`). Read-only on chain; a no-op while the payment
+    /// lane has never quoted anything.
+    pub payment_poll_interval: Duration,
 }
 
 impl WriterConfig {
@@ -103,6 +107,10 @@ impl WriterConfig {
             queue_fallback_after: Duration::from_secs(crate::queue::env_u64_strict(
                 "QUEUE_FALLBACK_AFTER_SECS",
                 60,
+            )?),
+            payment_poll_interval: Duration::from_secs(crate::queue::env_u64_strict(
+                "PAYMENT_POLL_INTERVAL_SECS",
+                30,
             )?),
         })
     }
@@ -219,6 +227,7 @@ impl Writer {
     }
 
     async fn active_loop(&mut self, guard: &Guard) -> anyhow::Result<()> {
+        let mut last_payment_pass: Option<std::time::Instant> = None;
         loop {
             if !self.heartbeat(guard).await? {
                 anyhow::bail!("lost writer lease");
@@ -233,6 +242,24 @@ impl Writer {
                     "queue advancer is down; promoted queued claims directly"
                 ),
                 Err(e) => tracing::warn!(error = %e, "queue fallback drain failed"),
+            }
+            // Payment watch pass (eligibility slice): expire stale quotes and
+            // hand confirmed deposits to the outbox. Read-only on chain — the
+            // one-signer nonce lane is untouched. A failed pass only delays
+            // detection; PENDING rows are re-checked next time.
+            if last_payment_pass.is_none_or(|t| t.elapsed() >= self.config.payment_poll_interval) {
+                last_payment_pass = Some(std::time::Instant::now());
+                match crate::payment::watch_pass(&self.pool, &self.chain).await {
+                    Ok(stats) if stats.acted() => tracing::info!(
+                        expired = stats.expired,
+                        confirmed = stats.confirmed,
+                        conflicted = stats.conflicted,
+                        still_pending = stats.still_pending,
+                        "payment watch pass"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "payment watch pass failed"),
+                }
             }
             let due = outbox::claim_due(&self.pool, self.config.batch_size).await?;
             if due.is_empty() {

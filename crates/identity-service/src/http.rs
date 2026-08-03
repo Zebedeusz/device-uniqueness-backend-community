@@ -23,7 +23,10 @@ pub fn routes(state: AppState) -> Router {
     let api_v1 = Router::new()
         .nest("/auth", auth::router(state.clone()))
         .route("/attester", get(usernames::attester))
-        .nest("/usernames", usernames::router());
+        .nest(
+            "/usernames",
+            usernames::router(state.config.payment.is_some()),
+        );
     let api_v1 = if state.config.queue_enabled {
         api_v1.route(
             "/registration/queue",

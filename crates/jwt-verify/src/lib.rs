@@ -39,6 +39,12 @@ pub struct VerifiedClaims {
     /// set server-side at attestation. Absent when the issuer omitted it.
     #[serde(rename = "plt", default)]
     pub platform: Option<String>,
+    /// Whether attestation judged the app an official-store install
+    /// (`appFromOfficialStore` claim, set server-side from real attestation
+    /// evidence). `None` when the issuer omitted it (old tokens, no-op
+    /// posture) — consumers choose their own default per posture.
+    #[serde(rename = "appFromOfficialStore", default)]
+    pub app_from_official_store: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -228,6 +234,31 @@ mod tests {
         let claims = verifier.verify_at(&token, NOW).unwrap();
         assert_eq!(claims.account_id, "0xabcdef");
         assert_eq!(claims.exp, NOW + 3600);
+        // Optional attestation claims decode as absent when the issuer
+        // omitted them (old tokens stay verifiable).
+        assert_eq!(claims.platform, None);
+        assert_eq!(claims.app_from_official_store, None);
+    }
+
+    #[test]
+    fn decodes_the_optional_attestation_claims() {
+        let seed = [7u8; 32];
+        let kid = "issuer-kid";
+        let verifier = Verifier::from_jwks(&jwks_for(&seed, kid)).unwrap();
+
+        let signing = SigningKey::from_bytes(&seed);
+        let header = format!(r#"{{"alg":"EdDSA","typ":"JWT","kid":"{kid}"}}"#);
+        let exp = NOW + 3600;
+        let claims = format!(
+            r#"{{"accountId":"0xabcdef","plt":"android","appFromOfficialStore":false,"exp":{exp}}}"#
+        );
+        let signing_input = format!("{}.{}", B64.encode(header), B64.encode(claims));
+        let signature = signing.sign(signing_input.as_bytes());
+        let token = format!("{signing_input}.{}", B64.encode(signature.to_bytes()));
+
+        let claims = verifier.verify_at(&token, NOW).unwrap();
+        assert_eq!(claims.platform.as_deref(), Some("android"));
+        assert_eq!(claims.app_from_official_store, Some(false));
     }
 
     #[test]

@@ -62,6 +62,15 @@ pub enum UsernamesError {
     /// `/api/v1/registration/queue` surface — no frozen dialect).
     #[error("no queue entry")]
     NoQueueEntry,
+    /// The submitted `lifetimePoUDVoucher` cannot be redeemed (400, new
+    /// eligibility surface — no frozen dialect; a voucher failure rejects the
+    /// claim, it never falls through to another lane).
+    #[error("voucher not redeemable")]
+    Voucher(crate::eligibility::VoucherError),
+    /// The authenticated account has no active payment request (404, new
+    /// `/api/v1/usernames/payment-status` surface — no frozen dialect).
+    #[error("no active payment request")]
+    NoPaymentRequest,
     /// The reservation outbox insert failed (500, captured legacy body).
     #[error("registration persistence failed")]
     PersistenceFailed,
@@ -122,6 +131,20 @@ impl IntoResponse for UsernamesError {
             UsernamesError::NoQueueEntry => (
                 StatusCode::NOT_FOUND,
                 Json(json!({ "error": "No queue entry found" })),
+            )
+                .into_response(),
+            UsernamesError::Voucher(reason) => {
+                use crate::eligibility::VoucherError;
+                let message = match reason {
+                    VoucherError::Unknown => "Voucher not found",
+                    VoucherError::Spent => "Voucher already used",
+                    VoucherError::Expired => "Voucher expired",
+                };
+                (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response()
+            }
+            UsernamesError::NoPaymentRequest => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "No active payment request" })),
             )
                 .into_response(),
             UsernamesError::PersistenceFailed => (

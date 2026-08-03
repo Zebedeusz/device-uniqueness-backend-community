@@ -430,18 +430,20 @@
         },
         "responses": {
           "200": {
-            "description": "DeviceCheck free slot already used (hard mode): the device must pay to register. Not an error — a 200 outcome.",
+            "description": "The device must pay to register (hard-mode DeviceCheck: free slot already used, or — with the payment lane on — a missing device token). Not an error — a 200 outcome. With `PAYMENT_LANE_ENABLED` the body carries the deposit instructions (`paymentAddress`, `amountRequired` in planck as a string) and the claim is stored; registration proceeds automatically on the confirmed deposit (poll `GET /api/v1/usernames/payment-status`). Lane off: the bare outcome, no payment path.",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "registrationOutcome": "PAYMENT_REQUIRED"
+                  "registrationOutcome": "PAYMENT_REQUIRED",
+                  "paymentAddress": "5F...",
+                  "amountRequired": "10000000000"
                 }
               }
             }
           },
           "202": {
-            "description": "Reservation accepted into the outbox for on-chain registration. With the registration queue enabled (`QUEUE_ENABLED`) and the queue service live, the claim waits in the balance-priority queue and the body additionally carries `registrationOutcome: \"QUEUED\"` plus the claim's queue standing (poll `GET /api/v1/registration/queue` for updates). A down queue service falls back to the direct registration path (no queue fields).",
+            "description": "Reservation accepted into the outbox for on-chain registration. With the registration queue enabled (`QUEUE_ENABLED`) and the queue service live, the claim waits in the balance-priority queue and the body additionally carries `registrationOutcome: \"QUEUED\"` plus the claim's queue standing (poll `GET /api/v1/registration/queue` for updates). A down queue service falls back to the direct registration path (no queue fields). With `REGISTRATION_VOUCHERS_ENABLED`, a valid `lifetimePoUDVoucher` bypasses the device gate and the queue: the reservation goes straight to the writer and the body carries `registrationOutcome: \"INSTANT\"`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -456,7 +458,7 @@
             }
           },
           "400": {
-            "description": "Validation failed (problem details with `errors`) or malformed JSON.",
+            "description": "Validation failed (problem details with `errors`), malformed JSON, or a `lifetimePoUDVoucher` that is unknown, already used, or expired (`{\"error\": \"Voucher already used\"}` — a voucher failure rejects the claim outright).",
             "content": {
               "application/json": {
                 "schema": {},
@@ -476,7 +478,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token (the frozen problem-details trio), or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present.",
+            "description": "Missing or invalid bearer token (the frozen problem-details trio), or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present (payment lane off — with `PAYMENT_LANE_ENABLED` a missing token resolves to the 200 PAYMENT_REQUIRED outcome instead).",
             "content": {
               "application/json": {
                 "schema": {}
@@ -642,6 +644,63 @@
                 "example": {
                   "error": "Oops! Something went wrong."
                 }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/api/v1/usernames/payment-status": {
+      "get": {
+        "tags": [
+          "Usernames"
+        ],
+        "summary": "Payment status for the authenticated account's most recent request.",
+        "description": "Whether the deposit for the caller's PAYMENT_REQUIRED claim has been detected on-chain. Poll after receiving `registrationOutcome: \"PAYMENT_REQUIRED\"`. This route exists only on deployments with the payment lane enabled (`PAYMENT_LANE_ENABLED`); disabled, the path serves the standard plain-text 404. An expired quote answers 404 — re-claim for fresh deposit instructions.",
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "`PENDING`: not yet detected, keep polling. `CONFIRMED`: deposit detected, username registration is in progress (~15s).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentStatusResponse"
+                },
+                "example": {
+                  "status": "PENDING"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token (the frozen problem-details trio).",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "No active payment request for this account (JSON body), or the deployment runs payment-disabled (plain-text body).",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "No active payment request"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -1347,6 +1406,20 @@
           }
         }
       },
+      "PaymentStatusResponse": {
+        "type": "object",
+        "description": "The spec-exact payment-status body: two states, nothing else.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`\"PENDING\"` — keep polling; `\"CONFIRMED\"` — payment detected,\nregistration in progress.",
+            "example": "PENDING"
+          }
+        }
+      },
       "QueueStatusResponse": {
         "type": "object",
         "description": "Queue standing for one claim, as served by `GET /api/v1/registration/queue`\nand embedded in the claim response's `queue` field.",
@@ -1449,6 +1522,14 @@
             "description": "`0x`-hex 65-byte identifier key.",
             "example": "0x...65 bytes..."
           },
+          "lifetimePoUDVoucher": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional single-use registration voucher (the INSTANT lane): bypasses\nthe PoUD gate and the registration queue. Ignored unless\n`REGISTRATION_VOUCHERS_ENABLED`.",
+            "example": "base64url-voucher-key"
+          },
           "dotns": {
             "oneOf": [
               {
@@ -1498,7 +1579,7 @@
               "string",
               "null"
             ],
-            "description": "`\"QUEUED\"` when the registration queue is enabled and the claim is\nwaiting in it; absent on the direct-to-writer path. (The spec's\n`INSTANT` / `PAYMENT_REQUIRED` outcomes ship with the attestation\nslice.)",
+            "description": "`\"QUEUED\"` when the registration queue is enabled and the claim is\nwaiting in it; `\"INSTANT\"` when a voucher bypassed the gate and the\nqueue; absent on the plain direct-to-writer path. (The\n`PAYMENT_REQUIRED` outcome is a separate `200` body, not this 202\nshape — see the route's 200 response.)",
             "example": "QUEUED"
           },
           "queue": {

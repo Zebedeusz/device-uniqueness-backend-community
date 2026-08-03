@@ -22,6 +22,10 @@ pub struct AuthSubject {
     /// when the issuer set it. Tamper-proof (verified JWT); used to scope
     /// platform-specific gates such as iOS DeviceCheck.
     pub platform: Option<String>,
+    /// The attestation-time official-store verdict
+    /// (`appFromOfficialStore` claim), when the issuer set it. Tamper-proof;
+    /// `Some(false)` routes username claims to the payment lane (spec FR-005).
+    pub app_from_official_store: Option<bool>,
 }
 
 /// An auth rejection, rendered as the legacy middleware's three 401
@@ -79,6 +83,7 @@ where
         Ok(AuthSubject {
             subject: claims.account_id,
             platform: claims.platform,
+            app_from_official_store: claims.app_from_official_store,
         })
     }
 }

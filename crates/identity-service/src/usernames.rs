@@ -51,8 +51,9 @@ fn is_valid_base(base: &str) -> bool {
 }
 
 /// The free discriminators for a base: `1..=99` minus the taken set (`00` is
-/// never offered). Shared so availability and registration agree on what's free.
-fn available_digits(taken: &BTreeSet<u8>) -> Vec<u8> {
+/// never offered). Shared so availability, registration, and the payment
+/// watcher's confirmation-time re-selection agree on what's free.
+pub(crate) fn available_digits(taken: &BTreeSet<u8>) -> Vec<u8> {
     (1..=99u8).filter(|d| !taken.contains(d)).collect()
 }
 
@@ -112,7 +113,11 @@ pub(crate) fn parse_json_body(body: &Bytes) -> UsernamesResult<Value> {
 /// `cors()` behavior; the response ETag legacy also emitted there is a
 /// recorded divergence — an entity tag on a POST response has no caching
 /// semantics).
-pub fn router() -> Router<AppState> {
+///
+/// `/payment-status` mounts only with the payment lane enabled — disabled it
+/// falls through to the global Hono plain-text 404, the same
+/// mounted-only-when-enabled contract as `/registration/queue`.
+pub fn router(payment_enabled: bool) -> Router<AppState> {
     let root = Router::new()
         .route(
             "/",
@@ -121,10 +126,18 @@ pub fn router() -> Router<AppState> {
                 .fallback(hono_not_found),
         )
         .layer(axum::middleware::from_fn(allow_any_origin));
-    root.route(
+    let routes = root.route(
         "/available",
         post(available::check).fallback(hono_not_found),
-    )
+    );
+    if payment_enabled {
+        routes.route(
+            "/payment-status",
+            axum::routing::get(crate::payment::status).fallback(hono_not_found),
+        )
+    } else {
+        routes
+    }
 }
 
 /// Stamp `access-control-allow-origin: *` on every collection-root response,

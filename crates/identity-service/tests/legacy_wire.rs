@@ -241,6 +241,50 @@ async fn replay(app: &axum::Router, fixture: &Fixture, token: &str) -> Observed 
 }
 
 #[tokio::test]
+async fn payment_status_route_is_mounted_only_when_payment_lane_enabled() {
+    let request = || {
+        Request::builder()
+            .method("GET")
+            .uri("/api/v1/usernames/payment-status")
+            .body(Body::empty())
+            .expect("request")
+    };
+
+    // Payment lane off (the default test config): the global Hono 404.
+    let disabled = offline_app(true, 100_000).await;
+    let observed = Observed::from(
+        disabled
+            .oneshot(request())
+            .await
+            .expect("disabled response"),
+    )
+    .await;
+    assert_eq!(observed.status, 404);
+    assert_eq!(observed.body_text, "404 Not Found");
+
+    // Payment lane on: the route exists and reaches its JWT extractor.
+    let mut config = Config::test_default();
+    config.payment = Some(identity_service::config::PaymentConfig {
+        master_account: [7u8; 32],
+        amount_planck: 10_000_000_000,
+        request_ttl: Duration::from_secs(3600),
+    });
+    let jwt = Jwt::new(&JWT_SEED, config.jwt_issuer.clone());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(50))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/nothing")
+        .expect("lazy pool");
+    let enabled =
+        identity_service::routes(AppState::new(pool, dead_chain_client().await, jwt, config));
+    let observed =
+        Observed::from(enabled.oneshot(request()).await.expect("enabled response")).await;
+    assert_eq!(
+        observed.status, 401,
+        "enabled route reaches its JWT extractor"
+    );
+}
+
+#[tokio::test]
 async fn registration_queue_route_is_mounted_only_when_enabled() {
     let request = || {
         Request::builder()

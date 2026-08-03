@@ -229,6 +229,11 @@ The **Genuineness + iOS Uniqueness** scope, implemented inside `identity-service
   - [ ] Enable `AUTH_ENABLED=true, ENFORCE_AUTH=false` (soft) on `identity.dotspark.app`; watch
         verdict logs across real iOS + Android release builds.
   - [ ] Flip `ENFORCE_AUTH=true` (hard) once soft-mode verdicts are clean.
+  - [ ] At the hard flip, revisit the eligibility slice's absent-verdict default: the claim
+        path treats a JWT without `appFromOfficialStore` as passing (old tokens, soft mode).
+        Once every live token carries a real verdict, decide whether absent should route to
+        the payment lane instead (`usernames/register.rs`, the FR-005 gate — coordinate with
+        `docs/plans/active/eligibility-payment.md` Phase 5).
   - [ ] Update `docs/architecture.md` (remaining-scope item 1), `.env.example`, runbook, and
         the API reference (`just openapi`) — same change as the code, per AGENTS.md.
   - **✅ Demo**: release iOS and Android apps complete challenge→attestation→JWT→registration

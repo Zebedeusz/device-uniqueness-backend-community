@@ -18,7 +18,7 @@ this gateway before the migration is complete.
 | Path | Upstream | Status |
 |---|---|---|
 | `/docs*` | static API reference (`file_server`) | committed artifact |
-| `GET /api/v1/usernames*` (search; bare-path GET and the removed `/{username}` lookup both 404) | `username-indexer` (:8081) | migrated |
+| `GET /api/v1/usernames*` (search; bare-path GET and the removed `/{username}` lookup both 404; **except `/payment-status`**, carved out to identity-api — the eligibility slice's poll) | `username-indexer` (:8081) | migrated |
 | `/api/v1/dim-ticket*` | `dim-tickets-api` (:8082) | migrated |
 | `/api/v1/invitation-ticket/*` | `invite-tickets-api` (:8083) | migrated |
 | `/api/v1/turn/*` | `turn-api` (:8084) | migrated |
