@@ -135,6 +135,10 @@ struct SearchRow {
 ///
 /// Takes the raw query-parameter map so validation failures can reproduce the
 /// captured zod bodies (which report every failing rule, not just the first).
+///
+/// Rows whose on-chain `identifier_key` predates chat-spec RFC-0004 (any type
+/// byte other than `0x00`/X25519) are omitted — the app cannot message those
+/// accounts, and filtering server-side keeps pages full.
 pub async fn search(
     pool: &PgPool,
     params: &HashMap<String, String>,
@@ -148,6 +152,18 @@ pub async fn search(
     // reproducing the legacy integer render; the v1 digits-length bound hides
     // lite rows whose digit suffix is longer than two characters, exactly as
     // the legacy store's `v1DigitsLengthBound` did.
+    //
+    // The `get_byte(identifier_key, 0) = 0` bound hides registrations whose
+    // on-chain encryption key predates chat-spec RFC-0004: the app can only
+    // message peers whose 65-byte container carries the X25519 type byte
+    // (`0x00`); pre-migration P-256 keys (SEC1 `0x04`) are unusable to it.
+    // Filtering here keeps client pages full instead of making the app drop
+    // rows post-pagination. The projection itself stays an unfiltered mirror
+    // of the chain.
+    //
+    // TODO: remove the `get_byte(identifier_key, 0) = 0` predicate (and the
+    // legacy-row expectation in `tests/pagination_live.rs`) once no assigned
+    // usernames carry a pre-RFC-0004 key any more.
     let rows = sqlx::query(
         "SELECT account_id, account_id_ss58,
                 COALESCE(full_username, lite_base || '.' || lite_digits::text)
@@ -158,6 +174,7 @@ pub async fn search(
          FROM assigned_usernames
          WHERE lower(display_username) COLLATE \"C\" LIKE $1 ESCAPE '\\'
            AND (full_username IS NOT NULL OR display_username ~ '\\.[0-9]{1,2}$')
+           AND get_byte(identifier_key, 0) = 0
            AND (
              $2::text IS NULL OR
              ROW(

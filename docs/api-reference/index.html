@@ -2061,7 +2061,7 @@ the PoUD gate and the registration queue. Ignored unless
                 <span class="sc-code c200">200</span>
                 <span class="sc-label">OK</span>
               </div>
-              <div class="sc-desc">Matching assigned usernames in continuation order.</div>
+              <div class="sc-desc">Matching assigned usernames in continuation order. Registrations whose on-chain identifier key predates chat-spec RFC-0004 (pre-X25519) are omitted — the app cannot message them.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">

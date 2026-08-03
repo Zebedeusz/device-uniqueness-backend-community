@@ -912,7 +912,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Matching assigned usernames in continuation order.",
+            "description": "Matching assigned usernames in continuation order. Registrations whose on-chain identifier key predates chat-spec RFC-0004 (pre-X25519) are omitted — the app cannot message them.",
             "content": {
               "application/json": {
                 "schema": {

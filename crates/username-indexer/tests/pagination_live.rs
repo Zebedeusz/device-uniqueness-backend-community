@@ -15,7 +15,8 @@
 //! ordering (numeric digit ordering `zqbase.2` before `zqbase.10`, plus a
 //! full-username shadowing case where two lite bases share one display name),
 //! then pages through with a small limit and asserts the global order is stable
-//! and no row appears twice across pages.
+//! and no row appears twice across pages. A row with a pre-RFC-0004 P-256
+//! identifier key is seeded first in sort order and must never surface.
 
 use std::collections::{HashMap, HashSet};
 
@@ -24,7 +25,20 @@ use sqlx::PgPool;
 
 use username_indexer::search::search;
 
-const ACCOUNTS: [[u8; 32]; 5] = [[0xE1; 32], [0xE2; 32], [0xE3; 32], [0xE4; 32], [0xE5; 32]];
+const ACCOUNTS: [[u8; 32]; 6] = [
+    [0xE1; 32], [0xE2; 32], [0xE3; 32], [0xE4; 32], [0xE5; 32], [0xE6; 32],
+];
+
+/// RFC-0004 on-chain container: `0x00` X25519 type byte + key + zero padding.
+const X25519_KEY: [u8; 65] = [0u8; 65];
+
+/// Pre-RFC-0004 uncompressed P-256 key (SEC1 `0x04` prefix) — search must
+/// hide rows carrying one.
+const LEGACY_P256_KEY: [u8; 65] = {
+    let mut key = [0x11u8; 65];
+    key[0] = 0x04;
+    key
+};
 
 #[tokio::test]
 #[ignore = "requires a live DATABASE_URL Postgres; run manually with --ignored"]
@@ -106,6 +120,7 @@ async fn seed(pool: &PgPool) {
         "zqalpha",
         "1",
         None,
+        X25519_KEY,
     )
     .await;
     insert_row(
@@ -116,6 +131,7 @@ async fn seed(pool: &PgPool) {
         "zqbeta",
         "1",
         None,
+        X25519_KEY,
     )
     .await;
     insert_row(
@@ -126,6 +142,7 @@ async fn seed(pool: &PgPool) {
         "zqgamma",
         "3",
         None,
+        X25519_KEY,
     )
     .await;
     insert_row(
@@ -136,6 +153,7 @@ async fn seed(pool: &PgPool) {
         "zqbase",
         "2",
         Some("Zqteam"),
+        X25519_KEY,
     )
     .await;
     insert_row(
@@ -146,10 +164,25 @@ async fn seed(pool: &PgPool) {
         "zqbase",
         "10",
         Some("Zqteam"),
+        X25519_KEY,
+    )
+    .await;
+    // Matches the `zq` prefix and would sort first, but carries a
+    // pre-RFC-0004 P-256 key — search must never surface it.
+    insert_row(
+        pool,
+        ACCOUNTS[5],
+        "acc-legacy",
+        "zqaaa.1",
+        "zqaaa",
+        "1",
+        None,
+        LEGACY_P256_KEY,
     )
     .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_row(
     pool: &PgPool,
     account_id: [u8; 32],
@@ -158,6 +191,7 @@ async fn insert_row(
     lite_base: &str,
     lite_digits: &str,
     full_username: Option<&str>,
+    identifier_key: [u8; 65],
 ) {
     let display_username = full_username.unwrap_or(lite_username);
     sqlx::query(
@@ -168,7 +202,7 @@ async fn insert_row(
     )
     .bind(account_id.as_slice())
     .bind(account_id_ss58)
-    .bind([0u8; 65].as_slice())
+    .bind(identifier_key.as_slice())
     .bind(lite_username)
     .bind(lite_base)
     .bind(lite_digits)

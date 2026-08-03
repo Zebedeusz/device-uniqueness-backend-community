@@ -119,7 +119,9 @@ pub(crate) async fn issue_puzzle(
             `POST /api/v1/poc/issue`. Single-use.")
     ),
     responses(
-        (status = 200, description = "Matching assigned usernames in continuation order.",
+        (status = 200, description = "Matching assigned usernames in continuation order. \
+            Registrations whose on-chain identifier key predates chat-spec RFC-0004 (pre-X25519) \
+            are omitted — the app cannot message them.",
          body = SearchResponse,
          example = json!({ "usernames": [], "nextCursor": null })),
         (status = 400, description = "Invalid query parameter (problem details with `errors`), \
