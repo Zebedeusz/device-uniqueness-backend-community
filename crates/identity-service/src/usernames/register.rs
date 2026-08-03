@@ -5,11 +5,13 @@
 //! verifies the `candidateSignature` proves control of the beneficiary
 //! account, selects the discriminator, and persists a `RESERVED` row in the
 //! reservation outbox before returning `202`. The `identity-chain-writer`
-//! binary drains the outbox onto People Chain. With `QUEUE_ENABLED` — and the
-//! `registration-queue` service alive — the row instead enters as `QUEUED`
-//! (the registration queue's intake lane, see [`crate::queue`]) and the 202
-//! body additionally reports `registrationOutcome: "QUEUED"` plus the claim's
-//! queue standing; a dead queue service falls back to the direct path here.
+//! binary drains the outbox onto People Chain. With `QUEUE_ENABLED` the row
+//! instead enters as `QUEUED` (the registration queue's intake lane, see
+//! [`crate::queue`]) and the 202 body additionally reports
+//! `registrationOutcome: "QUEUED"` plus the claim's queue standing — always,
+//! even with the queue service down: the queue is the free lane's throughput
+//! control, so parked claims wait for the advancer rather than falling back
+//! to the unthrottled direct path.
 //!
 //! Validation keeps the legacy three-phase zod semantics
 //! (`tests/fixtures/legacy-wire.json`):
@@ -353,17 +355,12 @@ pub async fn register(
         };
 
     // Queue intake waits as `QUEUED` (the spec's PoUD-pass lane, the only
-    // lane until the attestation slice) — but only while the registration-
-    // queue service is actually alive (its lease is fresh). Disabled or dead,
-    // the claim takes the original direct-to-`RESERVED` path and wire.
-    let queue_lane = state.config.queue_enabled
-        && match queue::advancer_alive(&state.pool).await {
-            Ok(alive) => alive,
-            Err(e) => {
-                tracing::warn!(error = %e, "queue liveness probe failed; using direct intake");
-                false
-            }
-        };
+    // lane until the attestation slice). The flag alone selects the lane:
+    // the queue is the throughput control for free registrations, so a dead
+    // (or never-deployed) advancer parks claims durably behind the throttle
+    // — drained in fair order when it returns — instead of silently
+    // reopening the unthrottled direct path.
+    let queue_lane = state.config.queue_enabled;
     let group = if queue_lane {
         Some(queue::intake_group(&state.chain, &auth.subject).await)
     } else {

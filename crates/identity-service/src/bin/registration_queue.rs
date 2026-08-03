@@ -1,9 +1,10 @@
 //! `registration-queue` — the standalone single-instance queue-advancer
 //! service. Holds the advancer lease (which doubles as the queue's liveness
-//! signal) and drains the registration queue by the spec's slot rules. If
-//! this process is down, `identity-api` and `identity-chain-writer` fall back
-//! to the original direct registration path on their own — see
-//! [`identity_service::queue`].
+//! signal) and drains the registration queue by the spec's slot rules. While
+//! `QUEUE_ENABLED` is on, this service's promotion is the only way a claim
+//! leaves the queue — if the process is down, claims park as `QUEUED` behind
+//! the free lane's throttle and the chain-writer raises a stranded-queue
+//! warning until it is restarted — see [`identity_service::queue`].
 
 use anyhow::Context as _;
 use tracing_subscriber::EnvFilter;

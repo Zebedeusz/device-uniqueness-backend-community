@@ -4,9 +4,9 @@
 //! `identity-chain-writer` (name `people-chain-writer`) and the
 //! `registration-queue` advancer (name [`crate::queue::ADVANCER_LEASE_NAME`]).
 //! A lease is a best-effort deploy-overlap guard, not a fence; it doubles as a
-//! **liveness signal**: `identity-api` and the writer read the advancer's
-//! lease freshness to decide when to fall back to the direct registration
-//! path (see `crate::queue`).
+//! **liveness signal**: the writer reads the advancer's lease freshness for
+//! its stranded-queue warning (queue enabled) and its janitor drain of
+//! leftover `QUEUED` rows (queue disabled) — see `crate::queue`.
 
 use std::time::Duration;
 
@@ -41,8 +41,9 @@ pub async fn try_acquire(
 
 /// Renew the lease. Returns `false` if it is no longer ours — including when
 /// it has already **expired**: an expired lease may have been observed as dead
-/// by the fallback paths, so the holder must go back through [`try_acquire`]
-/// (a new epoch) rather than silently resurrecting it.
+/// by the liveness readers (the stranded-queue warning, the janitor drain),
+/// so the holder must go back through [`try_acquire`] (a new epoch) rather
+/// than silently resurrecting it.
 pub async fn renew(
     pool: &PgPool,
     name: &str,
@@ -65,7 +66,7 @@ pub async fn renew(
 }
 
 /// Whether the named lease is currently held and unexpired — the liveness
-/// probe behind the queue-lane fallback decisions.
+/// probe behind the stranded-queue signal.
 pub async fn alive(pool: &PgPool, name: &str) -> Result<bool, sqlx::Error> {
     let row =
         sqlx::query("SELECT 1 AS held FROM writer_lease WHERE name = $1 AND expires_at > now()")

@@ -1,6 +1,6 @@
 //! Live-Postgres coverage for the registration queue: queued intake,
-//! slot-rule promotion (`advance_iteration`), the FIFO snapshot, and the
-//! queue-service liveness/fallback semantics.
+//! slot-rule promotion (`advance_iteration`), the FIFO snapshot, the
+//! stranded-queue liveness signal, and the flag-off janitor drain.
 
 use identity_service::chain::lease;
 use identity_service::chain::outbox::{self, NewReservation};
@@ -133,14 +133,21 @@ async fn advancer_promotes_by_slot_rules_until_the_queue_drains() {
         "RESERVED"
     );
 
-    // --- queue-service liveness + fallback (sequential with the phases
-    // above: fallback_drain is a global mutation) ------------------------
+    // --- queue-service liveness: the stranded warning signal + the
+    // flag-off janitor drain (sequential with the phases above:
+    // fallback_drain is a global mutation) -------------------------------
+    //
+    // With the queue ENABLED the writer never calls `fallback_drain` — rows
+    // park behind the throttle and `stranded_queued` feeds the operator
+    // warning. The drain assertions below are the QUEUE_ENABLED=false
+    // janitor semantics (retiring the queue must strand nothing).
 
     // No advancer lease ROW -> the queue service never ran here (or its state
-    // was wiped): intake's probe reports dead, and the fallback drain promotes
-    // stranded QUEUED rows IMMEDIATELY — the grace window deliberately applies
-    // only to an expired-but-present lease (a normal restart/deploy), because
-    // absence has no timestamp to measure a grace from.
+    // was wiped): the liveness probe reports dead, a queued row counts as
+    // stranded, and the janitor drain promotes IMMEDIATELY — the grace window
+    // deliberately applies only to an expired-but-present lease (a normal
+    // restart/deploy), because absence has no timestamp to measure a grace
+    // from.
     sqlx::query("DELETE FROM writer_lease WHERE name = $1")
         .bind(queue::ADVANCER_LEASE_NAME)
         .execute(&pool)
@@ -151,9 +158,13 @@ async fn advancer_promotes_by_slot_rules_until_the_queue_drains() {
     let stranded = outbox::insert_queued(&pool, &reservation(&base, "17", "queue-subject-x"), 3)
         .await
         .expect("insert stranded");
+    assert!(
+        queue::stranded_queued(&pool).await.expect("stranded count") >= 1,
+        "a queued row behind an absent lease counts as stranded"
+    );
     queue::fallback_drain(&pool, std::time::Duration::from_secs(60))
         .await
-        .expect("fallback drain");
+        .expect("janitor drain");
     let status: String = sqlx::query("SELECT status FROM username_reservations WHERE id = $1")
         .bind(stranded)
         .fetch_one(&pool)
@@ -163,10 +174,11 @@ async fn advancer_promotes_by_slot_rules_until_the_queue_drains() {
         .expect("status");
     assert_eq!(
         status, "RESERVED",
-        "dead queue service drains to the direct path"
+        "queue-disabled janitor drains rows behind an absent lease"
     );
 
-    // A live advancer lease flips both probes: intake queues, drain holds off.
+    // A live advancer lease: nothing is stranded, and even the janitor's
+    // drain holds off (a live advancer drains fairly first).
     let epoch = lease::try_acquire(
         &pool,
         queue::ADVANCER_LEASE_NAME,
@@ -181,6 +193,11 @@ async fn advancer_promotes_by_slot_rules_until_the_queue_drains() {
     let waiting = outbox::insert_queued(&pool, &reservation(&base, "18", "queue-subject-y"), 2)
         .await
         .expect("insert waiting");
+    assert_eq!(
+        queue::stranded_queued(&pool).await.expect("stranded count"),
+        0,
+        "a live advancer lease means queued rows are draining, not stranded"
+    );
     queue::fallback_drain(&pool, std::time::Duration::from_secs(60))
         .await
         .expect("fallback drain with live lease");
@@ -193,9 +210,10 @@ async fn advancer_promotes_by_slot_rules_until_the_queue_drains() {
         .expect("status");
     assert_eq!(status, "QUEUED", "live queue service keeps claims queued");
 
-    // Expired-but-PRESENT lease (a normal restart/deploy): the grace window
-    // holds the drain off, and only a longer outage drains. Renewal must also
-    // refuse the expired lease — the holder has to re-acquire a fresh epoch.
+    // Expired-but-PRESENT lease (a normal restart/deploy): the row is
+    // stranded (warning-worthy) but the janitor's grace window holds the
+    // drain off; only a longer outage drains. Renewal must also refuse the
+    // expired lease — the holder has to re-acquire a fresh epoch.
     sqlx::query(
         "UPDATE writer_lease SET expires_at = now() - interval '10 seconds' WHERE name = $1",
     )
@@ -204,6 +222,10 @@ async fn advancer_promotes_by_slot_rules_until_the_queue_drains() {
     .await
     .expect("expire advancer lease");
     assert!(!queue::advancer_alive(&pool).await.expect("probe"));
+    assert!(
+        queue::stranded_queued(&pool).await.expect("stranded count") >= 1,
+        "a queued row behind an expired lease counts as stranded"
+    );
     assert!(
         !lease::renew(
             &pool,

@@ -80,9 +80,12 @@ for key in JWT_ED25519_SECRET JWT_ED25519_PUBLIC_KEY JWT_JWKS_JSON \
 done
 require_key registration-queue QUEUE_ADVANCE_INTERVAL_SECS
 require_key registration-queue QUEUE_LEASE_TTL_SECS
-# The two wires the queue's fallback story hinges on: intake gating on the
-# api, and the stranded-row drain grace on the writer.
+# The wires the queue's throttle story hinges on: intake gating on the api,
+# and the SAME flag on the writer (on = hold the throttle, warn about
+# stranded rows; off = janitor drain after the grace window). Split values
+# would strand-or-unthrottle depending on which side is on.
 require_key identity-api QUEUE_ENABLED
+require_key identity-chain-writer QUEUE_ENABLED
 require_key identity-chain-writer QUEUE_FALLBACK_AFTER_SECS
 
 # username-indexer serves public reads and holds VERIFY-ONLY JWT material: the

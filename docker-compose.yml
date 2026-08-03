@@ -97,16 +97,20 @@ services:
       CHAIN_WRITER_BATCH_SIZE: ${CHAIN_WRITER_BATCH_SIZE:-25}
       CHAIN_WRITER_FINALIZE_SECS: ${CHAIN_WRITER_FINALIZE_SECS:-120}
       CHAIN_WRITER_MAX_ATTEMPTS: ${CHAIN_WRITER_MAX_ATTEMPTS:-8}
+      # Must match identity-api's QUEUE_ENABLED: on = QUEUED rows are never
+      # drained here (stranded-queue warning only); off = janitor drain.
+      QUEUE_ENABLED: ${QUEUE_ENABLED:-false}
       QUEUE_FALLBACK_AFTER_SECS: ${QUEUE_FALLBACK_AFTER_SECS:-60}
       RUST_LOG: ${RUST_LOG:-info}
     deploy:
       replicas: 1
 
-  # Registration-queue advancer: the optional-at-runtime queue service. Its
-  # Postgres lease is the queue's liveness signal — stop this service and
-  # identity-api + identity-chain-writer fall back to the original direct
-  # registration path on their own (nothing else depends on it). The lease
-  # also guards single-instance promotion; keep it at one replica.
+  # Registration-queue advancer: the queue's only drain while QUEUE_ENABLED
+  # is on. Its Postgres lease is the queue's liveness signal — stop this
+  # service and claims park as QUEUED behind the free lane's throttle (the
+  # chain-writer warns about the stranded rows; with QUEUE_ENABLED=false it
+  # instead drains leftovers). The lease also guards single-instance
+  # promotion; keep it at one replica.
   registration-queue:
     image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
     restart: unless-stopped

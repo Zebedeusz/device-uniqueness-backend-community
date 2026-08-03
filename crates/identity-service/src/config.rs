@@ -537,7 +537,7 @@ where
 /// value must be one of the accepted tokens (a case-insensitive superset of the
 /// legacy Effect `Config.boolean` values). An unrecognized value aborts startup
 /// rather than silently disabling a security gate (e.g. `AUTH_ENABLED=treu`).
-fn env_bool(key: &'static str, default: bool) -> Result<bool, ConfigError> {
+pub(crate) fn env_bool(key: &'static str, default: bool) -> Result<bool, ConfigError> {
     let Ok(raw) = std::env::var(key) else {
         return Ok(default);
     };

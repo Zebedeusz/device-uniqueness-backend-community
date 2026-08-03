@@ -29,7 +29,8 @@ use time::OffsetDateTime;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     /// Waiting in the registration queue (`QUEUE_ENABLED` intake). Entry state;
-    /// only the queue advancer moves it to `RESERVED`.
+    /// while the queue is enabled only the advancer moves it to `RESERVED`
+    /// (queue disabled: the chain-writer's janitor drains leftovers).
     Queued,
     /// Validated + persisted, not yet submitted. Entry state when the queue is
     /// disabled; otherwise reached via the advancer.

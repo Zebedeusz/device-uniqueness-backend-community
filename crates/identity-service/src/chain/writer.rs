@@ -57,9 +57,16 @@ pub struct WriterConfig {
     pub finalize_timeout: Duration,
     /// Max submit attempts before a row is failed terminally.
     pub max_attempts: i32,
-    /// How long the registration-queue advancer's lease may be expired before
-    /// this writer drains `QUEUED` rows itself (the queue-service-down
-    /// fallback to the original direct registration behavior).
+    /// Whether the registration queue is enabled (`QUEUE_ENABLED` — must
+    /// match identity-api's value). On: `QUEUED` rows are never drained here;
+    /// a dead advancer only raises the stranded-queue warning, keeping the
+    /// free lane's throttle intact. Off: this writer is the janitor that
+    /// drains leftover `QUEUED` rows so retiring the queue strands nothing.
+    pub queue_enabled: bool,
+    /// Janitor grace (queue disabled only): how long the advancer's lease may
+    /// be expired before leftover `QUEUED` rows are drained — the window that
+    /// lets a live advancer finish a fair drain during the retire sequence.
+    /// Doubles as the warning cadence while the queue is enabled.
     pub queue_fallback_after: Duration,
     /// Cadence of the payment watch pass (deposit detection + expiry over
     /// `payment_requests`). Read-only on chain; a no-op while the payment
@@ -104,6 +111,7 @@ impl WriterConfig {
             batch_size: env_u64("CHAIN_WRITER_BATCH_SIZE", 25) as i64,
             finalize_timeout: Duration::from_secs(env_u64("CHAIN_WRITER_FINALIZE_SECS", 120)),
             max_attempts: env_u64("CHAIN_WRITER_MAX_ATTEMPTS", 8) as i32,
+            queue_enabled: crate::config::env_bool("QUEUE_ENABLED", false)?,
             queue_fallback_after: Duration::from_secs(crate::queue::env_u64_strict(
                 "QUEUE_FALLBACK_AFTER_SECS",
                 60,
@@ -228,20 +236,45 @@ impl Writer {
 
     async fn active_loop(&mut self, guard: &Guard) -> anyhow::Result<()> {
         let mut last_payment_pass: Option<std::time::Instant> = None;
+        let mut last_stranded_check: Option<std::time::Instant> = None;
         loop {
             if !self.heartbeat(guard).await? {
                 anyhow::bail!("lost writer lease");
             }
-            // Queue-service-down fallback: if the registration-queue advancer
-            // has been dead past the grace window, drain its QUEUED rows into
-            // the normal path so no claim is ever stranded behind a dead queue.
-            match crate::queue::fallback_drain(&self.pool, self.config.queue_fallback_after).await {
-                Ok(0) => {}
-                Ok(drained) => tracing::warn!(
-                    drained,
-                    "queue advancer is down; promoted queued claims directly"
-                ),
-                Err(e) => tracing::warn!(error = %e, "queue fallback drain failed"),
+            if self.config.queue_enabled {
+                // The queue is the free lane's throttle: never drain QUEUED
+                // rows while it is enabled. A dead advancer with claims
+                // waiting is an operator page, raised here (the always-on
+                // process already scanning the outbox) at the grace cadence.
+                if last_stranded_check
+                    .is_none_or(|t| t.elapsed() >= self.config.queue_fallback_after)
+                {
+                    last_stranded_check = Some(std::time::Instant::now());
+                    match crate::queue::stranded_queued(&self.pool).await {
+                        Ok(0) => {}
+                        Ok(stranded) => tracing::warn!(
+                            stranded,
+                            "queue advancer is down with claims queued; holding the throttle \
+                             (queue enabled — not draining). Restart registration-queue, or \
+                             retire the queue by setting QUEUE_ENABLED=false everywhere."
+                        ),
+                        Err(e) => tracing::warn!(error = %e, "stranded-queue check failed"),
+                    }
+                }
+            } else {
+                // Queue disabled: janitor duty — drain QUEUED rows left from
+                // when it was on, once the advancer lease has been dead past
+                // the grace window (a live advancer drains fairly first).
+                match crate::queue::fallback_drain(&self.pool, self.config.queue_fallback_after)
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(drained) => tracing::warn!(
+                        drained,
+                        "queue disabled with advancer gone; promoted leftover queued claims"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "queue janitor drain failed"),
+                }
             }
             // Payment watch pass (eligibility slice): expire stale quotes and
             // hand confirmed deposits to the outbox. Read-only on chain — the

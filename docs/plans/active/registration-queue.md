@@ -137,6 +137,14 @@ queued usernames on-chain in batches every N seconds.
   "measured optimization waits" principle).
 
 ## Phase 4: queue as an isolated service — a dead queue can't brick claims ✅ 2026-07-27
+
+> **Superseded 2026-08-03** (`docs/plans/active/queue-down-free-lane.md`): the
+> two fallbacks below no longer run while `QUEUE_ENABLED` is on — intake
+> always queues (the flag alone selects the lane) and the writer's drain is
+> now the flag-off janitor; a dead advancer parks claims and raises the
+> writer's stranded-queue warning. The checklist is kept as the record of
+> what shipped in this phase.
+
 - **Goal**: the queue is its own runtime service; unavailable, the backend
   falls back to the original direct registration behavior (user decision).
 - **Scope checklist**:
@@ -252,10 +260,15 @@ findings were visibility and hygiene:
 - Spec slot algebra: per iteration at most 4 promotions; slot k eligible
   groups `≥ 5−k`; earliest `(created_at, id)` wins; picked rows leave the
   pool before the next slot; empty eligible set skips the slot.
-- **Queue-service unavailability degrades, never blocks**: with the advancer
-  lease stale, new claims insert `RESERVED` directly (original wire) and
-  already-queued claims are drained by the writer after the grace window —
-  no claim is ever stranded behind a dead queue service.
+- **Queue-service unavailability parks, never unthrottles** *(amended
+  2026-08-03 by `docs/plans/active/queue-down-free-lane.md` — the original
+  contract here silently fell back to direct intake, defeating the queue's
+  throughput control)*: with `QUEUE_ENABLED=true`, every free-lane claim
+  inserts `QUEUED` and only advancer promotion moves it out; a stale/absent
+  advancer lease leaves claims parked (durable, drained fairly on restart)
+  and raises the chain-writer's stranded-queue warning. With
+  `QUEUE_ENABLED=false` the writer's janitor drain still guarantees no row
+  is ever stranded behind a retired queue.
 - Group boundaries in planck (10-decimal DOT): `<10` → 1, `≥10` → 2,
   `≥100` → 3, `≥1000` → 4.
 
@@ -265,9 +278,14 @@ findings were visibility and hygiene:
   by the user 2026-07-27:** the queue is its own runtime service
   (`registration-queue` bin, still inside the identity-service crate/secret
   boundary) and an **isolated failure domain**: its lease doubles as the
-  liveness signal, and both intake and the writer fall back to the original
-  direct registration path when it is not alive. A queue outage degrades
-  priority fairness, never availability of registration.
+  liveness signal. *Fallback clause amended 2026-08-03
+  (`docs/plans/active/queue-down-free-lane.md`):* originally both intake and
+  the writer fell back to the direct path when the advancer was not alive;
+  since the queue is the free lane's throughput control, that fallback is
+  gone — a queue outage now stalls free-registration *progress* (claims park
+  as `QUEUED`, intake stays available and wire-identical) rather than
+  reopening the unthrottled direct path. The writer's drain survives only as
+  the `QUEUE_ENABLED=false` janitor.
 - **Estimates are a deterministic drain simulation** of the current snapshot
   (not a formula): exact w.r.t. the spec's slot rules, cheap (O(n) integer
   work), and directly unit-testable. `queuePosition` = pick order,

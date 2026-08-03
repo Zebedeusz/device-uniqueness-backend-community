@@ -62,7 +62,7 @@ create now. See "How the workspace grows" below.
 
 | Service | Responsibility | Processes |
 |---|---|---|
-| `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. | `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker) + `registration-queue` (single-instance queue advancer; **optional at runtime** — with it down, api and writer fall back to the direct registration path) |
+| `identity-service` | Device **attestation** + auth handshake + **sole JWT issuer** + username **write** path + **eligibility/queue** + reservation **outbox**. | `identity-api` (N replicas) + `identity-chain-writer` (single-instance outbox→chain worker) + `registration-queue` (single-instance queue advancer; with `QUEUE_ENABLED` on its promotion is the only queue exit — down, claims park as `QUEUED` behind the free lane's throttle and the writer raises the stranded-queue warning) |
 | `username-indexer` | Finalized-chain username **indexer + public reads**: prefix search (`GET /api/v1/usernames/search`, paginated, per-IP rate limited) plus the optional proof-of-compute gate and its `POST /api/v1/poc/issue` puzzle issuance. The single-username lookup (`GET /api/v1/usernames/{username}`) is retired in favour of `search` and serves the Hono 404, like the sunset list endpoint. Read-only projection; can be down without affecting registration. | `username-indexer` (+ own Postgres) |
 | `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. No `depends_on`. iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. | `notify-relay` |
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. | `turn-api` |
@@ -152,28 +152,33 @@ Operational invariants an agent must respect when touching the code.
   position/group/ETA by simulating that drain over the current snapshot; the claim response
   gains additive `registrationOutcome: "QUEUED"` + `queue` fields (the frozen queue-disabled
   wire is untouched).
-- **The queue service can be down without bricking registration.** The `registration-queue`
-  advancer holds a `writer_lease` row (`registration-queue-advancer`) that doubles as its
-  liveness signal and single-instance guard. `identity-api` intake queues a claim **only while
-  that lease is fresh** — otherwise the claim inserts `RESERVED` directly (the original
-  behavior, original wire, no queue fields). The `identity-chain-writer` runs the second
-  fallback: once the lease has been **expired** longer than `QUEUE_FALLBACK_AFTER_SECS`
-  (default 60), it drains any stranded `QUEUED` rows to `RESERVED` itself, so claims queued
-  before the advancer died still register (an **absent** lease row — service never deployed
-  or state wiped — drains immediately: there is no timestamp to grace from, and the safe
-  direction is the direct path). `lease::renew` refuses an already-expired lease, so a
-  stalled-then-recovered advancer re-acquires a fresh epoch instead of silently resurrecting
-  a lease the fallbacks may have acted on; during long iterations the advancer renews
-  concurrently with the work. Both fallbacks are automatic and self-healing: a restarted
-  advancer re-acquires the lease and the queue lane reopens on its own.
+- **A down queue service parks claims; it never unthrottles them.** The queue is the free
+  lane's throughput control, so `QUEUE_ENABLED` alone is the policy: while it is on, every
+  free-lane claim inserts as `QUEUED` and advancer promotion is the only queue exit. The
+  `registration-queue` advancer holds a `writer_lease` row (`registration-queue-advancer`)
+  that doubles as its liveness signal and single-instance guard — but liveness only affects
+  *progress*: a dead (or never-deployed) advancer leaves claims parked durably behind the
+  throttle, drained in fair slot order when it restarts, and the `identity-chain-writer`
+  raises a stranded-queue warning (paced by `QUEUE_FALLBACK_AFTER_SECS`) as the operator
+  signal. With `QUEUE_ENABLED` **off**, the writer is the janitor: once the advancer lease
+  has been expired longer than `QUEUE_FALLBACK_AFTER_SECS` (default 60) it drains leftover
+  `QUEUED` rows to `RESERVED` itself (an **absent** lease row drains immediately — with the
+  queue disabled nothing else would ever promote them), so retiring the queue strands
+  nothing. `lease::renew` refuses an already-expired lease, so a stalled-then-recovered
+  advancer re-acquires a fresh epoch instead of silently resurrecting a lease the janitor
+  may have acted on; during long iterations the advancer renews concurrently with the work.
+  `identity-api` and `identity-chain-writer` read the **same** `QUEUE_ENABLED` value and
+  must never be deployed split: a mismatch either strands rows (writer on, api off) or
+  drains a queue the api is still filling (writer off, api on).
 - **Flipping `QUEUE_ENABLED` off is safe with rows still queued, but degrades visibility.**
   The flag gates only intake and the status route's mounting (`/api/v1/registration/queue`
   unmounts → plain-text 404; clients are documented to treat any 404 as "no longer queued,
   registration proceeding"). Promotion never consults the flag: a live advancer keeps draining
-  queued rows, and a stopped one hands off to the writer's lease-based fallback drain — so
-  nothing strands, but users mid-queue lose their standing display (and a rolling flag flip
-  serves mixed answers across replicas). Preferred sequence when retiring the queue: flag off
-  (intake stops), let the advancer drain the remainder, then stop the advancer. Known
+  queued rows, and a stopped one hands off to the writer's janitor drain (which runs only
+  while the writer's own flag is off) — so nothing strands, but users mid-queue lose their
+  standing display (and a rolling flag flip serves mixed answers across replicas). Preferred
+  sequence when retiring the queue: flag off everywhere, writer last (intake stops first),
+  let the advancer drain the remainder, then stop the advancer. Known
   API-shape limitation: an account with several queued claims sees only the earliest one's
   standing (the spec's response is a single object).
 - **Registration is authorized by `candidateSignature`, not the JWT subject.** `POST

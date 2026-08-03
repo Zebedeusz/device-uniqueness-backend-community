@@ -19,13 +19,17 @@
 //! `GET /api/v1/registration/queue` reports the caller's position by
 //! deterministically simulating that drain over the current snapshot.
 //!
-//! **The queue service is optional at runtime.** Its Postgres lease
-//! ([`ADVANCER_LEASE_NAME`]) is the liveness signal: while it is fresh,
-//! intake queues claims; once it lapses, `identity-api` falls back to direct
-//! `RESERVED` intake immediately, and the chain-writer's [`fallback_drain`]
-//! promotes any stranded `QUEUED` rows after a grace window. A dead queue
-//! service therefore degrades to the original pre-queue behavior instead of
-//! blocking registration.
+//! **The flag is the policy; liveness only affects progress.** The queue is
+//! the throughput control for free registrations, so while `QUEUE_ENABLED`
+//! is on every free-lane claim enters as `QUEUED` and only advancer
+//! promotion moves it out — a dead queue service parks claims (durable,
+//! drained in fair order on recovery) and is surfaced through the writer's
+//! stranded-queue warning ([`stranded_queued`]), never by silently reopening
+//! the unthrottled direct path. With `QUEUE_ENABLED` off, intake is direct
+//! and the chain-writer acts as the janitor: [`fallback_drain`] promotes any
+//! leftover `QUEUED` rows once the advancer lease ([`ADVANCER_LEASE_NAME`],
+//! the liveness signal) has lapsed past a grace window, so retiring the
+//! queue never strands a row.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -276,9 +280,9 @@ pub async fn advance_iteration(pool: &PgPool) -> Result<Vec<Promoted>, sqlx::Err
 }
 
 /// The advancer's lease row name. The lease is both the single-instance guard
-/// for the `registration-queue` service and its **liveness signal**: intake
-/// (`identity-api`) and the fallback drain (`identity-chain-writer`) read its
-/// freshness to decide when to bypass the queue.
+/// for the `registration-queue` service and its **liveness signal**: the
+/// chain-writer reads its freshness to decide between the stranded-queue
+/// warning (queue enabled) and the janitor drain (queue disabled).
 pub const ADVANCER_LEASE_NAME: &str = "registration-queue-advancer";
 
 /// `registration-queue` service configuration, loaded from the environment.
@@ -327,9 +331,9 @@ impl AdvancerConfig {
 /// `interval + lease_ttl/3` (the sleep between iterations plus up to one
 /// renewal-ticker period since the last in-work renew), so the TTL must
 /// exceed *that*, not merely the interval — otherwise a healthy advancer's
-/// lease flaps every iteration and the fallback paths fire against a live
-/// service. A zero interval is rejected too (it would hot-loop against
-/// Postgres and the RPC).
+/// lease flaps every iteration and the writer's stranded-queue warning (or,
+/// queue-disabled, its janitor drain) fires against a live service. A zero
+/// interval is rejected too (it would hot-loop against Postgres and the RPC).
 fn validate_cadence(interval: Duration, lease_ttl: Duration) -> anyhow::Result<()> {
     anyhow::ensure!(
         interval >= Duration::from_secs(1),
@@ -362,21 +366,42 @@ pub(crate) fn env_u64_strict(key: &'static str, default: u64) -> anyhow::Result<
 }
 
 /// Whether the `registration-queue` service is live (its lease is held and
-/// unexpired). `identity-api` intake queues claims only while this is true;
-/// otherwise claims take the original direct path.
+/// unexpired). Purely observational — intake queues on the flag alone; this
+/// feeds the writer's stranded-queue warning and tests.
 pub async fn advancer_alive(pool: &PgPool) -> Result<bool, sqlx::Error> {
     lease::alive(pool, ADVANCER_LEASE_NAME).await
 }
 
-/// The queue-service-down fallback, run by the chain-writer: promote every
-/// `QUEUED` row to `RESERVED` once the advancer's lease has been **expired
-/// for longer than `grace`** — the window that lets a normal advancer
-/// restart/deploy pass without draining the queue (the lease row survives
-/// those). An **absent** lease row drains immediately and deliberately so:
-/// absence means the service was never deployed or its state was wiped, no
-/// timestamp exists to measure a grace from, and the safe direction is the
-/// spec-approved direct path, not an indefinitely stranded queue. Returns
-/// the number of rows drained (normally 0 in one cheap statement).
+/// Count of `QUEUED` rows stranded behind a dead advancer (lease absent or
+/// expired). Always 0 while the advancer is alive — a live queue is draining,
+/// not stranded. The chain-writer logs this while the queue is enabled: with
+/// intake parking claims regardless of liveness, this warning is the
+/// operator's signal that the throttle is holding but nothing is draining.
+pub async fn stranded_queued(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT count(*) AS stranded FROM username_reservations \
+         WHERE status = 'QUEUED' \
+           AND NOT EXISTS (SELECT 1 FROM writer_lease \
+                           WHERE name = $1 AND expires_at > now())",
+    )
+    .bind(ADVANCER_LEASE_NAME)
+    .fetch_one(pool)
+    .await?;
+    row.try_get("stranded")
+}
+
+/// The queue-retirement janitor, run by the chain-writer **only while
+/// `QUEUE_ENABLED` is off** (with the flag on, stranded rows wait for the
+/// advancer — draining them would bypass the free lane's throttle): promote
+/// every `QUEUED` row to `RESERVED` once the advancer's lease has been
+/// **expired for longer than `grace`** — the window that lets a live
+/// advancer finish a fair drain during the documented retire sequence
+/// (flag off → advancer drains → stop advancer). An **absent** lease row
+/// drains immediately and deliberately so: absence means the service was
+/// never deployed or its state was wiped, no timestamp exists to measure a
+/// grace from, and with the queue disabled nothing else would ever promote
+/// the rows. Returns the number of rows drained (normally 0 in one cheap
+/// statement).
 pub async fn fallback_drain(pool: &PgPool, grace: Duration) -> Result<u64, sqlx::Error> {
     let done = sqlx::query(
         "UPDATE username_reservations SET status = 'RESERVED', updated_at = now() \
@@ -396,8 +421,10 @@ pub async fn fallback_drain(pool: &PgPool, grace: Duration) -> Result<u64, sqlx:
 /// another instance has it), then every `interval` renew it, refresh groups
 /// from chain, and run one promotion iteration. Per-iteration errors are
 /// logged and the loop continues; a lost lease drops back to acquisition. If
-/// the process dies, the lease expires and intake + the writer's
-/// [`fallback_drain`] restore the original direct behavior on their own.
+/// the process dies while the queue is enabled, claims keep parking as
+/// `QUEUED` behind the throttle and the chain-writer raises the
+/// stranded-queue warning until this service is restarted (queue disabled:
+/// the writer's [`fallback_drain`] janitor drains the leftovers).
 pub async fn run_advancer(pool: PgPool, chain: ChainClient, config: AdvancerConfig) {
     tracing::info!(
         interval_secs = config.interval.as_secs(),
@@ -456,8 +483,9 @@ pub async fn run_advancer(pool: PgPool, chain: ChainClient, config: AdvancerConf
 
             // Keep renewing while the iteration works: a large queue's group
             // refresh can outlast the lease TTL, and letting it lapse
-            // mid-iteration would flip intake to the direct path and invite
-            // the writer's fallback drain while we are still promoting.
+            // mid-iteration would make a healthy advancer look dead — firing
+            // the writer's stranded-queue warning (or, queue-disabled, its
+            // janitor drain) while we are still promoting.
             let work = async {
                 // The refresh is the only chain-dependent step, so it gets a
                 // hard deadline: a degraded RPC must not stall *draining*
