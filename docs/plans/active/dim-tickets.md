@@ -263,6 +263,13 @@ the apps use the synchronous claim flow instead.)
 - Chain types come from `chain-types` only; transport + signing live in this service.
 
 # Key decisions
+- **Inviter nonce lane vs invite-tickets-pool** (decided 2026-08-04, cross-slice with the
+  invite-claim plan): the two chain-submitting bins use **distinct inviter accounts**. Compose
+  interpolates this writer's signer from `INVITER_*` (dev default `//Alice`) and
+  `invite-tickets-pool`'s from `INVITE_INVITER_*` (dev default `//Bob`), so they cannot coincide
+  by default; `docs/deploy.md` ("Nonce lanes") mandates distinct accounts in production —
+  e.g. separate proxy delegates of one cold inviter primary. Deploying this writer therefore
+  needs its own funded inviter account, never the invite pool's.
 - **Service name** (decided 2026-07-16): `dim-tickets`. Update architecture.md vocabulary when the
   crate is created.
 - **Data migration** (decided 2026-07-16): start **fresh** — no legacy row copy in this slice. The

@@ -36,6 +36,19 @@ Notable captured facts:
 - Wrong method / collection path / unknown path → the Hono plain-text
   `404 Not Found`.
 
+## Live parity smoke (2026-08-04)
+
+`capture/smoke-invite-claim.live.mjs` re-ran this matrix against the REAL legacy
+backend (bun, `TZ=UTC`, `JWT_AUTH_ENFORCED=true`, scratch Postgres) and the live
+`invite-tickets-api` side by side, with identical keypairs/timestamps seeded
+into both pools; run it from `apps/identity-backend/` in the legacy repo (it
+resolves `jose`/`pg`/schnorrkel from that repo's node_modules) with
+`FIXTURES_PATH` and `RUST_TOKEN` set. All static pairs were byte-equal on both
+backends; claims matched FIFO/keys/signatures. Finding: legacy's `remaining`
+races its claim transaction's commit (the COUNT can read the pre-commit state,
+reporting +1); this service counts after commit — the transcribed contract —
+so the smoke pins rust exactly and tolerates legacy at value/value+1.
+
 ## Approximations (each is deliberate and bounded)
 
 - **Global error hook**: the harness reproduces the two terminal branches of

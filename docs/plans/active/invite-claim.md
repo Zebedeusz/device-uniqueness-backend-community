@@ -180,11 +180,15 @@ Legacy sources: `apps/identity-backend/src/routes/v1/invitation-ticket.{routes,s
         across chain waits.
   - [x] (2026-07-22) Single-instance invariant: compose `replicas: 1` + a per-tick Postgres
         advisory lock (skip-if-held), so a deploy overlap cannot double-submit.
-  - [ ] **Inviter nonce-lane decision (blocking, cross-slice)**: `dim-tickets-writer` and this bin
-        both submit as "the inviter". Two independent submitters on one account race nonces.
-        Resolve before deploying both: distinct inviter accounts (e.g. separate proxies of the
-        same cold primary) per service, or a decision that dim-tickets' writer does not deploy
-        (it has no client consumer). Record the outcome here and in the dim-tickets plan.
+  - [x] (2026-08-04) **Inviter nonce-lane decision (blocking, cross-slice)**: resolved as
+        **distinct inviter accounts per submitting service**. Compose interpolates the two
+        signers from disjoint host-variable namespaces — `INVITER_*` (dim-tickets-writer, dev
+        default `//Alice`) vs `INVITE_INVITER_*` (this bin, dev default `//Bob`) — so the two
+        bins cannot share a signing account by default, and `docs/deploy.md` ("Nonce lanes")
+        mandates distinct accounts in production (e.g. separate proxy delegates of one cold
+        inviter primary). This makes the invariant independent of whether `dim-tickets-writer`
+        ever deploys (it currently has no client consumer). Recorded in the dim-tickets plan's
+        Key decisions too.
   - [x] (2026-07-22) Fail-fast config (`MaintainerConfig::from_env`): required
         `DATABASE_URL`/`PEOPLE_RPC_URL`/`PEOPLE_NETWORK`/`INVITER_ADDRESS`/`INVITER_SIGNER_SURI`,
         optional `INVITER_PROXY_FOR` + `POOL_DIMS`, bounded tunables; validates the effective
@@ -214,16 +218,42 @@ Legacy sources: `apps/identity-backend/src/routes/v1/invitation-ticket.{routes,s
         `invite-tickets-pool` (`replicas: 1`); the inviter SURI reaches only the pool service's
         environment; api `/readyz` gates on its DB only (no chain). Dockerfile builds both bins;
         deploy.md carries the Caddy route + secret boundary; runbook carries the failure modes.
-  - [ ] Prove identity-service, username-indexer, and the others stay healthy with this service
-        stopped, and vice versa.
-  - [ ] End-to-end smoke vs the legacy backend on the same dev chain: same JWT, same request →
-        contract-equal responses (golden fixtures re-run against both).
+  - [x] (2026-08-04) Prove identity-service, username-indexer, and the others stay healthy with
+        this service stopped, and vice versa. Ran against the full compose stack: with
+        `invite-tickets-{api,pool,postgres}` stopped, all five sibling APIs (identity-api,
+        username-indexer, dim-tickets-api, turn-api, notify-relay) answered `/readyz` 200 on
+        9 polls over 45s (0 failures) and the workers stayed up; with ALL siblings stopped
+        (identity-api, chain-writer, registration-queue, username-indexer, dim-tickets-api/writer,
+        turn-api, notify-relay), invite-tickets-api answered `/readyz` 200 on 6 polls over 30s and
+        served a real authenticated claim (frozen 200 body) from its own DB — JWT verified
+        offline via the dev public key, no identity-service needed.
+  - [x] (2026-08-04) End-to-end smoke vs the legacy backend: contract-equal responses proven
+        live. The REAL legacy backend (repo `main`, superset of capture commit `c8369d9`; bun,
+        `TZ=UTC`, `JWT_AUTH_ENFORCED=true`, throwaway migrated Postgres) and `invite-tickets-api`
+        (compose) were seeded with **identical** ticket pools (same sr25519 keypairs, same
+        `created_at`s), then the golden matrix was replayed against both live servers (harness
+        archived at `tests/fixtures/capture/smoke-invite-claim.live.mjs`): all 17 static pairs
+        (401 trio, 400 matrix, malformed JSON, missing-content-type 500, three 404s) byte-equal
+        across legacy-live / rust-live / fixture; 3 claims (Game×2, ProofOfInk×1) picked the same
+        FIFO ticket on both sides, signatures sr25519-verified over the decoded account id, and
+        normalized bodies matched; 422 after drain byte-equal; end DB states identical. "Same
+        JWT" is per-backend by design: legacy verifies HS256, this service Ed25519 — same
+        subject, both minted for the run (the algorithm split is the recorded fixtures
+        approximation). One divergence found and accepted: **legacy's `remaining` has a
+        pre-commit count race** (its post-claim COUNT can run before the claim transaction
+        commits — `resume()` fires inside the tx callback — so it reports +1 on a fresh
+        connection's read). This service counts after commit, which is the transcribed contract
+        ("`remaining` = count of `available` **after** the claim"); the smoke tolerates
+        legacy at expected/expected+1 and pins rust to the exact value.
   - [x] (2026-07-22) Pool-size alert threshold documented in the runbook (sustained
         `available < ~10%` of target).
   - [x] (2026-07-22) `docs/architecture.md` updated (service tables, crate statuses, the
         invite-tickets invariants block); `.env.example` documents the new service.
-- **✅ Demo**: `docker compose up` serves a real app-shaped claim flow with the pool refilling;
-  parity fixtures pass against both backends.
+- **✅ Demo (parity half passed 2026-08-04)**: `docker compose up` serves a real app-shaped claim
+  flow (authenticated claim over real HTTP from the compose stack, isolation proven both ways)
+  and the parity fixtures pass against both live backends (see the smoke item above). The
+  pool-refilling half remains gated on a funded inviter with Game/ProofOfInk quota — the same
+  standing gap as Phase 2's `registered > 0` demo; everything else in this phase is done.
 - **Risks**: release-device validation is a separate later slice (roadmap item); do not gate this
   phase on physical devices.
 
