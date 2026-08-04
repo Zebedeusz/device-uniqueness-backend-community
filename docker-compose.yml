@@ -16,8 +16,6 @@ services:
       POSTGRES_USER: identity
       POSTGRES_PASSWORD: identity
       POSTGRES_DB: identity
-    ports:
-      - "${IDENTITY_POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -59,8 +57,10 @@ services:
       DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: ${DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS:-600}
       DOTNS_MAX_FUTURE_SKEW_SECS: ${DOTNS_MAX_FUTURE_SKEW_SECS:-600}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "8080:8080"
+    networks:
+      default: {}
+      edge:
+        aliases: ["identity-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
       interval: 10s
@@ -138,8 +138,6 @@ services:
       POSTGRES_USER: username_indexer
       POSTGRES_PASSWORD: username_indexer
       POSTGRES_DB: username_indexer
-    ports:
-      - "5433:5432"
     volumes:
       - username_indexer_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -150,7 +148,7 @@ services:
 
   # Independent public username-read service. Bootstraps a finalized projection
   # from People Chain, then serves rate-limited prefix search.
-  # Reuses the image built by identity-api. Runs on host port 8081.
+  # Reuses the image built by identity-api.
   username-indexer:
     build: .
     image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
@@ -182,15 +180,19 @@ services:
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "8081:8080"
+    networks:
+      default: {}
+      edge:
+        aliases: ["username-indexer-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
       # Covers migrations + the finalized bootstrap scan + People Chain connect.
-      start_period: 120s
+      # The scan is the long pole on a first boot against a populated chain, and
+      # a health failure during it would restart the scan from the beginning.
+      start_period: 300s
 
   # dim-tickets owns its persistence independently of the identity DB: the game
   # ticket state machine can be wiped or rebuilt without touching auth state.
@@ -201,8 +203,6 @@ services:
       POSTGRES_USER: ${DIM_TICKETS_POSTGRES_USER:-dim_tickets}
       POSTGRES_PASSWORD: ${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}
       POSTGRES_DB: ${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
-    ports:
-      - "127.0.0.1:${DIM_TICKETS_POSTGRES_PORT:-5434}:5432"
     volumes:
       - dim_tickets_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -213,7 +213,6 @@ services:
 
   # N-replica HTTP API for the frozen /api/v1/dim-ticket surface. Verify-only:
   # holds the identity JWT PUBLIC key only, never a signing secret. Runs on
-  # host port 8082. Applies embedded migrations on boot.
   dim-tickets-api:
     build: .
     image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
@@ -236,8 +235,10 @@ services:
       RATE_LIMIT: ${RATE_LIMIT:-30}
       RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "8082:8080"
+    networks:
+      default: {}
+      edge:
+        aliases: ["dim-tickets-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
       interval: 10s
@@ -284,7 +285,6 @@ services:
 
   # invite-tickets owns its persistence independently: the ticket-pool table
   # holds private keys and must share nothing with the identity DB.
-  # Host port 5435 (5434 is dim-tickets').
   invite-tickets-postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -292,8 +292,6 @@ services:
       POSTGRES_USER: invite_tickets
       POSTGRES_PASSWORD: invite_tickets
       POSTGRES_DB: invite_tickets
-    ports:
-      - "5435:5432"
     volumes:
       - invite_tickets_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -304,8 +302,7 @@ services:
 
   # N-replica claim API for the frozen /api/v1/invitation-ticket/claim route.
   # DB-only (never touches the People Chain) and holds no signing secret —
-  # explicit environment, no .env pass-through. Host port 8083 (8082 is
-  # dim-tickets-api's).
+  # explicit environment, no .env pass-through.
   invite-tickets-api:
     build: .
     image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
@@ -326,8 +323,10 @@ services:
       RATE_LIMIT: ${RATE_LIMIT:-30}
       RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "8083:8080"
+    networks:
+      default: {}
+      edge:
+        aliases: ["invite-tickets-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
       interval: 10s
@@ -374,7 +373,7 @@ services:
   # TURN credential issuer: stateless (no DB, no chain) — the only secret is
   # the HMAC key shared with the TURN relay (coturn `--use-auth-secret` mode
   # must be configured with the SAME secret and algorithm, or minted
-  # credentials will not authenticate). Safe to scale. Host port 8084.
+  # credentials will not authenticate). Safe to scale.
   turn-api:
     build: .
     image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
@@ -398,8 +397,10 @@ services:
       RATE_LIMIT: ${RATE_LIMIT:-30}
       RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "8084:8080"
+    networks:
+      default: {}
+      edge:
+        aliases: ["turn-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
       interval: 10s
@@ -410,8 +411,7 @@ services:
   # stopping it or giving it invalid provider secrets can only fail
   # `/api/v1/notify`. Verify-only: holds the JWT public key, never a signing key.
   # Push secrets are service-owned (from the server's chmod-600 .env); absent
-  # providers report per-request failure without affecting readiness. Host port
-  # 8085 (8083 is invite-tickets', 8084 is turn's).
+  # providers report per-request failure without affecting readiness.
   notify-relay:
     build: .
     image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
@@ -437,8 +437,10 @@ services:
     # -> stub. Must exist before deploy, readable by uid 10001; see docs/deploy.md.
     volumes:
       - ${APNS_KEY_FILE:-/dev/null}:/run/secrets/notify/apns.p8:ro
-    ports:
-      - "8085:8080"
+    networks:
+      default: {}
+      edge:
+        aliases: ["notify-relay-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
       interval: 10s
@@ -446,40 +448,16 @@ services:
       retries: 5
       start_period: 5s
 
-  # The single-URL gateway: the same committed gateway/Caddyfile production's
-  # host Caddy installs, here serving plain HTTP on :8000 with upstreams
-  # pointed at the compose service names. Holds NO secrets (enforced by
-  # scripts/verify_compose_boundaries.sh) — it terminates and routes, nothing
-  # else. Per-service host ports (8080–8085) stay published for direct
-  # debugging; clients use the gateway.
-  gateway:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    environment:
-      GATEWAY_ADDRESS: ":8000"
-      GATEWAY_DOCS_ROOT: /srv/docs
-      IDENTITY_UPSTREAM: identity-api:8080
-      USERNAME_INDEXER_UPSTREAM: username-indexer:8080
-      DIM_TICKETS_UPSTREAM: dim-tickets-api:8080
-      INVITE_TICKETS_UPSTREAM: invite-tickets-api:8080
-      TURN_UPSTREAM: turn-api:8080
-      NOTIFY_UPSTREAM: notify-relay:8080
-      # Route-by-route cutover: point at the deployed legacy backend (e.g.
-      # https://legacy.example.com) to serve unmigrated routes through this
-      # single URL. Default = identity-api, whose 404 stands in for them.
-      LEGACY_BACKEND_ORIGIN: ${LEGACY_BACKEND_ORIGIN:-identity-api:8080}
-    volumes:
-      - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./docs/api-reference:/srv/docs:ro
-    ports:
-      - "8000:8000"
-    depends_on:
-      - identity-api
-      - username-indexer
-      - dim-tickets-api
-      - invite-tickets-api
-      - turn-api
-      - notify-relay
+networks:
+  # Per-project private network: how each service reaches its own Postgres.
+  default:
+  # Shared with the edge gateway and every other environment's project. Created
+  # once out of band (`docker network create ibv2-edge`) so no project owns it.
+  # Services join it under an ENV_ID-suffixed alias, which is what lets two
+  # projects with identical service names coexist on one host.
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-ibv2-edge}
 
 volumes:
   pgdata:

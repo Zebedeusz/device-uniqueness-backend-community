@@ -2,6 +2,10 @@
 set -euo pipefail
 
 rendered="$(docker compose config)"
+# Cleared so a shell still holding the local-run overrides (see the header of
+# gateway/docker-compose.yml) checks the committed defaults, not its own ports.
+rendered_gateway="$(EDGE_HTTP_PORT= EDGE_HTTPS_PORT= docker compose -f gateway/docker-compose.yml config)"
+rendered_debug="$(docker compose -f docker-compose.yml -f docker-compose.debug.yml config)"
 
 service_block() {
   local service="$1"
@@ -46,6 +50,20 @@ require_key() {
   fi
 }
 
+# One `host_ip|published->target/protocol` line per published port mapping, read
+# from a rendered compose document on stdin. Structural rather than a substring
+# count, so a mapping that keeps the host port but changes the target, the
+# protocol, or the interface cannot slip through.
+port_mappings() {
+  awk '
+    /^      - mode:/     { host = "*"; next }
+    /^        host_ip:/  { host = $2; next }
+    /^        target:/   { target = $2; next }
+    /^        published:/ { published = $2; gsub(/"/, "", published); next }
+    /^        protocol:/ { print host "|" published "->" target "/" $2 }
+  ' | sort
+}
+
 forbid_key() {
   local service="$1"
   local key="$2"
@@ -65,7 +83,7 @@ done
 for key in DOTNS_GATEWAY_ENABLED DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS DOTNS_MAX_FUTURE_SKEW_SECS; do
   require_key identity-api "$key"
   for service in identity-chain-writer registration-queue username-indexer dim-tickets-api \
-                 dim-tickets-writer invite-tickets-api invite-tickets-pool turn-api gateway; do
+                 dim-tickets-writer invite-tickets-api invite-tickets-pool turn-api; do
     forbid_key "$service" "$key"
   done
 done
@@ -106,7 +124,7 @@ require_key username-indexer POC_HMAC_SECRET
 # Every other service in the compose file, application and database alike.
 for service in identity-api identity-chain-writer registration-queue \
                dim-tickets-api dim-tickets-writer invite-tickets-api \
-               invite-tickets-pool turn-api notify-relay gateway \
+               invite-tickets-pool turn-api notify-relay \
                postgres username-indexer-postgres dim-tickets-postgres \
                invite-tickets-postgres; do
   forbid_key "$service" POC_HMAC_SECRET
@@ -130,8 +148,34 @@ for key in WRITER_LEASE_TTL_SECS WRITER_POLL_SECS WRITER_BATCH_SIZE WRITER_MAX_R
   require_key dim-tickets-writer "$key"
 done
 
-if ! service_block dim-tickets-postgres | grep -Fq "host_ip: 127.0.0.1"; then
-  echo "dim-tickets-postgres host port must be loopback-only" >&2
+# Only the edge publishes. The base file must expose nothing on the host, so a
+# second environment cannot collide and no service is reachable from outside.
+if grep -Fq "published:" <<<"$rendered"; then
+  echo "no service in docker-compose.yml may publish a host port (the edge does that)" >&2
+  grep -B2 -F "published:" <<<"$rendered" >&2
+  exit 1
+fi
+
+# The debug overlay exists to reopen those ports locally; it must never widen
+# them beyond loopback, and it must stay useful — an overlay that quietly lost
+# most of its mappings would still satisfy a "nothing public" check.
+debug_mappings="$(port_mappings <<<"$rendered_debug")"
+debug_count="$(grep -c . <<<"$debug_mappings" || true)"
+debug_public="$(grep -vc '^127\.0\.0\.1|' <<<"$debug_mappings" || true)"
+debug_unique="$(cut -d'|' -f2 <<<"$debug_mappings" | cut -d'-' -f1 | sort -u | grep -c . || true)"
+if [ "$debug_count" -ne 10 ]; then
+  echo "docker-compose.debug.yml must republish all 10 service/Postgres ports ($debug_count found)" >&2
+  echo "$debug_mappings" >&2
+  exit 1
+fi
+if [ "$debug_public" -ne 0 ]; then
+  echo "docker-compose.debug.yml may only publish on 127.0.0.1:" >&2
+  grep -v '^127\.0\.0\.1|' <<<"$debug_mappings" >&2
+  exit 1
+fi
+if [ "$debug_unique" -ne "$debug_count" ]; then
+  echo "docker-compose.debug.yml publishes the same host port twice:" >&2
+  echo "$debug_mappings" >&2
   exit 1
 fi
 
@@ -145,12 +189,29 @@ require_key notify-relay JWT_ED25519_PUBLIC_KEY
 require_key notify-relay NOTIFY_RATE_LIMIT
 require_key notify-relay NOTIFY_RATE_LIMIT_WINDOW_SECS
 
-# The gateway terminates and routes only — it must never hold any secret.
-for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
-           INVITE_INVITER_SIGNER_SURI TURN_SECRET DATABASE_URL JWT_JWKS_JSON \
-           JWT_ED25519_PUBLIC_KEY APNS_PRIVATE_KEY APNS_PRIVATE_KEY_FILE \
-           FCM_SERVICE_ACCOUNT_JSON; do
-  forbid_key gateway "$key"
-done
+# The gateway terminates and routes only — it must never hold any secret. It
+# lives in its own compose project: the helpers read `rendered`, so the swap is
+# scoped to a subshell rather than left in place for whatever is added below.
+(
+  rendered="$rendered_gateway"
+  for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
+             INVITE_INVITER_SIGNER_SURI TURN_SECRET DATABASE_URL JWT_JWKS_JSON \
+             JWT_ED25519_PUBLIC_KEY APNS_PRIVATE_KEY APNS_PRIVATE_KEY_FILE \
+             FCM_SERVICE_ACCOUNT_JSON POC_HMAC_SECRET DOTNS_GATEWAY_ENABLED \
+             DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS DOTNS_MAX_FUTURE_SKEW_SECS; do
+    forbid_key caddy "$key"
+  done
+)
+
+# The edge is the one thing that may publish, and only the two public ports —
+# target and protocol included, so neither losing 443/udp nor pointing 443 at
+# the wrong container port can pass.
+edge_published="$(port_mappings <<<"$rendered_gateway")"
+expected_published="$(printf '*|443->443/tcp\n*|443->443/udp\n*|80->80/tcp\n' | sort)"
+if [ "$edge_published" != "$expected_published" ]; then
+  echo "the edge must publish exactly 80->80/tcp, 443->443/tcp and 443->443/udp, got:" >&2
+  echo "$edge_published" >&2
+  exit 1
+fi
 
 echo "compose configuration boundaries: ok"

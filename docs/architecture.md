@@ -68,7 +68,7 @@ create now. See "How the workspace grows" below.
 | `turn` | JWT-gated `POST /api/v1/turn/issue` — stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). No DB, no chain; N replicas need no coordination. | `turn-api` |
 | `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. | `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar) |
 | `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine. No known client consumer — the apps use the `invite-tickets` claim route. | `dim-tickets-api` + `dim-tickets-writer` (single-instance: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`) |
-| gateway | Public-URL path routing via **Caddy** (reverse proxy). The route table is the committed `gateway/Caddyfile` (env-parameterized; used by prod's host Caddy AND the compose `gateway` service on :8000): username GET reads → :8081, DIM tickets → :8082, invitation tickets → :8083, TURN → :8084, notify → :8085, identity-owned writes/availability/root preflight → :8080; unmigrated legacy routes → `LEGACY_BACKEND_ORIGIN` (route-by-route cutover lane). Holds no secrets (enforced by the compose boundary script). | host Caddy (prod) / `gateway` (compose) |
+| `gateway` (edge) | Public-URL routing via **Caddy**, one site block per environment. The route table is the committed `gateway/Caddyfile`: the `(routes)` snippet is imported once per environment with that environment's upstreams — username GET reads + `/api/v1/poc*` → its `username-indexer`, DIM tickets → its `dim-tickets-api`, invitation tickets → its `invite-tickets-api`, TURN → `turn-api`, notify → `notify-relay`, everything else (identity-owned writes/availability/root preflight, JWKS, health) → its `identity-api`. Upstreams are container aliases suffixed with `ENV_ID` (`identity-api-paseo-next-v2`), resolved over the shared external `ibv2-edge` network; an environment that does not run a service points that route at its own `identity-api` so it 404s. Shared services (`turn`, `notify`) exist once and verify every environment's tokens from a merged JWKS. This is the **only** container publishing host ports (80/443, plus 443/udp); holds no secrets (both enforced by the compose boundary script). | `caddy` in its own compose project (`-p edge`) |
 
 
 ## How the workspace grows (lazy extraction)
@@ -114,7 +114,7 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 ## Open decisions (need the user)
 
 1. **Database topology** — separate instances vs databases vs schemas. ("No shared tables" already decided.)
-2. **Migration/cutover** — migrate V1 data or start fresh, then route-by-route cutover + V1 shutdown.
+2. **Migration/cutover** — migrate V1 data or start fresh, then move each route's clients onto this backend + V1 shutdown. (The Caddy-level legacy-origin lane was removed on 2026-08-03; nothing was ever configured behind it, so a cutover means pointing clients at a route that has a Rust owner.)
 
 ## Remaining scope & legacy retirement
 
@@ -128,7 +128,7 @@ Remaining slices. Each gets its own ship-first plan under `docs/plans/` when wor
    the `payment-status` endpoint, and the spec's `200 {registrationOutcome}` claim envelope.
 3. Production hardening: real batching if measurements require it, load tests, metrics, alerts, and parity benchmarks.
 4. iOS and Android release-device validation.
-5. Data migration, rollback, route-by-route cutover, and legacy shutdown.
+5. Data migration, rollback, per-route client cutover, and legacy shutdown.
 
 The legacy backend is retired only after every required route has an owner, the gateway is validated, parity gates pass, rollback is proven, and release-device smokes succeed.
 

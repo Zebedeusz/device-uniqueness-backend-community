@@ -1,0 +1,70 @@
+# The public edge: the only container on this host that publishes a port.
+#
+# Its own compose project (`-p edge`) rather than a service inside an
+# environment, so `docker compose up` for one environment never restarts the
+# edge — and so a second environment is a new alias plus a row in the
+# Caddyfile's map, nothing more.
+#
+# Prerequisite (once per host, owned by no project):
+#   docker network create ibv2-edge
+#
+# Production:  docker compose -f gateway/docker-compose.yml -p edge up -d
+# Local:
+#              GATEWAY_ADDRESS=http://identity.dotspark.app \
+#              PREVIEW_GATEWAY_ADDRESS=http://identity-previewnet.dotspark.app \
+#              EDGE_HTTP_PORT=8000 EDGE_HTTPS_PORT=8443 \
+#                docker compose -f gateway/docker-compose.yml -p edge up -d
+#              curl -H 'Host: identity.dotspark.app' http://127.0.0.1:8000/readyz
+#
+#              The explicit http:// scheme is what keeps Caddy from redirecting
+#              to HTTPS and asking for a certificate; it still listens on 80
+#              inside the container, so the site blocks and handle order are
+#              exercised exactly as in production.
+#
+# Holds no secrets — it terminates TLS and routes, nothing else. Enforced by
+# scripts/verify_compose_boundaries.sh.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # Pass-through, not defaulted: every default lives in the Caddyfile, and an
+    # unset variable is simply not passed, so the two files can never disagree.
+    # A local plain-HTTP edge sets the hostnames with an http:// prefix (see the
+    # header of this file) rather than changing a port here.
+    environment:
+      - GATEWAY_ADDRESS
+      - PREVIEW_GATEWAY_ADDRESS
+      - GATEWAY_DOCS_ROOT
+      - IDENTITY_UPSTREAM
+      - USERNAME_INDEXER_UPSTREAM
+      - DIM_TICKETS_UPSTREAM
+      - INVITE_TICKETS_UPSTREAM
+      - TURN_UPSTREAM
+      - NOTIFY_UPSTREAM
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The committed API reference, served at /docs.
+      - ../docs/api-reference:/srv/docs:ro
+      # Certificates and the ACME account key. Losing this volume means
+      # re-issuance, so it belongs in the backup story.
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      # Host ports are variables so a laptop can publish them somewhere
+      # harmless; the container always listens on 80/443.
+      - "${EDGE_HTTP_PORT:-80}:80"
+      - "${EDGE_HTTPS_PORT:-443}:443"
+      # HTTP/3, matching what host Caddy served.
+      - "${EDGE_HTTPS_PORT:-443}:443/udp"
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-ibv2-edge}
+
+volumes:
+  caddy_data:
+  caddy_config:

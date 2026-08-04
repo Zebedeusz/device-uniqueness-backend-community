@@ -13,7 +13,12 @@ Current architecture and scope: [docs/architecture.md](docs/architecture.md) · 
 ## Run locally
 
 ```bash
-docker compose up          # identity API :8080, username search :8081
+docker network create ibv2-edge   # once; shared with the edge project
+docker compose up                 # nothing is published — the edge does that
+
+# to reach a service directly, layer the loopback-only debug overlay:
+docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+#   identity API 127.0.0.1:8080, username search 127.0.0.1:8081
 ```
 
 Or natively: `just run` (api) / `just run-writer`, with env from `.env.example`.

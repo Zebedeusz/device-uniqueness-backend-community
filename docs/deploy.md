@@ -2,13 +2,15 @@
 
 From-zero setup of a server. Day-2 operations: [runbook.md](runbook.md).
 
-Topology: `identity-api`, `identity-chain-writer`, and the single-instance `registration-queue` advancer (no signing secret; with `QUEUE_ENABLED` on it is the queue's only drain — down, claims park as `QUEUED` and the writer warns about stranded rows) share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a fourth, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). `turn-api` and `notify-relay` are stateless (no Postgres). Caddy routes the public API between the six HTTP services (route table: the committed [`gateway/Caddyfile`](../gateway/Caddyfile)) and provides automatic HTTPS. Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+Topology: `identity-api`, `identity-chain-writer`, and the single-instance `registration-queue` advancer (no signing secret; with `QUEUE_ENABLED` on it is the queue's only drain — down, claims park as `QUEUED` and the writer warns about stranded rows) share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a fourth, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). `turn-api` and `notify-relay` are stateless (no Postgres). Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+
+**Two compose projects, one host.** The services live in an *environment* project started from [`docker-compose.yml`](../docker-compose.yml); the public edge is a separate project started from [`gateway/docker-compose.yml`](../gateway/docker-compose.yml). They meet on a shared external docker network (`ibv2-edge`) that neither owns, where each environment registers its services under `ENV_ID`-suffixed aliases (`identity-api-paseo-next-v2`, …). The edge resolves those aliases by docker DNS and is **the only container that publishes a host port** (80/443): nothing else is reachable from outside the machine, and a second environment collides with nothing. Route table: the committed [`gateway/Caddyfile`](../gateway/Caddyfile), loaded by the edge container. Ports for local debugging come from the opt-in [`docker-compose.debug.yml`](../docker-compose.debug.yml) overlay, which binds to `127.0.0.1` only.
 
 Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api`, `invite-tickets-api`, `turn-api`, and `notify-relay` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the dim inviter SURI lives only in `dim-tickets-writer`, the invite inviter SURI only in `invite-tickets-pool`. `turn-api` additionally holds `TURN_SECRET` — the HMAC key shared with the TURN relay (coturn `--use-auth-secret`); relay and issuer must be rotated together, and no other service sees it. Push credentials (`APNS_*`/`FCM_*`) live only in `notify-relay`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
 
 **Nonce lanes**: `dim-tickets-writer` and `invite-tickets-pool` each submit as "an inviter" and MUST NOT sign as the same account — two independent submitters on one account race nonces. Give each its own account (e.g. separate proxy delegates of one cold inviter primary); compose interpolates them from distinct `INVITER_*` (dim) and `INVITE_INVITER_*` (invite) host variables.
 
-Postgres is reachable by sibling containers on the internal Compose network. The optional dim-tickets host port is bound to `127.0.0.1` only; set a URL-safe random `DIM_TICKETS_POSTGRES_PASSWORD` on deployments.
+Postgres is reachable by sibling containers on the internal Compose network and publishes no host port at all; set a URL-safe random `DIM_TICKETS_POSTGRES_PASSWORD` on deployments.
 
 ## Prerequisites
 
@@ -16,16 +18,17 @@ Postgres is reachable by sibling containers on the internal Compose network. The
 - DNS A record pointing the domain at the server IP (direct, not proxied)
 - Ports 80/443 open; the attester signing key (ask the IB team)
 
-## 1. Install Docker and Caddy
+## 1. Install Docker and create the shared network
+
+Caddy is not installed on the host — it runs as the edge container.
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y docker.io docker-compose-v2 ca-certificates curl gnupg
 sudo systemctl enable --now docker
 
-curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt-get update && sudo apt-get install -y caddy
+# Owned by no project: both the environment and the edge attach to it.
+sudo docker network create ibv2-edge
 ```
 
 ## 2. Code and config
@@ -34,6 +37,8 @@ sudo apt-get update && sudo apt-get install -y caddy
 git clone git@github.com:paritytech/identity-backend-rust.git ~/identity-backend-v2
 cd ~/identity-backend-v2
 ```
+
+`ENV_ID` names this environment and is what the network aliases are suffixed with. It defaults to `paseo-next-v2` (the ecosystem's id for this network); a second environment sets its own, e.g. `previewnet`. It is unrelated to `PEOPLE_NETWORK`, which stays the frozen legacy literal `paseo`.
 
 Create `.env` (`chmod 600 .env`):
 
@@ -91,51 +96,160 @@ The `turn-api` variables have compose dev defaults (placeholder secret, `example
 ## 3. Run
 
 ```bash
-sudo docker compose up -d --build      # first build takes several minutes; migrations run on boot
+# the environment (first build takes several minutes; migrations run on boot)
+sudo docker compose up -d --build
+
+# the public edge — acquires its certificate on first start
+sudo docker compose -f gateway/docker-compose.yml -p edge up -d
 ```
 
 The route table lives in the repo: [`gateway/Caddyfile`](../gateway/Caddyfile) (see the
 ownership map in `docs/plans/active/gateway.md`). Its `{$VAR:default}` defaults match this
-layout exactly — domain `identity.dotspark.app`, upstreams on `127.0.0.1:8080–8085`, docs under
-`/home/ubuntu/identity-backend-v2` — so installing it needs no environment. For a different
-domain or paths, set the variables via a systemd drop-in for `caddy.service` instead of editing
-the file (edits would be overwritten: CI re-installs the file on every deploy).
+layout exactly — domain `identity.dotspark.app`, upstreams on the `*-paseo-next-v2` container aliases,
+docs at `/srv/docs` — so the edge starts with no environment at all. For a different domain,
+set `GATEWAY_ADDRESS` in the edge project's environment rather than editing the file: CI
+re-installs the file from the repo on every deploy.
 
-```bash
-sudo chmod o+x /home/ubuntu
-sudo cp ~/identity-backend-v2/gateway/Caddyfile /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
-```
-
-Unmigrated legacy routes (`/api/v1/poc|schemas|subscriptions`, `/admin`, `/debug`)
-forward to `{$LEGACY_BACKEND_ORIGIN}` when set (route-by-route cutover — point it at the
-deployed legacy backend); unset, they fall through to `identity-api`'s 404.
+**Rollback to a host-installed Caddy** (if the edge container is ever the problem): stop the
+edge project, `apt-get install caddy`, `cp gateway/Caddyfile /etc/caddy/Caddyfile`, point its
+upstream variables at loopback ports, bring the environment up with the debug overlay so those
+ports exist, then `systemctl enable --now caddy`.
 
 ## 4. Verify
 
 ```bash
-curl -fsS http://127.0.0.1:8080/readyz          # {"chain":"up","db":"up",...}
-curl -fsS http://127.0.0.1:8081/readyz          # projection freshness + dependencies
-curl -fsS http://127.0.0.1:8082/readyz          # dim-tickets: {"chain":"up","db":"up",...}
-curl -fsS http://127.0.0.1:8084/readyz          # turn: {"service":"turn","status":"ready"} (stateless)
-curl -fsS http://127.0.0.1:8085/readyz          # notify-relay: {"status":"ready",...} (no external deps)
+curl -fsS https://<domain>/readyz                          # {"chain":"up","db":"up",...}
 curl -fsS https://<domain>/api/v1/attester
-curl -fsS 'https://<domain>/api/v1/usernames/search?prefix=alice'
-curl -sS https://<domain>/api/v1/dim-ticket/x   # 401 problem+json = routed + auth gate live
+curl -fsS 'https://<domain>/api/v1/usernames/search?prefix=alice'   # routed to the indexer
+curl -sS https://<domain>/api/v1/dim-ticket/x              # 401 problem+json = routed + auth gate live
+curl -fsS https://<domain>/docs/ -o /dev/null              # committed API reference
 sudo docker compose logs identity-chain-writer | tail -5   # "connected signer=…", "acquired writer lease"
 sudo docker compose logs dim-tickets-writer | tail -5      # "connected signer=…", "acquired writer lease"
+```
+
+Confirm the host exposes nothing else:
+
+```bash
+sudo docker ps --format '{{.Names}}\t{{.Ports}}'    # only the edge container maps 80/443
+ss -ltn                                             # no 8080–8085, no 5432–5435
+```
+
+Per-service `readyz` needs the debug overlay (loopback only):
+
+```bash
+sudo docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+curl -fsS http://127.0.0.1:8081/readyz   # projection freshness + dependencies
 ```
 
 Failure isolation check (notify is independent): stop the relay and confirm auth/registration/search stay healthy, then bring it back.
 
 ```bash
 sudo docker compose stop notify-relay
-curl -fsS http://127.0.0.1:8080/readyz && curl -fsS http://127.0.0.1:8081/readyz   # still ready
+curl -fsS https://<domain>/readyz                                                  # still ready
 curl -s -o /dev/null -w '%{http_code}\n' https://<domain>/api/v1/notify            # 502/504 only for notify
-sudo docker compose start notify-relay                                             # recovers without touching identity-api
+sudo docker compose start notify-relay                           # recovers without touching identity-api
 ```
 
 For CI deploys to reach this server, set the repo secrets `IBV2_SSH_KEY` (private key authorized for `ubuntu@server`) and `IBV2_HOST` (server IP), and add a read-only GitHub deploy key on the server.
+
+## One-time cutover from host Caddy
+
+Only needed on a machine that still runs Caddy from `apt`. CI **skips** the edge
+project until it exists, precisely so a merge cannot fight the host for 80/443.
+
+```bash
+cd ~/identity-backend-v2 && git pull
+
+sudo docker network create ibv2-edge          # idempotent
+
+# 1. recreate the services: they drop their published ports and join the network
+sudo docker compose up -d --remove-orphans    # removes the old in-file gateway too
+
+# 2. free 80/443 — this starts the downtime window
+sudo systemctl disable --now caddy
+
+# 3. the edge takes over and requests its certificate
+sudo docker compose -f gateway/docker-compose.yml -p edge up -d --wait --wait-timeout 120
+
+# 4. verify, then the window is closed
+curl -fsS https://identity.dotspark.app/readyz
+sudo docker ps --format '{{.Names}}\t{{.Ports}}'   # only the edge maps 80/443
+```
+
+Rollback: `sudo docker compose -f gateway/docker-compose.yml -p edge down`,
+`sudo systemctl enable --now caddy`, and bring the services up with the debug
+overlay so the loopback ports host Caddy proxies to exist again.
+
+## Adding an environment
+
+A second environment is another compose project on the same host with its own
+`.env`, plus a DNS record and a site block. It shares the machine, the image,
+and the edge; it shares no database, no signing key, and no chain.
+
+1. **Check the chain is usable.** For PreviewNet: the shared attester authority
+   `5F7H1LkZi8rnSH8PvUsp4LD2WkvcpnjkyQyvLPu1ntbhNr5T` must still list our writer
+   signer as an `Any`/delay-0 proxy, hold an attestation allowance, and hold
+   invites — see the post-wipe sequence in `docs/plans/active/previewnet-env.md`.
+2. **Second checkout + `.env`** (mode 600) — one checkout per environment, each
+   holding exactly one `.env`, which is what CI's deploy loop expects. Deliberately
+   not one checkout with per-environment env files: compose auto-loads `./.env`
+   whenever `--env-file` is absent, so a forgotten flag would run this project
+   against the other environment's chain and signer without erroring. What differs
+   from the first environment:
+
+   ```bash
+   ENV_ID=previewnet                                    # network aliases
+   PEOPLE_RPC_URL=wss://previewnet.substrate.dev/people
+   JWT_ED25519_SECRET=0x<fresh 64-hex>                  # its own issuer
+   CHAIN_WRITER_PROXY_FOR=5F7H1LkZi8rnSH8PvUsp4LD2WkvcpnjkyQyvLPu1ntbhNr5T
+   QUEUE_ENABLED=false
+   DOTNS_GATEWAY_ENABLED=false                          # dotns is not deployed there
+   ```
+
+3. **Start only the services that environment needs**, as its own project:
+
+   ```bash
+   sudo docker compose -p identity-previewnet up -d \
+     postgres identity-api identity-chain-writer \
+     username-indexer-postgres username-indexer
+   ```
+
+   `invite-tickets` is deliberately excluded on PreviewNet: its inviter would have
+   to sign as the same delegate the chain-writer uses, and two submitters on one
+   account and chain race nonces. Its route falls through to that environment's
+   `identity-api`, which 404s.
+
+4. **DNS**: an A record for the hostname at the server IP, unproxied. The edge
+   acquires the certificate on its next start once DNS resolves.
+5. **Teach the shared services about the new issuer.** `turn-api` and
+   `notify-relay` are shared across environments: set `JWT_JWKS_JSON` on them to
+   a JWKS holding **both** environments' public keys. Tokens carry a `kid`
+   derived from the signing key, so each is verified against the right one.
+6. **Reload the edge** so it picks up the site block. The Caddyfile is a
+   read-only bind mount, so a `git pull` already put the new block inside the
+   running container: validate it in a throwaway container, then reload in
+   place. This is what CI does, and it drops no connection — recreating the
+   edge instead would interrupt **every** environment, since it is the only
+   container bound to 80/443. The certificate for the new hostname is acquired
+   in the background once DNS resolves.
+
+   ```bash
+   sudo docker run --rm -v "$PWD/gateway/Caddyfile:/etc/caddy/Caddyfile:ro" \
+     caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+   sudo docker compose -f gateway/docker-compose.yml -p edge \
+     exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+   ```
+
+   A reload only re-reads the file. Changing the edge container's *environment*
+   or ports — a new `{$VAR}` placeholder in the Caddyfile, which must also be
+   added to the `environment:` pass-through list in `gateway/docker-compose.yml`
+   — needs `up -d` (add `--force-recreate` only if compose reports no change).
+   Write a new environment's hostname and upstreams as literals to stay on the
+   reload path.
+
+7. **Verify** the new hostname serves `/readyz`, `/api/v1/attester`, and search;
+   that the original hostname is unchanged; and that a token from one
+   environment is rejected by the other.
 
 ## Release images
 
@@ -179,5 +293,7 @@ defaults for every variable are in `.env.example`.
 | `dim-tickets-api` never healthy | Same startup shape as `identity-api` (Postgres + People RPC); also requires `INVITER_ADDRESS` + JWT public-key material — a missing var aborts boot loudly. |
 | dim tickets stuck `PENDING` | `dim-tickets-writer` down or inviter out of `AvailableInvites` — `sudo docker compose logs dim-tickets-writer`; the read path keeps serving either way. |
 | `username-indexer` never healthy | Check its Postgres, People Chain RPC, and bootstrap logs with `sudo docker compose logs username-indexer`. |
-| No TLS certificate | DNS not propagated or 80/443 blocked. `dig +short <domain>`, `journalctl -u caddy`. |
-| `/docs` returns 403/404 | Caddy can't traverse `/home/ubuntu` — re-run the `chmod o+x` line. |
+| No TLS certificate | DNS not propagated, 80/443 blocked, or a host Caddy still holding the ports. `dig +short <domain>`, `sudo ss -ltnp '( sport = :443 )'`, `sudo docker compose -f gateway/docker-compose.yml -p edge logs caddy`. |
+| Edge answers 502 | The upstream alias does not resolve: the environment project is down, or its `ENV_ID` does not match the Caddyfile's upstream suffix. `sudo docker network inspect ibv2-edge`. |
+| `network ibv2-edge not found` | Created out of band, once per host: `sudo docker network create ibv2-edge`. |
+| `/docs` returns 404 | The edge mounts `../docs/api-reference` from the checkout — confirm the path exists and re-create the edge project after a `git pull`. |

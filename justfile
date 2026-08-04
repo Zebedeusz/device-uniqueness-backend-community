@@ -17,15 +17,18 @@ test:
 
 # On-demand live-Postgres tests (NOT in `just check`; needs Docker). A live-Postgres
 # CI dependency is deliberately deferred, so the `#[ignore]`d live tests run here.
+# Layers docker-compose.debug.yml: the base file publishes no host port, and these
+# tests connect over localhost.
 test-live:
     #!/usr/bin/env bash
     set -euo pipefail
     identity_test_port="${IDENTITY_TEST_POSTGRES_PORT:-55432}"
     export IDENTITY_POSTGRES_PORT="$identity_test_port"
-    docker compose up -d postgres username-indexer-postgres
-    trap 'docker compose rm -fsv postgres username-indexer-postgres >/dev/null 2>&1 || true' EXIT
+    compose=(docker compose -f docker-compose.yml -f docker-compose.debug.yml)
+    "${compose[@]}" up -d postgres username-indexer-postgres
+    trap '"${compose[@]}" rm -fsv postgres username-indexer-postgres >/dev/null 2>&1 || true' EXIT
     for _ in $(seq 1 30); do
-        docker compose exec -T postgres pg_isready -U identity -d identity >/dev/null 2>&1 && break
+        "${compose[@]}" exec -T postgres pg_isready -U identity -d identity >/dev/null 2>&1 && break
         sleep 1
     done
     IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
@@ -45,10 +48,10 @@ test-live:
     IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
         cargo test -p identity-service --test payment_watch_live -- --ignored
     for _ in $(seq 1 30); do
-        docker compose exec -T username-indexer-postgres pg_isready -U username_indexer -d username_indexer >/dev/null 2>&1 && break
+        "${compose[@]}" exec -T username-indexer-postgres pg_isready -U username_indexer -d username_indexer >/dev/null 2>&1 && break
         sleep 1
     done
-    DATABASE_URL=postgres://username_indexer:username_indexer@localhost:5433/username_indexer \
+    DATABASE_URL=postgres://username_indexer:username_indexer@localhost:${INDEXER_POSTGRES_PORT:-5433}/username_indexer \
         cargo test -p username-indexer --test pagination_live -- --ignored
 
 # Dependency license/advisory audit (requires `cargo install cargo-deny`).
@@ -61,11 +64,13 @@ deny:
 openapi:
     cargo run -p apidoc-gen
 
-# Run the identity-api service.
+# Run the identity-api service natively (needs Postgres reachable on localhost:
+# `docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d postgres`).
 run:
     cargo run -p identity-service --bin identity-api
 
-# Run the identity-chain-writer worker (drains the reservation outbox onto People Chain).
+# Run the identity-chain-writer worker (drains the reservation outbox onto People
+# Chain). Needs Postgres reachable on localhost — same prerequisite as `run`.
 run-writer:
     cargo run -p identity-service --bin identity-chain-writer
 

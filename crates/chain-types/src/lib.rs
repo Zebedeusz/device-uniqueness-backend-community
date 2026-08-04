@@ -32,6 +32,11 @@ pub use subxt;
 /// People Chain is Polkadot-shaped (`AccountId32` + `MultiAddress<_, ()>` +
 /// `MultiSignature`, Blake2 hashing), but its transaction-extension pipeline has
 /// People-specific no-op gates before the standard nonce/payment checks.
+///
+/// The same config serves every People runtime this workspace talks to, even
+/// where they disagree on the extension set: subxt encodes extensions by walking
+/// the **live** runtime's extension list and resolving each name in the tuple, so
+/// a member the connected runtime does not declare is never encoded.
 #[derive(Debug, Clone, Default)]
 pub struct PeopleConfig(subxt::PolkadotConfig);
 
@@ -66,6 +71,7 @@ impl subxt::Config for PeopleConfig {
 }
 
 type PeopleTransactionExtensions<T> = (
+    Noop<UnitTransactionExtension>,
     Noop<AuthorizeValueTransfer>,
     subxt::config::transaction_extensions::VerifySignature<T>,
     Noop<AsPerson>,
@@ -118,6 +124,7 @@ impl<T: subxt::Config> PeopleExtrinsicParamsBuilder<T> {
         self,
     ) -> <PeopleTransactionExtensions<T> as subxt::config::TransactionExtensions<T>>::Params {
         (
+            (),
             (),
             (),
             (),
@@ -216,6 +223,12 @@ macro_rules! noop_name {
     };
 }
 
+// Slot 0 of the People extension pipeline is named differently per runtime:
+// `next-people-paseo` 1000029 (Paseo Next v2) calls it `AuthorizeValueTransfer`
+// with an `Option<[u8; 64]>` value (encoded `None`), while 1000030 (PreviewNet)
+// calls it `UnitTransactionExtension` with a `()` value. Both names live in the
+// tuple; only the one the connected runtime declares is ever encoded.
+noop_name!(UnitTransactionExtension, "UnitTransactionExtension");
 noop_name!(AuthorizeValueTransfer, "AuthorizeValueTransfer", &[0]);
 noop_name!(AsPerson, "AsPerson", &[0]);
 noop_name!(AsProofOfInkParticipant, "AsProofOfInkParticipant", &[0]);
@@ -235,7 +248,153 @@ noop_name!(StorageWeightReclaim, "StorageWeightReclaim");
 #[cfg(test)]
 mod tests {
     use super::people;
+    use super::NoopName as _;
     use subxt::storage::Address as _;
+
+    /// Every extension name [`PeopleTransactionExtensions`](super::PeopleTransactionExtensions)
+    /// can satisfy: the `Noop` gates declared above plus the ones subxt implements.
+    const TUPLE_EXTENSIONS: &[&str] = &[
+        "UnitTransactionExtension",
+        "AuthorizeValueTransfer",
+        "VerifyMultiSignature",
+        "AsPerson",
+        "AsProofOfInkParticipant",
+        "ScoreAsParticipant",
+        "GameAsInvited",
+        "PeopleLiteAuth",
+        "AsMember",
+        "AsCoinage",
+        "AsResources",
+        "HonourAuth",
+        "AuthorizeCall",
+        "RestrictOrigins",
+        "CheckNonZeroSender",
+        "CheckSpecVersion",
+        "CheckTxVersion",
+        "CheckGenesis",
+        "CheckMortality",
+        "CheckNonce",
+        "CheckWeight",
+        "ChargeAssetTxPayment",
+        "StorageWeightReclaim",
+    ];
+
+    /// One People runtime this workspace knows about: what the chain calls
+    /// itself, which runtime build was inspected, and the extension names it
+    /// declared.
+    ///
+    /// A human name for diagnostics plus `spec_name`/`spec_version` to say which
+    /// build the list was captured from — `next-people-paseo` numbers two
+    /// different deployments, so the version alone does not identify a chain.
+    struct KnownRuntime {
+        /// Human label for diagnostics; never used as a key.
+        env: &'static str,
+        spec_name: &'static str,
+        spec_version: u32,
+        /// Ordered transaction-extension identifiers, as declared by that build.
+        extensions: &'static [&'static str],
+    }
+
+    /// The People runtimes this workspace is verified against, captured
+    /// 2026-08-01. Not exhaustive — they differ in slot 0 only.
+    const KNOWN_RUNTIMES: &[KnownRuntime] = &[
+        KnownRuntime {
+            env: "paseo-next-v2",
+            spec_name: "next-people-paseo",
+            spec_version: 1_000_029,
+            extensions: &[
+                "AuthorizeValueTransfer",
+                "VerifyMultiSignature",
+                "AsPerson",
+                "AsProofOfInkParticipant",
+                "ScoreAsParticipant",
+                "GameAsInvited",
+                "PeopleLiteAuth",
+                "AsMember",
+                "AsCoinage",
+                "AsResources",
+                "HonourAuth",
+                "AuthorizeCall",
+                "RestrictOrigins",
+                "CheckNonZeroSender",
+                "CheckSpecVersion",
+                "CheckTxVersion",
+                "CheckGenesis",
+                "CheckMortality",
+                "CheckNonce",
+                "CheckWeight",
+                "ChargeAssetTxPayment",
+                "StorageWeightReclaim",
+            ],
+        },
+        KnownRuntime {
+            env: "previewnet",
+            spec_name: "next-people-paseo",
+            spec_version: 1_000_030,
+            extensions: &[
+                "UnitTransactionExtension",
+                "VerifyMultiSignature",
+                "AsPerson",
+                "AsProofOfInkParticipant",
+                "ScoreAsParticipant",
+                "GameAsInvited",
+                "PeopleLiteAuth",
+                "AsMember",
+                "AsCoinage",
+                "AsResources",
+                "HonourAuth",
+                "AuthorizeCall",
+                "RestrictOrigins",
+                "CheckNonZeroSender",
+                "CheckSpecVersion",
+                "CheckTxVersion",
+                "CheckGenesis",
+                "CheckMortality",
+                "CheckNonce",
+                "CheckWeight",
+                "ChargeAssetTxPayment",
+                "StorageWeightReclaim",
+            ],
+        },
+    ];
+
+    /// One binary signs on either People runtime: subxt resolves extensions by
+    /// name against the connected runtime's list, so the tuple must be able to
+    /// satisfy every name each known build declares. A runtime that adds a
+    /// name (e.g. `CheckMetadataHash` on public Paseo) fails here first.
+    ///
+    /// This is a snapshot, not a live check: it holds the tuple to what was
+    /// observed, and cannot notice a runtime that has since been upgraded.
+    #[test]
+    fn covers_every_known_runtime_extension_set() {
+        for runtime in KNOWN_RUNTIMES {
+            for name in runtime.extensions {
+                assert!(
+                    TUPLE_EXTENSIONS.contains(name),
+                    "{} ({} {}) declares extension {name}, which the tuple cannot satisfy",
+                    runtime.env,
+                    runtime.spec_name,
+                    runtime.spec_version
+                );
+            }
+        }
+    }
+
+    /// The two slot-0 spellings encode their own value shapes: Paseo Next v2's
+    /// `Option<[u8; 64]>` as `None`, PreviewNet's `()` as nothing at all.
+    #[test]
+    fn slot_zero_noops_encode_their_runtime_value() {
+        assert_eq!(
+            super::AuthorizeValueTransfer::NAME,
+            "AuthorizeValueTransfer"
+        );
+        assert_eq!(super::AuthorizeValueTransfer::VALUE, &[0]);
+        assert_eq!(
+            super::UnitTransactionExtension::NAME,
+            "UnitTransactionExtension"
+        );
+        assert!(super::UnitTransactionExtension::VALUE.is_empty());
+    }
 
     /// The read path can construct the `Resources::UsernameOwnerOf` lookup used
     /// for on-chain username availability. In subxt 0.50 the map key is supplied

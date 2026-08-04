@@ -4,6 +4,8 @@ Operating the running deployment. From-zero setup: [deploy.md](deploy.md).
 
 Test deployment: `https://identity.dotspark.app` on `ubuntu@51.15.134.8`, repo at `~/identity-backend-v2`.
 
+Two compose projects share the host: the environment (the project name declared in `docker-compose.yml` (`identity-backend-v2`), from `docker-compose.yml`) and the public edge (`-p edge`, from `gateway/docker-compose.yml`). **Every command below needs its project**, or it will act on the wrong stack — or on none. The edge is the only container publishing a port; service ports exist locally only under the debug overlay.
+
 ## Deploys
 
 Push to `main` → CI tests, builds `ghcr.io/paritytech/identity-backend-rust:<sha>`, and the server pulls + restarts (health-gated). Watch with `gh run watch`.
@@ -12,6 +14,9 @@ Manual fallback (builds on the server):
 
 ```bash
 cd ~/identity-backend-v2 && git pull && sudo docker compose up -d --build
+# only when the Caddyfile changed — a reload, not a restart (see Caddy / TLS / docs)
+sudo docker compose -f gateway/docker-compose.yml -p edge \
+  exec -T caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
 Migrations run automatically on boot — never by hand. Never overwrite the server's `.env`.
@@ -19,13 +24,22 @@ Migrations run automatically on boot — never by hand. Never overwrite the serv
 ## Health and logs
 
 ```bash
-curl -fsS http://127.0.0.1:8080/readyz     # gates on Postgres + People Chain RPC
-curl -fsS http://127.0.0.1:8081/readyz     # index freshness + Postgres + People Chain RPC
+curl -fsS https://identity.dotspark.app/readyz                    # gates on Postgres + People Chain RPC
+curl -fsS 'https://identity.dotspark.app/api/v1/usernames/search?prefix=a'   # the indexer, through the edge
 sudo docker compose ps
 sudo docker compose logs -f identity-api
 sudo docker compose logs -f identity-chain-writer
 sudo docker compose logs -f username-indexer
-journalctl -u caddy -f
+sudo docker compose -f gateway/docker-compose.yml -p edge logs -f caddy
+```
+
+Per-service `readyz` from the host needs the debug overlay, which republishes the ports on
+loopback only. Layer it on, poke, then drop back:
+
+```bash
+sudo docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+curl -fsS http://127.0.0.1:8081/readyz     # index freshness + Postgres + People Chain RPC
+sudo docker compose up -d --remove-orphans   # back to no published ports
 ```
 
 Healthy writer startup: `connected signer=0x…` then `acquired writer lease`.
@@ -69,18 +83,41 @@ sudo docker compose exec -T postgres pg_dump -U identity identity | gzip > ~/ide
 gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres psql -U identity -d identity
 ```
 
+The edge's `edge_caddy_data` volume holds the TLS certificates and the ACME account key. Losing
+it is not fatal (Caddy re-issues) but repeated loss burns Let's Encrypt duplicate-certificate
+allowance, so include it when backing the host up:
+
+```bash
+sudo docker run --rm -v edge_caddy_data:/data -v ~:/backup alpine \
+  tar czf /backup/caddy-data-$(date +%Y%m%d).tgz -C /data .
+```
+
 ## Caddy / TLS / docs
 
 - The route table is the **committed** [`gateway/Caddyfile`](../gateway/Caddyfile) (ownership
-  map: `docs/plans/active/gateway.md`); CI validates and re-installs it into
-  `/etc/caddy/Caddyfile` on every deploy — never hand-edit the installed copy, change the repo
-  file. Manual apply: `sudo cp gateway/Caddyfile /etc/caddy/Caddyfile && sudo caddy validate
-  --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
-- Migrated routes go to their service on `127.0.0.1:8081–8085`; everything unhandled goes to
-  `identity-api` on `127.0.0.1:8080`; unmigrated legacy routes forward to
-  `LEGACY_BACKEND_ORIGIN` when configured (cutover lane). `/api/v1/poc*` goes to the indexer
-  (:8081) alongside the username reads it gates.
-- Certificates renew automatically. `https://<domain>/docs` serves `docs/api-reference/` from the checkout — a `git pull` updates it, no rebuild.
+  map: `docs/plans/active/gateway.md`), mounted read-only into the edge container. Never edit a
+  running copy — change the repo file, `git pull`, then validate and reload in place. The mount
+  means the new file is already inside the container, so this drops no connection; recreating the
+  edge would interrupt **every** environment, since it is the only container on 80/443.
+
+  ```bash
+  sudo docker run --rm -v "$PWD/gateway/Caddyfile:/etc/caddy/Caddyfile:ro" \
+    caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+  sudo docker compose -f gateway/docker-compose.yml -p edge \
+    exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+  ```
+
+  A reload only re-reads the file. Changing the container's *environment* or ports — a new
+  `{$VAR}` placeholder, which must also join the `environment:` pass-through list in
+  `gateway/docker-compose.yml` — needs `up -d` and accepts that brief interruption.
+- Migrated routes go to their service's container alias (`username-indexer-paseo-next-v2:8080`, …);
+  everything unhandled goes to `identity-api-<ENV_ID>`. `/api/v1/poc*` goes to the indexer
+  alongside the username reads it gates.
+- Certificates live in the `edge_caddy_data` volume and renew automatically.
+  `https://<domain>/docs` serves `docs/api-reference/` mounted from the checkout — a `git pull`
+  updates the files, but recreate the edge project if the mount looks stale.
+- The edge is the only container publishing a port. If anything else appears in
+  `sudo docker ps --format '{{.Ports}}'`, someone left the debug overlay applied.
 
 ## Proof-of-compute gate (public search)
 
@@ -125,9 +162,10 @@ it only with a measurement from the slowest expected client.
 | Queue behaving oddly: `QUEUED` rows draining with the advancer down, or a stranded-queue warning while intake goes direct | `QUEUE_ENABLED` is split between identity-api and identity-chain-writer (writer off + api on = the janitor silently drains a queue the api is still filling — the throttle is gone; writer on + api off = warnings about leftovers no new claim joins). The values must match; `scripts/verify_compose_boundaries.sh` pins both wires. |
 | Rows stuck in `RETRY_AFTER` with wasm-trap errors | Invalid payload for `PeopleLite.attest`, or attester/proxy authorization missing on-chain. |
 | Writer exits at boot | Bad `CHAIN_WRITER_SIGNER_SURI` or DB unreachable. |
-| Username search fails while identity routes work | Check `curl -fsS http://127.0.0.1:8081/readyz`, indexer logs, and the dedicated Caddy route. |
+| Username search fails while identity routes work | Check the indexer's logs and its Caddy route; for a direct `readyz`, layer the debug overlay and curl `127.0.0.1:8081`. |
 | TURN 201s minted but relay rejects the credentials | `TURN_SECRET`/`TURN_AUTH_ALGORITHM` drifted from the relay's coturn config — they must match exactly; rotate both together. `turn-api` itself is stateless (readyz never gates on anything). |
 | Public search suddenly returning `402` | The proof-of-compute gate is on (`POC_ENABLED`). Expected for anonymous callers; if authenticated clients see it, the indexer's verify-only JWT material is wrong — compare `JWT_ED25519_PUBLIC_KEY`/`JWT_JWKS_JSON` against identity-api's `/.well-known/jwks.json`. |
 | `402` "puzzle has already been used" on a first attempt | The client is reusing a puzzle (one solve = one request) or a proxy is retrying. Each request needs a fresh `POST /api/v1/poc/issue`. |
 | `spent_puzzles` growing without bound | The pruner logs `pruning expired spent puzzles failed`; check indexer logs and DB health. Rows are harmless but unbounded until it recovers. |
-| Down after reboot | Shouldn't happen (`restart: unless-stopped`); if it does: `sudo docker compose up -d`. |
+| Down after reboot | Shouldn't happen (`restart: unless-stopped`); if it does: `sudo docker compose up -d` and `sudo docker compose -f gateway/docker-compose.yml -p edge up -d`. |
+| Edge answers 502 for everything | The environment project is down, or its `ENV_ID` no longer matches the Caddyfile upstream suffix: `sudo docker network inspect ibv2-edge` and compare the aliases. |

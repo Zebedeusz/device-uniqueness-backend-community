@@ -1,5 +1,17 @@
 # Single-URL gateway — ship-first plan
 
+> **Superseded in part (2026-08-03)** by `previewnet-env.md` Phase 2: the route table is still
+> this committed `gateway/Caddyfile`, but it is now loaded by an **edge container** in its own
+> compose project (`-p edge`) that owns 80/443 — not a host-installed Caddy — and upstreams are
+> container aliases (`identity-api-paseo-next-v2:8080`) rather than `127.0.0.1:808x`. No
+> application or Postgres container publishes a host port any more. Read the notes below as the
+> history of this slice, not the current topology.
+>
+> The **route-by-route cutover lane** (`/api/v1/schemas`, `/api/v1/subscriptions`, `/admin`,
+> `/debug/*` → `LEGACY_BACKEND_ORIGIN`) was **removed** on 2026-08-03: no legacy origin was ever
+> configured, so all four already answered 404 through `identity-api`'s fallthrough — deleting the
+> blocks is behaviour-identical, and Phase 2 below is dropped with it.
+
 > Working agreement: keep phases small; each ends in a runnable demo. Check boxes `[ ]`→`[x]` with
 > dates. The plan file is the single source of truth for this slice.
 
@@ -48,7 +60,7 @@ cutover.
   `/api/v1/turn/issue` reached a live `turn-api` (401 without JWT, 201 with), `/docs/` served
   the committed reference, and both the default and legacy lanes fell through to the (down)
   identity-api upstream as 502s, proving the handle order.
-- [ ] **Phase 2 — cutover rehearsal (blocked on ops).** Point `LEGACY_BACKEND_ORIGIN` at a
+- [~] **Phase 2 — cutover rehearsal — dropped 2026-08-03** (the lane was removed; see the note above). Point `LEGACY_BACKEND_ORIGIN` at a
   reachable legacy deployment and verify an unmigrated route (e.g. `/api/v1/schemas`) round-trips
   through the single URL; then the apps' domain can move. Needs a live legacy origin — rolls
   into the migration-wide cutover drill.

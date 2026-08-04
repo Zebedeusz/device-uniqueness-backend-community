@@ -96,7 +96,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy (pull image + restart)
+      - name: Deploy (pull image + restart every environment, then the edge)
         env:
           HOST: ${{ secrets.IBV2_HOST }}
           IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
@@ -104,22 +104,86 @@ jobs:
           ACTOR: ${{ github.actor }}
           SHA: ${{ github.sha }}
         run: |
-          ssh ubuntu@"$HOST" "set -euo pipefail
-            cd ~/identity-backend-v2
-            git fetch origin main
-            git reset --hard '$SHA'
-            echo '$TOKEN' | sudo docker login ghcr.io -u '$ACTOR' --password-stdin
-            sudo docker pull '$IMAGE'
-            sudo IDENTITY_IMAGE='$IMAGE' docker compose up -d --wait --no-build
-            if ! cmp -s gateway/Caddyfile /etc/caddy/Caddyfile; then
-              sudo caddy validate --config gateway/Caddyfile --adapter caddyfile
-              sudo cp gateway/Caddyfile /etc/caddy/Caddyfile
-              sudo systemctl reload caddy
-            fi
-            sudo docker logout ghcr.io
-            sudo docker image prune -f >/dev/null"
+          ssh ubuntu@"$HOST" \
+            "IMAGE='$IMAGE' SHA='$SHA' TOKEN='$TOKEN' ACTOR='$ACTOR' bash -euo pipefail -s" \
+            <<'REMOTE'
+          # Shared external network, owned by no project.
+          sudo docker network inspect ibv2-edge >/dev/null 2>&1 ||
+            sudo docker network create ibv2-edge
 
+          trap 'sudo docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          echo "$TOKEN" | sudo docker login ghcr.io -u "$ACTOR" --password-stdin
+          sudo docker pull "$IMAGE"
+
+          primary="$HOME/identity-backend-v2"
+          preview="$HOME/identity-backend-previewnet"
+
+          # Paseo Next v2 first, so a broken newer environment can neither block
+          # nor revert it. `identity-backend-v2` is the project name the running
+          # deployment already uses — changing it would orphan its volumes and
+          # start a second writer on the same chain.
+          # The 420s wait clears the slowest health start_period plus its retries
+          # (username-indexer: 300s + 5×10s), so a first boot that is merely slow
+          # to bootstrap is not reported as a failed deploy.
+          cd "$primary"
+          git fetch --no-tags origin main
+          git reset --hard "$SHA"
+          sudo IDENTITY_IMAGE="$IMAGE" docker compose -p identity-backend-v2 \
+            up -d --wait --wait-timeout 420 --no-build
+
+          # PreviewNet runs a deliberate subset: no dim/invite tickets (they
+          # would share the chain-writer's nonce lane on one account and chain)
+          # and no turn/notify, which exist once for every environment. Its
+          # checkout does not exist until the environment is stood up by hand.
+          if [ -d "$preview" ]; then
+            cd "$preview"
+            git fetch --no-tags "$primary" HEAD
+            git reset --hard "$SHA"
+            sudo IDENTITY_IMAGE="$IMAGE" docker compose -p identity-previewnet \
+              up -d --wait --wait-timeout 420 --no-build \
+              postgres identity-api identity-chain-writer \
+              username-indexer-postgres username-indexer
+          else
+            echo "skip identity-previewnet — no checkout at $preview"
+          fi
+
+          # The edge serves every environment, so it is updated last and only
+          # after the one-time cutover from host Caddy (docs/deploy.md); until
+          # then CI must not fight the host for 80/443. `validate` runs in a
+          # throwaway container so a bad route table cannot reach the running
+          # one; `up -d` applies compose changes, then the bind-mounted
+          # Caddyfile is reloaded in place rather than recreating the container.
+          cd "$primary"
+          if sudo docker compose -f gateway/docker-compose.yml -p edge ps -q --all caddy | grep -q .; then
+            sudo docker run --rm -v "$PWD/gateway/Caddyfile:/etc/caddy/Caddyfile:ro" \
+              caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+            sudo docker compose -f gateway/docker-compose.yml -p edge \
+              up -d --wait --wait-timeout 120
+            sudo docker compose -f gateway/docker-compose.yml -p edge \
+              exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+          else
+            echo "edge project absent — host Caddy still owns 80/443; skipping"
+            echo "run the one-time cutover in docs/deploy.md before it can deploy"
+          fi
+
+          # Every deploy pulls a uniquely SHA-tagged image, so dangling-only
+          # pruning would grow the disk forever; a week keeps recent tags
+          # available for a manual rollback.
+          sudo docker image prune -af --filter until=168h >/dev/null
+          REMOTE
+
+      # The established hostname is always checked — skipping it on a DNS
+      # failure would let a broken deploy report green. Only an environment
+      # still being rolled out is skippable.
       - name: Public health check
         run: |
           curl -fsS --max-time 20 https://identity.dotspark.app/readyz
           echo
+          host=identity-previewnet.dotspark.app
+          if getent hosts "$host" >/dev/null; then
+            echo -n "$host → "
+            curl -fsS --max-time 20 "https://$host/readyz"
+            echo
+          else
+            echo "skip $host — does not resolve yet"
+          fi

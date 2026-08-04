@@ -133,9 +133,9 @@ Two facts that shape the plan:
 - Gaps: no table for spent puzzles.
 
 ## Gateway ownership map
-- What exists: `gateway/Caddyfile` with `@username_reads` → `:8081` and the legacy cutover lane.
-- ✅ Demo: compose `gateway` on `:8000` routes search to the indexer.
-- Gaps: `/api/v1/poc*` still forwards to `LEGACY_BACKEND_ORIGIN`.
+- What exists: `gateway/Caddyfile` with `@username_reads` → the indexer's container alias. (Historical: at the time of this slice it was `:8081`, and a legacy cutover lane still existed; both changed on 2026-08-03.)
+- ✅ Demo: the gateway routes search to the indexer.
+- Gaps: none — `/api/v1/poc*` routes to the indexer, and the legacy origin lane was removed on 2026-08-03.
 
 # MVP phases (ship-shaped, demoable)
 

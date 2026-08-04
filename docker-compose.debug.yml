@@ -1,0 +1,61 @@
+# Debug overlay: republish the service ports on loopback.
+#
+# The base compose file publishes nothing — the edge container is the only
+# thing listening on a host port, and everything else talks over docker's
+# networks. That removes the port-collision problem between environments and
+# stops anything but 80/443 being reachable from outside the host.
+#
+# When you actually want to poke a service or run psql from an SSH session,
+# layer this file on. It binds to 127.0.0.1 only, so nothing becomes publicly
+# reachable, and the bands are variables so a second environment can use its
+# own without colliding.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+#
+# It is also what the native (non-container) workflows need, because they reach
+# Postgres over localhost: `just test-live` layers it on itself, while `just run`
+# and `just run-writer` expect you to have started Postgres with it first.
+#
+# Never install this on top of a deployment and walk away: the ports it opens
+# are unauthenticated (Postgres included).
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${IDENTITY_POSTGRES_PORT:-5432}:5432"
+
+  identity-api:
+    ports:
+      - "127.0.0.1:${IDENTITY_PORT:-8080}:8080"
+
+  username-indexer-postgres:
+    ports:
+      - "127.0.0.1:${INDEXER_POSTGRES_PORT:-5433}:5432"
+
+  username-indexer:
+    ports:
+      - "127.0.0.1:${INDEXER_PORT:-8081}:8080"
+
+  dim-tickets-postgres:
+    ports:
+      - "127.0.0.1:${DIM_TICKETS_POSTGRES_PORT:-5434}:5432"
+
+  dim-tickets-api:
+    ports:
+      - "127.0.0.1:${DIM_PORT:-8082}:8080"
+
+  invite-tickets-postgres:
+    ports:
+      - "127.0.0.1:${INVITE_POSTGRES_PORT:-5435}:5432"
+
+  invite-tickets-api:
+    ports:
+      - "127.0.0.1:${INVITE_PORT:-8083}:8080"
+
+  turn-api:
+    ports:
+      - "127.0.0.1:${TURN_PORT:-8084}:8080"
+
+  notify-relay:
+    ports:
+      - "127.0.0.1:${NOTIFY_PORT:-8085}:8080"
