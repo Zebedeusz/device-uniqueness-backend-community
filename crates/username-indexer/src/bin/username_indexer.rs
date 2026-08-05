@@ -17,6 +17,7 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    http_common::metrics::spawn("username-indexer");
 
     let config = Config::from_env().context("invalid configuration")?;
     // Resolved before any I/O so a misconfigured gate fails at startup rather
@@ -85,6 +86,11 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(prune_spent_puzzles(pool.clone(), PRUNE_INTERVAL));
         state = state.with_poc(poc);
     }
+    http_common::metrics::spawn_readiness_probe(
+        "username-indexer",
+        (pool.clone(), state.chain.clone()),
+        |(p, c)| username_indexer::http::health::probe(p, c),
+    );
     axum::serve(listener, routes(state))
         .with_graceful_shutdown(shutdown_signal())
         .await

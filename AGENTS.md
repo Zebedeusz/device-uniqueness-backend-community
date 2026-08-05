@@ -68,6 +68,10 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 - Edge: its own project, so environment restarts never touch it. Locally:
   `GATEWAY_ADDRESS=http://identity.dotspark.app EDGE_HTTP_PORT=8000 EDGE_HTTPS_PORT=8443 docker compose -f gateway/docker-compose.yml -p edge up -d`,
   then curl `127.0.0.1:8000` with a `Host:` header.
+- Metrics: also its own project. `docker network create ibv2-metrics` once, then
+  `docker compose -f observability/docker-compose.yml -p observability up -d`
+  (Prometheus UI on `127.0.0.1:9091`). Every process exports on 9090 over that
+  network only; scrape targets live in `observability/prometheus.yml`.
 
 ## Conventions (beyond rustfmt/clippy defaults)
 

@@ -56,10 +56,15 @@ services:
       DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-true}
       DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: ${DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS:-600}
       DOTNS_MAX_FUTURE_SKEW_SECS: ${DOTNS_MAX_FUTURE_SKEW_SECS:-600}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
     networks:
       default: {}
       edge:
+        aliases: ["identity-api-${ENV_ID:-paseo-next-v2}"]
+      metrics:
         aliases: ["identity-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
@@ -101,7 +106,19 @@ services:
       # drained here (stranded-queue warning only); off = janitor drain.
       QUEUE_ENABLED: ${QUEUE_ENABLED:-false}
       QUEUE_FALLBACK_AFTER_SECS: ${QUEUE_FALLBACK_AFTER_SECS:-60}
+      # Attester-resources watch (read-only): allowance is the primary's under
+      # proxy signing, fees are the signer's, so the floors are separate.
+      ATTESTER_RESOURCE_POLL_SECS: ${ATTESTER_RESOURCE_POLL_SECS:-60}
+      ATTESTER_ALLOWANCE_FLOOR: ${ATTESTER_ALLOWANCE_FLOOR:-100}
+      ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK: ${ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK:-10000000000}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+    networks:
+      default: {}
+      metrics:
+        aliases: ["identity-chain-writer-${ENV_ID:-paseo-next-v2}"]
     deploy:
       replicas: 1
 
@@ -125,7 +142,14 @@ services:
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
       QUEUE_ADVANCE_INTERVAL_SECS: ${QUEUE_ADVANCE_INTERVAL_SECS:-6}
       QUEUE_LEASE_TTL_SECS: ${QUEUE_LEASE_TTL_SECS:-30}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+    networks:
+      default: {}
+      metrics:
+        aliases: ["registration-queue-${ENV_ID:-paseo-next-v2}"]
     deploy:
       replicas: 1
 
@@ -179,10 +203,15 @@ services:
       # can never mint one (enforced by scripts/verify_compose_boundaries.sh).
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
     networks:
       default: {}
       edge:
+        aliases: ["username-indexer-${ENV_ID:-paseo-next-v2}"]
+      metrics:
         aliases: ["username-indexer-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
@@ -234,10 +263,15 @@ services:
       QUOTA_TIMEOUT_SECS: ${QUOTA_TIMEOUT_SECS:-15}
       RATE_LIMIT: ${RATE_LIMIT:-30}
       RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
     networks:
       default: {}
       edge:
+        aliases: ["dim-tickets-api-${ENV_ID:-paseo-next-v2}"]
+      metrics:
         aliases: ["dim-tickets-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
@@ -279,7 +313,14 @@ services:
       WRITER_RETRY_MAX_MS: ${WRITER_RETRY_MAX_MS:-60000}
       WRITER_RETRY_MAX_EXPONENT: ${WRITER_RETRY_MAX_EXPONENT:-10}
       WRITER_FINALIZE_SECS: ${WRITER_FINALIZE_SECS:-120}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+    networks:
+      default: {}
+      metrics:
+        aliases: ["dim-tickets-writer-${ENV_ID:-paseo-next-v2}"]
     deploy:
       replicas: 1
 
@@ -322,10 +363,15 @@ services:
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       RATE_LIMIT: ${RATE_LIMIT:-30}
       RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
     networks:
       default: {}
       edge:
+        aliases: ["invite-tickets-api-${ENV_ID:-paseo-next-v2}"]
+      metrics:
         aliases: ["invite-tickets-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
@@ -366,7 +412,14 @@ services:
       POOL_BATCH_MAX: ${POOL_BATCH_MAX:-100}
       POOL_INTERVAL_SECS: ${POOL_INTERVAL_SECS:-6}
       POOL_FINALIZE_SECS: ${POOL_FINALIZE_SECS:-60}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+    networks:
+      default: {}
+      metrics:
+        aliases: ["invite-tickets-pool-${ENV_ID:-paseo-next-v2}"]
     deploy:
       replicas: 1
 
@@ -396,10 +449,15 @@ services:
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       RATE_LIMIT: ${RATE_LIMIT:-30}
       RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
     networks:
       default: {}
       edge:
+        aliases: ["turn-api-${ENV_ID:-paseo-next-v2}"]
+      metrics:
         aliases: ["turn-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
@@ -432,6 +490,9 @@ services:
       APNS_TOPIC: ${APNS_TOPIC:-}
       APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-}
       FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      # Prometheus exporter, scraped on the private metrics network only.
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
     # APNs key, read-only from wherever the operator keeps it. Unset -> /dev/null
     # -> stub. Must exist before deploy, readable by uid 10001; see docs/deploy.md.
@@ -440,6 +501,8 @@ services:
     networks:
       default: {}
       edge:
+        aliases: ["notify-relay-${ENV_ID:-paseo-next-v2}"]
+      metrics:
         aliases: ["notify-relay-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
@@ -458,6 +521,13 @@ networks:
   edge:
     external: true
     name: ${EDGE_NETWORK:-ibv2-edge}
+  # Shared with the observability project (Prometheus) and nothing else.
+  # Created once out of band (`docker network create ibv2-metrics`); every
+  # process joins it under an ENV_ID-suffixed alias so one Prometheus can
+  # scrape several environments on one host. Never routed from the edge.
+  metrics:
+    external: true
+    name: ${METRICS_NETWORK:-ibv2-metrics}
 
 volumes:
   pgdata:

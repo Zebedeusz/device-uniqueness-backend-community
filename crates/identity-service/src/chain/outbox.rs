@@ -46,6 +46,17 @@ pub enum Status {
 }
 
 impl Status {
+    /// Every status, so a gauge pass can report `0` for the ones no row is in
+    /// (a metric that vanishes when the state empties is unalertable).
+    pub const ALL: [Status; 6] = [
+        Status::Queued,
+        Status::Reserved,
+        Status::Submitting,
+        Status::Assigned,
+        Status::RetryAfter,
+        Status::FailedTerminal,
+    ];
+
     /// The stored `status` string.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -57,6 +68,52 @@ impl Status {
             Status::FailedTerminal => "FAILED_TERMINAL",
         }
     }
+}
+
+/// How many rows sit in one outbox status, and how long the oldest of them has
+/// been there.
+#[derive(Debug, Clone, Copy)]
+pub struct StatusDepth {
+    /// Rows currently in this status.
+    pub depth: i64,
+    /// Age of the oldest row in this status, in seconds. `None` when empty.
+    pub oldest_age_secs: Option<f64>,
+}
+
+/// Depth and oldest-row age per status, in one grouped scan.
+///
+/// Statuses with no rows come back zero-depth, so a gauge built from this never
+/// disappears mid-incident.
+pub async fn depth_by_status(pool: &PgPool) -> Result<Vec<(Status, StatusDepth)>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT status, count(*) AS depth, \
+                extract(epoch from now() - min(created_at))::float8 AS oldest_age_secs \
+         FROM username_reservations GROUP BY status",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut observed = std::collections::BTreeMap::new();
+    for row in &rows {
+        let status: String = row.try_get("status")?;
+        observed.insert(
+            status,
+            StatusDepth {
+                depth: row.try_get("depth")?,
+                oldest_age_secs: row.try_get("oldest_age_secs")?,
+            },
+        );
+    }
+    Ok(Status::ALL
+        .into_iter()
+        .map(|status| {
+            let depth = observed.remove(status.as_str()).unwrap_or(StatusDepth {
+                depth: 0,
+                oldest_age_secs: None,
+            });
+            (status, depth)
+        })
+        .collect())
 }
 
 /// A new reservation to persist, built by the API from a validated request.

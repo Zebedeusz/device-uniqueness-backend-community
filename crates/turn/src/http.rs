@@ -45,7 +45,7 @@ pub fn routes(state: AppState) -> Router {
 
 /// Stateless service: nothing to gate readiness on — if the process serves,
 /// it can mint.
-async fn readiness(_state: AppState) -> health::Readiness {
+pub async fn readiness(_state: AppState) -> health::Readiness {
     Ok(&[])
 }
 

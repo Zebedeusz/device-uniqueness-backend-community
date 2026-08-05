@@ -92,6 +92,25 @@ impl ChainClient {
         }
     }
 
+    /// The attestation allowance left for `account` (`0` when it has none).
+    ///
+    /// `PeopleLite::AttestationAllowance` is what the attester spends per
+    /// registration: at zero, every `attest` fails and registration stops. With
+    /// proxy signing the allowance belongs to the primary (`CHAIN_WRITER_PROXY_FOR`),
+    /// not the signing key.
+    pub async fn attestation_allowance(&self, account: [u8; 32]) -> anyhow::Result<u32> {
+        let at = self.client.at_current_block().await?;
+        let address = people::storage().people_lite().attestation_allowance();
+        let allowance = at
+            .storage()
+            .try_fetch(address, (subxt::utils::AccountId32(account),))
+            .await?;
+        match allowance {
+            Some(value) => Ok(value.decode()?),
+            None => Ok(0),
+        }
+    }
+
     /// Return the set of discriminators (`0`..`99`) already owned for `base`.
     ///
     /// Reads all 100 `{base}.{NN}` keys against one block snapshot.

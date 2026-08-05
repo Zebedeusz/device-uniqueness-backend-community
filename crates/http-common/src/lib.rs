@@ -20,6 +20,8 @@
 //!   readiness probes.
 //! - [`layers`]: the standard tower-http middleware stack (request-id →
 //!   trace → 30s timeout).
+//! - [`metrics`]: the Prometheus recorder + `/metrics` listener on its own
+//!   port, shared by the HTTP services and the headless workers alike.
 //! - [`config`]: fail-fast environment parsing helpers + JWT verifier
 //!   loading.
 
@@ -27,6 +29,7 @@ pub mod auth;
 pub mod config;
 pub mod health;
 pub mod layers;
+pub mod metrics;
 pub mod problem;
 pub mod rate_limit;
 pub mod zod;

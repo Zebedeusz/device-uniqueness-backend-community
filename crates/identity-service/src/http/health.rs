@@ -81,29 +81,43 @@ pub(crate) async fn livez() -> Json<Status> {
     )
 )]
 pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
-    if let Err(err) = sqlx::query("SELECT 1").execute(&state.pool).await {
-        tracing::warn!(error = ?err, "readiness check failed: database unavailable");
-        return (
+    match probe(state.pool.clone(), state.chain.clone()).await {
+        Err("db") => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "status": "unavailable", "service": "identity-service", "db": "down" })),
         )
-            .into_response();
-    }
-    if let Err(err) = state.chain.health().await {
-        tracing::warn!(error = ?err, "readiness check failed: People Chain unavailable");
-        return (
+            .into_response(),
+        Err(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(
                 json!({ "status": "unavailable", "service": "identity-service", "chain": "down" }),
             ),
         )
-            .into_response();
+            .into_response(),
+        Ok(_) => (
+            StatusCode::OK,
+            Json(
+                json!({ "status": "ready", "service": "identity-service", "db": "up", "chain": "up" }),
+            ),
+        )
+            .into_response(),
     }
-    (
-        StatusCode::OK,
-        Json(
-            json!({ "status": "ready", "service": "identity-service", "db": "up", "chain": "up" }),
-        ),
-    )
-        .into_response()
+}
+
+/// The dependency probe behind `/readyz` and the readiness gauges: Postgres,
+/// then the People Chain RPC. Shared with the workers' gauge probe so the two
+/// can never disagree.
+pub async fn probe(
+    pool: sqlx::PgPool,
+    chain: crate::ChainClient,
+) -> http_common::health::Readiness {
+    if let Err(err) = sqlx::query("SELECT 1").execute(&pool).await {
+        tracing::warn!(error = ?err, "readiness check failed: database unavailable");
+        return Err("db");
+    }
+    if let Err(err) = chain.health().await {
+        tracing::warn!(error = ?err, "readiness check failed: People Chain unavailable");
+        return Err("chain");
+    }
+    Ok(&["db", "chain"])
 }

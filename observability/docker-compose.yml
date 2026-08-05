@@ -1,0 +1,45 @@
+# Observability project: Prometheus, scraping the services over the private
+# `ibv2-metrics` network.
+#
+# Its own compose project (`-p observability`) for the same reason the edge is:
+# restarting an environment must never take monitoring down, and monitoring
+# must never be a dependency of serving traffic. It joins only the metrics
+# network — it is not reachable from, and cannot reach, the edge.
+#
+# Run:
+#   docker network create ibv2-metrics   # once, out of band
+#   docker compose -f observability/docker-compose.yml -p observability up -d
+#
+# The UI is loopback-only by default (127.0.0.1:9091); tunnel to it with SSH
+# rather than publishing it.
+
+name: observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      # Deliberately no --web.enable-lifecycle: it exposes unauthenticated
+      # /-/reload and /-/quit endpoints. Apply a config change with
+      # `docker compose -p observability restart prometheus` instead — the TSDB
+      # is on a volume, so a restart costs a second and loses no history.
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9091}:9090"
+    networks:
+      metrics:
+        aliases: ["prometheus"]
+
+networks:
+  metrics:
+    external: true
+    name: ${METRICS_NETWORK:-ibv2-metrics}
+
+volumes:
+  prometheus_data:

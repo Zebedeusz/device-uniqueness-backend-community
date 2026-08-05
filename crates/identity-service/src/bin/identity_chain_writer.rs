@@ -13,6 +13,7 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    http_common::metrics::spawn("identity-chain-writer");
 
     let config = WriterConfig::from_env().context("invalid identity-chain-writer configuration")?;
     writer::run(config).await

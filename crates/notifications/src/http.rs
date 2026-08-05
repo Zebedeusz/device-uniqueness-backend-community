@@ -24,6 +24,6 @@ pub fn routes(state: AppState) -> Router {
 }
 
 /// Stateless and DB-free: if the process serves, it is ready — no external probe.
-async fn readiness(_state: AppState) -> health::Readiness {
+pub async fn readiness(_state: AppState) -> health::Readiness {
     Ok(&[])
 }

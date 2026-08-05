@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    http_common::metrics::spawn("notify-relay");
 
     let config = Config::from_env().context("invalid configuration")?;
     tracing::info!(bind = %config.bind_addr, "starting notify-relay");
@@ -36,6 +37,11 @@ async fn main() -> anyhow::Result<()> {
     );
     let bind_addr = config.bind_addr;
     let state = AppState::new(config.jwt_verifier, apns, fcm, limiter);
+    http_common::metrics::spawn_readiness_probe(
+        "notify-relay",
+        state.clone(),
+        notifications::http::readiness,
+    );
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await

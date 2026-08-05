@@ -431,6 +431,11 @@ pub async fn run_advancer(pool: PgPool, chain: ChainClient, config: AdvancerConf
         holder = %config.holder_id,
         "registration-queue advancer starting"
     );
+    http_common::metrics::spawn_readiness_probe(
+        "registration-queue",
+        (pool.clone(), chain.clone()),
+        |(p, c)| crate::http::health::probe(p, c),
+    );
     loop {
         let epoch = match lease::try_acquire(
             &pool,

@@ -18,6 +18,7 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    http_common::metrics::spawn("identity-api");
 
     let config = Config::from_env().context("invalid configuration")?;
     tracing::info!(
@@ -35,6 +36,12 @@ async fn main() -> anyhow::Result<()> {
 
     let bind_addr = config.bind_addr;
     let state = AppState::new(pool, chain, jwt, config);
+    let (probe_pool, probe_chain) = (state.pool.clone(), state.chain.clone());
+    http_common::metrics::spawn_readiness_probe(
+        "identity-api",
+        (probe_pool, probe_chain),
+        |(p, c)| identity_service::http::health::probe(p, c),
+    );
     let app = routes(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)

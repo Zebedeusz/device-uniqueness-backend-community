@@ -29,6 +29,10 @@ sudo systemctl enable --now docker
 
 # Owned by no project: both the environment and the edge attach to it.
 sudo docker network create ibv2-edge
+
+# Same idea for metrics: the environment and the observability project meet
+# here, and nothing else does (Prometheus is never reachable from the edge).
+sudo docker network create ibv2-metrics
 ```
 
 ## 2. Code and config
@@ -101,7 +105,18 @@ sudo docker compose up -d --build
 
 # the public edge — acquires its certificate on first start
 sudo docker compose -f gateway/docker-compose.yml -p edge up -d
+
+# monitoring — its own project, so an environment restart never stops it
+sudo docker compose -f observability/docker-compose.yml -p observability up -d
 ```
+
+Every process serves Prometheus metrics on port 9090 (`METRICS_ADDR`), published to no
+host port and routed by no Caddy rule: they are reachable only from the `ibv2-metrics`
+network, under the same `<service>-$ENV_ID` alias Prometheus scrapes in
+[`observability/prometheus.yml`](../observability/prometheus.yml). Adding an environment
+means copying that scrape job with the other `ENV_ID` suffix. The Prometheus UI is
+loopback-only (`127.0.0.1:9091`) — reach it over an SSH tunnel, and set
+`METRICS_ENABLED=false` to turn an environment's exporters off.
 
 The route table lives in the repo: [`gateway/Caddyfile`](../gateway/Caddyfile) (see the
 ownership map in `docs/plans/active/gateway.md`). Its `{$VAR:default}` defaults match this

@@ -190,6 +190,11 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
         holder = %config.holder_id,
         "dim-tickets-writer connected"
     );
+    http_common::metrics::spawn_readiness_probe(
+        "dim-tickets-writer",
+        (pool.clone(), chain.clone()),
+        |(p, c)| crate::http::probe(p, c),
+    );
 
     let writer = Writer {
         pool,

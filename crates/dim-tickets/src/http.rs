@@ -52,12 +52,18 @@ pub fn routes(state: AppState) -> Router {
 
 /// Readiness gates on Postgres and the People Chain RPC — the create path
 /// cannot answer its quota check without the chain.
-async fn readiness(state: AppState) -> health::Readiness {
-    if let Err(err) = sqlx::query("SELECT 1").execute(&state.pool).await {
+pub async fn readiness(state: AppState) -> health::Readiness {
+    probe(state.pool.clone(), state.chain.clone()).await
+}
+
+/// The dependency probe behind `/readyz` and the readiness gauges. Also used by
+/// the writer binary, which serves no HTTP.
+pub async fn probe(pool: sqlx::PgPool, chain: crate::ChainClient) -> health::Readiness {
+    if let Err(err) = sqlx::query("SELECT 1").execute(&pool).await {
         tracing::warn!(error = ?err, "readiness check failed: database unavailable");
         return Err("db");
     }
-    if let Err(err) = state.chain.health().await {
+    if let Err(err) = chain.health().await {
         tracing::warn!(error = ?err, "readiness check failed: People Chain unavailable");
         return Err("chain");
     }

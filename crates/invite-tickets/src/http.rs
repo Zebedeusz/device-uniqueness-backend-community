@@ -54,7 +54,7 @@ pub fn routes(state: AppState) -> Router {
 /// Readiness gates on Postgres only — the claim path never touches the People
 /// Chain (registration is the pool maintainer's job), so a chain outage must
 /// not take the API out of rotation.
-async fn readiness(state: AppState) -> health::Readiness {
+pub async fn readiness(state: AppState) -> health::Readiness {
     if let Err(err) = sqlx::query("SELECT 1").execute(&state.pool).await {
         tracing::warn!(error = ?err, "readiness check failed: database unavailable");
         return Err("db");

@@ -1,0 +1,34 @@
+# Scrape targets for one environment. Every process exposes /metrics on 9090
+# and is reachable on the metrics network under its `<service>-<ENV_ID>` alias,
+# so a second environment is added by copying this job with the other suffix.
+#
+# Targets are static: this host runs a fixed set of containers, and Docker
+# service discovery would need the daemon socket mounted into Prometheus.
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  external_labels:
+    monitor: identity-backend-v2
+
+scrape_configs:
+  - job_name: paseo-next-v2
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - identity-api-paseo-next-v2:9090
+          - identity-chain-writer-paseo-next-v2:9090
+          - registration-queue-paseo-next-v2:9090
+          - username-indexer-paseo-next-v2:9090
+          - dim-tickets-api-paseo-next-v2:9090
+          - dim-tickets-writer-paseo-next-v2:9090
+          - invite-tickets-api-paseo-next-v2:9090
+          - invite-tickets-pool-paseo-next-v2:9090
+          - turn-api-paseo-next-v2:9090
+          - notify-relay-paseo-next-v2:9090
+        labels:
+          env_id: paseo-next-v2
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

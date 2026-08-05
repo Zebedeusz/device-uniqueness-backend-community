@@ -106,6 +106,11 @@ pub async fn run(pool: PgPool, chain: ChainClient, config: Config, freshness: Fr
     loop {
         interval.tick().await;
         let started = Instant::now();
+        // Before indexing, so the gauges describe the backlog this pass is
+        // about to work through rather than the zero left behind it.
+        if let Err(error) = record_lag_gauges(&pool, &chain).await {
+            tracing::warn!(error = ?error, "checkpoint lag gauge pass failed");
+        }
         match index_finalized_range(&pool, &chain).await {
             Ok(Some(report)) => {
                 consecutive_failures = 0;
@@ -143,6 +148,24 @@ pub async fn run(pool: PgPool, chain: ChainClient, config: Config, freshness: Fr
             }
         }
     }
+}
+
+/// Record the finalized head, the checkpoint, and the gap between them.
+///
+/// The gap is the projection's real staleness — search answers from the
+/// checkpoint, so it can grow while every individual pass reports success.
+async fn record_lag_gauges(pool: &PgPool, chain: &ChainClient) -> anyhow::Result<()> {
+    let head = chain.online().at_current_block().await?.block_number();
+    metrics::gauge!("ibv2_chain_finalized_head_block").set(head as f64);
+
+    let Some(snapshot) = checkpoint_freshness(pool).await? else {
+        return Ok(());
+    };
+    let checkpoint = snapshot.last_finalized_number;
+    metrics::gauge!("ibv2_indexer_checkpoint_block").set(checkpoint as f64);
+    metrics::gauge!("ibv2_indexer_checkpoint_lag_blocks")
+        .set(head.saturating_sub(checkpoint) as f64);
+    Ok(())
 }
 
 /// Bounded exponential backoff: `BASE * 2^(failures - 1)`, capped at

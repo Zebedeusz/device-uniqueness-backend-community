@@ -18,6 +18,7 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    http_common::metrics::spawn("invite-tickets-api");
 
     let config = Config::from_env().context("invalid configuration")?;
     tracing::info!(
@@ -30,6 +31,11 @@ async fn main() -> anyhow::Result<()> {
 
     let bind_addr = config.bind_addr;
     let state = AppState::new(pool, config);
+    http_common::metrics::spawn_readiness_probe(
+        "invite-tickets-api",
+        state.clone(),
+        invite_tickets::http::readiness,
+    );
     let app = routes(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)

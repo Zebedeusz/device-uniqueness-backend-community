@@ -39,6 +39,7 @@ chain-types.workspace = true
 chain-client.workspace = true
 jwt-verify.workspace = true
 http-common.workspace = true
+metrics.workspace = true
 subxt = { workspace = true, features = ["jsonrpsee"] }
 subxt-signer = { workspace = true, features = ["subxt"] }
 

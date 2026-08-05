@@ -17,6 +17,7 @@ path = "src/bin/username_indexer.rs"
 [dependencies]
 chain-types.workspace = true
 http-common.workspace = true
+metrics.workspace = true
 jwt-verify.workspace = true
 subxt.workspace = true
 subxt-rpcs.workspace = true

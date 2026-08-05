@@ -19,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    http_common::metrics::spawn("invite-tickets-pool");
 
     let config = MaintainerConfig::from_env().context("invalid configuration")?;
 

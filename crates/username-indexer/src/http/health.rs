@@ -38,30 +38,48 @@ async fn livez() -> Json<Status> {
     })
 }
 
-async fn readyz(State(state): State<AppState>) -> Response {
-    if let Err(error) = sqlx::query("SELECT 1").execute(&state.pool).await {
+/// The dependency probe behind `/readyz` and the readiness gauges: Postgres,
+/// then the People Chain RPC.
+pub async fn probe(
+    pool: sqlx::PgPool,
+    chain: crate::ChainClient,
+) -> http_common::health::Readiness {
+    if let Err(error) = sqlx::query("SELECT 1").execute(&pool).await {
         tracing::warn!(error = ?error, dependency = "postgres", "readiness check failed");
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "status": "unavailable",
-                "service": "username-indexer",
-                "db": "down"
-            })),
-        )
-            .into_response();
+        return Err("db");
     }
-    if let Err(error) = state.chain.health().await {
+    if let Err(error) = chain.health().await {
         tracing::warn!(error = ?error, dependency = "people_chain", "readiness check failed");
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "status": "unavailable",
-                "service": "username-indexer",
-                "chain": "down"
-            })),
-        )
-            .into_response();
+        return Err("chain");
+    }
+    Ok(&["db", "chain"])
+}
+
+async fn readyz(State(state): State<AppState>) -> Response {
+    match probe(state.pool.clone(), state.chain.clone()).await {
+        Err("db") => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "status": "unavailable",
+                    "service": "username-indexer",
+                    "db": "down"
+                })),
+            )
+                .into_response()
+        }
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "status": "unavailable",
+                    "service": "username-indexer",
+                    "chain": "down"
+                })),
+            )
+                .into_response()
+        }
+        Ok(_) => {}
     }
     let freshness =
         serde_json::to_value(state.freshness.snapshot()).unwrap_or(serde_json::Value::Null);

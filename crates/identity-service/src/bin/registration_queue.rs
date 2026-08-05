@@ -19,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    http_common::metrics::spawn("registration-queue");
 
     let config = AdvancerConfig::from_env().context("invalid registration-queue configuration")?;
     let pool = identity_service::db::connect(&config.database_url).await?;

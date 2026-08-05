@@ -28,6 +28,11 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 utoipa = { version = "5", features = ["axum_extras", "preserve_order"] }
+metrics = "0.24"
+# The exporter's own hyper listener is unused: the recorder handle is rendered
+# from our axum `/metrics` route, so the http-listener/push-gateway defaults
+# (a second HTTP stack) stay off.
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -406,6 +406,15 @@ mod tests {
         assert_eq!(query.entry_name(), "UsernameOwnerOf");
     }
 
+    /// The resource watch can construct the `PeopleLite::AttestationAllowance`
+    /// lookup (keyed by attester at fetch time).
+    #[test]
+    fn builds_attestation_allowance_query() {
+        let query = people::storage().people_lite().attestation_allowance();
+        assert_eq!(query.pallet_name(), "PeopleLite");
+        assert_eq!(query.entry_name(), "AttestationAllowance");
+    }
+
     /// The identity-chain-writer can construct the `Resources::register_lite_person`
     /// registration call from the generated API.
     #[test]

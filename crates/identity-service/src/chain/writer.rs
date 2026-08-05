@@ -72,6 +72,14 @@ pub struct WriterConfig {
     /// `payment_requests`). Read-only on chain; a no-op while the payment
     /// lane has never quoted anything.
     pub payment_poll_interval: Duration,
+    /// Cadence of the attester-resources pass: read the attestation allowance
+    /// and the account balances that registration silently dies without.
+    pub resource_poll_interval: Duration,
+    /// WARN below this many remaining attestations.
+    pub allowance_floor: u32,
+    /// WARN below this signer free balance, in planck (transaction fees come
+    /// from the signer, not the proxied primary).
+    pub signer_balance_floor_planck: u128,
 }
 
 impl WriterConfig {
@@ -120,6 +128,19 @@ impl WriterConfig {
                 "PAYMENT_POLL_INTERVAL_SECS",
                 30,
             )?),
+            resource_poll_interval: Duration::from_secs(crate::queue::env_u64_strict(
+                "ATTESTER_RESOURCE_POLL_SECS",
+                60,
+            )?),
+            allowance_floor: u32::try_from(crate::queue::env_u64_strict(
+                "ATTESTER_ALLOWANCE_FLOOR",
+                100,
+            )?)
+            .context("ATTESTER_ALLOWANCE_FLOOR must fit a u32")?,
+            signer_balance_floor_planck: u128::from(crate::queue::env_u64_strict(
+                "ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK",
+                10_000_000_000,
+            )?),
         })
     }
 }
@@ -138,6 +159,12 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     let signer = WriterSigner::from_secret(config.signer_suri.expose_secret())?;
     let signer_account = AccountId32(signer.public_bytes());
     tracing::info!(signer = %hex_account(&signer_account.0), "identity-chain-writer connected");
+    // No HTTP surface here, so this is the only readiness signal it has.
+    http_common::metrics::spawn_readiness_probe(
+        "identity-chain-writer",
+        (pool.clone(), chain.clone()),
+        |(p, c)| crate::http::health::probe(p, c),
+    );
 
     let mut writer = Writer {
         pool,
@@ -237,9 +264,22 @@ impl Writer {
     async fn active_loop(&mut self, guard: &Guard) -> anyhow::Result<()> {
         let mut last_payment_pass: Option<std::time::Instant> = None;
         let mut last_stranded_check: Option<std::time::Instant> = None;
+        let mut last_resource_pass: Option<std::time::Instant> = None;
         loop {
             if !self.heartbeat(guard).await? {
                 anyhow::bail!("lost writer lease");
+            }
+            // Attester resources: the two values that stop registration without
+            // any error of their own — a spent allowance and an unfunded signer.
+            if last_resource_pass.is_none_or(|t| t.elapsed() >= self.config.resource_poll_interval)
+            {
+                last_resource_pass = Some(std::time::Instant::now());
+                if let Err(e) = self.log_attester_resources().await {
+                    tracing::warn!(error = %e, "attester resources read failed");
+                }
+                if let Err(e) = record_outbox_gauges(&self.pool).await {
+                    tracing::warn!(error = %e, "outbox gauge pass failed");
+                }
             }
             if self.config.queue_enabled {
                 // The queue is the free lane's throttle: never drain QUEUED
@@ -490,6 +530,54 @@ impl Writer {
         Ok(n)
     }
 
+    /// Log one `attester_resources` line and warn below the configured floors.
+    ///
+    /// Under proxy signing the two resources sit on different accounts: the
+    /// allowance on the primary, the transaction fee on the signer.
+    async fn log_attester_resources(&self) -> anyhow::Result<()> {
+        let allowance_account = self.config.proxy_for.unwrap_or(self.signer_account.0);
+        let allowance = self.chain.attestation_allowance(allowance_account).await?;
+        let signer_balance = self.chain.free_balance(self.signer_account.0).await?;
+        let primary_balance = match self.config.proxy_for {
+            Some(primary) => Some(self.chain.free_balance(primary).await?),
+            None => None,
+        };
+
+        tracing::info!(
+            allowance,
+            allowance_account = %hex_account(&allowance_account),
+            signer = %hex_account(&self.signer_account.0),
+            signer_balance_planck = signer_balance,
+            primary_balance_planck = primary_balance,
+            "attester_resources"
+        );
+        metrics::gauge!("ibv2_attester_allowance").set(allowance as f64);
+        metrics::gauge!("ibv2_account_free_balance_planck", "role" => "signer")
+            .set(signer_balance as f64);
+        if let Some(primary) = primary_balance {
+            metrics::gauge!("ibv2_account_free_balance_planck", "role" => "primary")
+                .set(primary as f64);
+        }
+
+        if allowance < self.config.allowance_floor {
+            tracing::warn!(
+                allowance,
+                floor = self.config.allowance_floor,
+                allowance_account = %hex_account(&allowance_account),
+                "attestation allowance below floor; registration stops at zero"
+            );
+        }
+        if signer_balance < self.config.signer_balance_floor_planck {
+            tracing::warn!(
+                signer_balance_planck = signer_balance,
+                floor_planck = self.config.signer_balance_floor_planck,
+                signer = %hex_account(&self.signer_account.0),
+                "chain-writer signer balance below floor; registrations will fail to pay fees"
+            );
+        }
+        Ok(())
+    }
+
     async fn assign(&self, guard: &Guard, r: &Reservation) -> anyhow::Result<()> {
         if !outbox::mark_assigned(&self.pool, guard, r.id).await? {
             anyhow::bail!("lease lost while assigning");
@@ -522,6 +610,19 @@ impl Writer {
         );
         Ok(())
     }
+}
+
+/// Record depth and oldest-row age per outbox status — where "the oldest queued
+/// claim" comes from. Read-only; the writer owns it as the always-on process
+/// next to the outbox.
+async fn record_outbox_gauges(pool: &PgPool) -> Result<(), sqlx::Error> {
+    for (status, depth) in outbox::depth_by_status(pool).await? {
+        let status = status.as_str();
+        metrics::gauge!("ibv2_outbox_depth", "status" => status).set(depth.depth as f64);
+        metrics::gauge!("ibv2_outbox_oldest_age_seconds", "status" => status)
+            .set(depth.oldest_age_secs.unwrap_or(0.0));
+    }
+    Ok(())
 }
 
 /// Build the registration extrinsic: `PeopleLite.attest`, optionally wrapped in

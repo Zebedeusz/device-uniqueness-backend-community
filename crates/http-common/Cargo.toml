@@ -14,6 +14,9 @@ publish.workspace = true
 jwt-verify.workspace = true
 
 axum.workspace = true
+tokio = { workspace = true }
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 tower-http = { version = "0.6", features = ["trace", "timeout", "request-id"] }
 tracing.workspace = true
 serde_json.workspace = true

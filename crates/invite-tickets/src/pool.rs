@@ -371,6 +371,20 @@ impl MaintainerConfig {
 
 /// Connect and run the maintainer until fatal error (the process is expected
 /// to be supervised and restarted).
+/// The maintainer's dependency probe, published as readiness gauges. Wider than
+/// `invite-tickets-api`'s: registering ticket keys needs the People Chain too.
+async fn readiness(pool: PgPool, chain: ChainClient) -> http_common::health::Readiness {
+    if let Err(error) = sqlx::query("SELECT 1").execute(&pool).await {
+        tracing::warn!(error = ?error, "readiness check failed: database unavailable");
+        return Err("db");
+    }
+    if let Err(error) = chain.health().await {
+        tracing::warn!(error = ?error, "readiness check failed: People Chain unavailable");
+        return Err("chain");
+    }
+    Ok(&["db", "chain"])
+}
+
 pub async fn run(config: MaintainerConfig) -> anyhow::Result<()> {
     use std::str::FromStr as _;
 
@@ -397,6 +411,11 @@ pub async fn run(config: MaintainerConfig) -> anyhow::Result<()> {
         dims = ?config.dims,
         target = config.tuning.target,
         "invite-tickets-pool starting"
+    );
+    http_common::metrics::spawn_readiness_probe(
+        "invite-tickets-pool",
+        (pool.clone(), chain.clone()),
+        |(p, c)| readiness(p, c),
     );
 
     let identity = InviterIdentity {
