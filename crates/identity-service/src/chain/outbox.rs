@@ -446,3 +446,30 @@ async fn guarded_status(
         .await?;
     Ok(done.rows_affected() == 1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Guards [`Status::ALL`] against drifting from the enum: a missing entry
+    /// would recreate the vanishing-gauge problem `ALL` exists to prevent. The
+    /// exhaustive match stops compiling when a variant is added — extend it and
+    /// `ALL` together — and the distinct-count check fails until `ALL` really
+    /// contains the new variant rather than a repeat.
+    #[test]
+    fn all_covers_every_status() {
+        for status in Status::ALL {
+            match status {
+                Status::Queued
+                | Status::Reserved
+                | Status::Submitting
+                | Status::Assigned
+                | Status::RetryAfter
+                | Status::FailedTerminal => {}
+            }
+        }
+        let distinct: std::collections::BTreeSet<_> =
+            Status::ALL.iter().map(|status| status.as_str()).collect();
+        assert_eq!(distinct.len(), Status::ALL.len(), "ALL repeats a status");
+    }
+}
