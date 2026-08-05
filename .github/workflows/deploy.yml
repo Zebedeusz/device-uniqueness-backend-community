@@ -107,9 +107,14 @@ jobs:
           ssh ubuntu@"$HOST" \
             "IMAGE='$IMAGE' SHA='$SHA' TOKEN='$TOKEN' ACTOR='$ACTOR' bash -euo pipefail -s" \
             <<'REMOTE'
-          # Shared external network, owned by no project.
+          # Shared external networks, owned by no project: the edge meets every
+          # environment on one, Prometheus scrapes them over the other. Created
+          # here as well as in docs/deploy.md so adding a network to compose
+          # cannot fail the deploy on an already-running host.
           sudo docker network inspect ibv2-edge >/dev/null 2>&1 ||
             sudo docker network create ibv2-edge
+          sudo docker network inspect ibv2-metrics >/dev/null 2>&1 ||
+            sudo docker network create ibv2-metrics
 
           trap 'sudo docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
           echo "$TOKEN" | sudo docker login ghcr.io -u "$ACTOR" --password-stdin
