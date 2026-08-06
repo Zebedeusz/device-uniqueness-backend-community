@@ -784,4 +784,207 @@ mod tests {
             SubmitFailureAction::Retry
         );
     }
+
+    /// Every env var `from_env` reads, cleared around each case so neither a
+    /// previous case nor the developer's ambient shell leaks into the next.
+    const FROM_ENV_VARS: &[&str] = &[
+        "DATABASE_URL",
+        "PEOPLE_RPC_URL",
+        "CHAIN_WRITER_SIGNER_SURI",
+        "CHAIN_WRITER_PROXY_FOR",
+        "CHAIN_WRITER_HOLDER_ID",
+        "CHAIN_WRITER_LEASE_NAME",
+        "CHAIN_WRITER_LEASE_TTL_SECS",
+        "CHAIN_WRITER_POLL_SECS",
+        "CHAIN_WRITER_BATCH_SIZE",
+        "CHAIN_WRITER_FINALIZE_SECS",
+        "CHAIN_WRITER_MAX_ATTEMPTS",
+        "QUEUE_ENABLED",
+        "QUEUE_FALLBACK_AFTER_SECS",
+        "PAYMENT_POLL_INTERVAL_SECS",
+        "ATTESTER_RESOURCE_POLL_SECS",
+        "ATTESTER_ALLOWANCE_FLOOR",
+        "ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK",
+    ];
+
+    /// The two vars `from_env` refuses to default.
+    const REQUIRED_ENV: &[(&str, &str)] = &[
+        ("DATABASE_URL", "postgres://writer:pw@localhost/identity"),
+        ("CHAIN_WRITER_SIGNER_SURI", "//Writer"),
+    ];
+
+    /// Alice's well-known dev account: the SS58 form and the sr25519 public
+    /// key bytes it encodes, so the parse is asserted against an independent
+    /// constant rather than round-tripped through `parse_account` itself.
+    const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+    const ALICE_HEX: &str = "d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d";
+
+    /// Clear the writer's vars, set `vars`, run `from_env`, then clear again —
+    /// success and error paths alike leave the process environment clean.
+    fn from_env_with(vars: &[(&str, &str)]) -> anyhow::Result<WriterConfig> {
+        for key in FROM_ENV_VARS {
+            std::env::remove_var(key);
+        }
+        for (key, value) in vars {
+            std::env::set_var(key, value);
+        }
+        let result = WriterConfig::from_env();
+        for key in FROM_ENV_VARS {
+            std::env::remove_var(key);
+        }
+        result
+    }
+
+    /// Env vars are process-global and cargo runs `#[test]`s on parallel
+    /// threads, so ALL `from_env` cases run sequentially inside this one test
+    /// — never split them into separate `#[test]` fns — and the test holds
+    /// [`crate::ENV_MUTEX`] because `config::tests` mutates the same
+    /// process-global vars (`DATABASE_URL`, `PEOPLE_RPC_URL`, ...).
+    /// (`queue::tests` uses its own `QUEUE_TEST_STRICT_*` names.)
+    #[test]
+    fn from_env_reads_and_validates_the_environment() {
+        let _guard = crate::ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        // Fully populated: every var lands in its field.
+        let config = from_env_with(&[
+            ("DATABASE_URL", "postgres://writer:pw@localhost/identity"),
+            ("PEOPLE_RPC_URL", "wss://people.example"),
+            ("CHAIN_WRITER_SIGNER_SURI", "//Writer"),
+            ("CHAIN_WRITER_PROXY_FOR", ALICE_SS58),
+            ("CHAIN_WRITER_HOLDER_ID", "writer-test-1"),
+            ("CHAIN_WRITER_LEASE_NAME", "custom-lease"),
+            ("CHAIN_WRITER_LEASE_TTL_SECS", "45"),
+            ("CHAIN_WRITER_POLL_SECS", "3"),
+            ("CHAIN_WRITER_BATCH_SIZE", "50"),
+            ("CHAIN_WRITER_FINALIZE_SECS", "90"),
+            ("CHAIN_WRITER_MAX_ATTEMPTS", "4"),
+            ("QUEUE_ENABLED", "yes"),
+            ("QUEUE_FALLBACK_AFTER_SECS", " 90 "), // strict parse trims padding
+            ("PAYMENT_POLL_INTERVAL_SECS", "15"),
+            ("ATTESTER_RESOURCE_POLL_SECS", "120"),
+            ("ATTESTER_ALLOWANCE_FLOOR", "250"),
+            ("ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK", "123456789012"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.database_url.expose_secret(),
+            "postgres://writer:pw@localhost/identity"
+        );
+        assert_eq!(config.people_rpc_url, "wss://people.example");
+        assert_eq!(config.signer_suri.expose_secret(), "//Writer");
+        let alice: [u8; 32] = hex::decode(ALICE_HEX).unwrap().try_into().unwrap();
+        assert_eq!(config.proxy_for, Some(alice));
+        assert_eq!(config.holder_id, "writer-test-1");
+        assert_eq!(config.lease_name, "custom-lease");
+        assert_eq!(config.lease_ttl, Duration::from_secs(45));
+        assert_eq!(config.poll_interval, Duration::from_secs(3));
+        assert_eq!(config.batch_size, 50);
+        assert_eq!(config.finalize_timeout, Duration::from_secs(90));
+        assert_eq!(config.max_attempts, 4);
+        assert!(config.queue_enabled);
+        assert_eq!(config.queue_fallback_after, Duration::from_secs(90));
+        assert_eq!(config.payment_poll_interval, Duration::from_secs(15));
+        assert_eq!(config.resource_poll_interval, Duration::from_secs(120));
+        assert_eq!(config.allowance_floor, 250);
+        assert_eq!(config.signer_balance_floor_planck, 123_456_789_012);
+
+        // Required-only: every optional var falls back to its documented default.
+        let config = from_env_with(REQUIRED_ENV).unwrap();
+        assert_eq!(
+            config.people_rpc_url,
+            "wss://paseo-people-next-system-rpc.polkadot.io"
+        );
+        assert_eq!(config.proxy_for, None);
+        // The holder id must be unique per boot (pid + random suffix), never a
+        // fixed literal that would let overlapping instances share a lease.
+        assert!(
+            config
+                .holder_id
+                .starts_with(&format!("writer-{}-", std::process::id())),
+            "unexpected default holder id {:?}",
+            config.holder_id
+        );
+        assert_eq!(config.lease_name, "people-chain-writer");
+        assert_eq!(config.lease_ttl, Duration::from_secs(30));
+        assert_eq!(config.poll_interval, Duration::from_secs(2));
+        assert_eq!(config.batch_size, 25);
+        assert_eq!(config.finalize_timeout, Duration::from_secs(120));
+        assert_eq!(config.max_attempts, 8);
+        assert!(!config.queue_enabled);
+        assert_eq!(config.queue_fallback_after, Duration::from_secs(60));
+        assert_eq!(config.payment_poll_interval, Duration::from_secs(30));
+        assert_eq!(config.resource_poll_interval, Duration::from_secs(60));
+        assert_eq!(config.allowance_floor, 100);
+        assert_eq!(config.signer_balance_floor_planck, 10_000_000_000);
+
+        // Whitespace-only PROXY_FOR / HOLDER_ID count as unset, not as values.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("CHAIN_WRITER_PROXY_FOR", "   "));
+        vars.push(("CHAIN_WRITER_HOLDER_ID", "   "));
+        let config = from_env_with(&vars).unwrap();
+        assert_eq!(config.proxy_for, None);
+        assert!(config.holder_id.starts_with("writer-"));
+
+        // Missing required vars fail naming the var.
+        let err = from_env_with(&[("CHAIN_WRITER_SIGNER_SURI", "//Writer")]).unwrap_err();
+        assert!(
+            err.to_string().contains("DATABASE_URL is required"),
+            "{err}"
+        );
+        let err = from_env_with(&[("DATABASE_URL", "postgres://x")]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("CHAIN_WRITER_SIGNER_SURI is required"),
+            "{err}"
+        );
+
+        // An unparseable PROXY_FOR is a startup error, not a silent None.
+        // (The message names the offending value but NOT the env var — an
+        // operator has to know it came from CHAIN_WRITER_PROXY_FOR.)
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("CHAIN_WRITER_PROXY_FOR", "not-an-account"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("invalid SS58 account not-an-account"),
+            "{err}"
+        );
+
+        // QUEUE_ENABLED only accepts boolean tokens, and the error names it.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("QUEUE_ENABLED", "maybe"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(err.to_string().contains("QUEUE_ENABLED"), "{err}");
+
+        // The strict-u64 knobs reject garbage, naming the offending var.
+        for key in [
+            "QUEUE_FALLBACK_AFTER_SECS",
+            "PAYMENT_POLL_INTERVAL_SECS",
+            "ATTESTER_RESOURCE_POLL_SECS",
+            "ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK",
+        ] {
+            let mut vars = REQUIRED_ENV.to_vec();
+            vars.push((key, "30s"));
+            let err = from_env_with(&vars).unwrap_err();
+            assert!(err.to_string().contains(key), "{key}: {err}");
+        }
+
+        // ATTESTER_ALLOWANCE_FLOOR parses strictly AND must fit a u32.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("ATTESTER_ALLOWANCE_FLOOR", "4294967296"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ATTESTER_ALLOWANCE_FLOOR must fit a u32"),
+            "{err}"
+        );
+
+        // Known-lenient: the plain env_u64 knobs silently fall back to their
+        // defaults on garbage instead of erroring (unlike the strict ones).
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("CHAIN_WRITER_LEASE_TTL_SECS", "garbage"));
+        vars.push(("CHAIN_WRITER_BATCH_SIZE", "lots"));
+        let config = from_env_with(&vars).unwrap();
+        assert_eq!(config.lease_ttl, Duration::from_secs(30));
+        assert_eq!(config.batch_size, 25);
+    }
 }

@@ -304,10 +304,15 @@ impl Config {
 
 /// Parse `JWT_ED25519_SECRET` (hex or base64) into a 32-byte Ed25519 seed.
 fn parse_jwt_secret() -> Result<[u8; 32], ConfigError> {
-    use base64::Engine as _;
-
     let raw = std::env::var("JWT_ED25519_SECRET")
         .map_err(|_| ConfigError::Missing("JWT_ED25519_SECRET"))?;
+    decode_jwt_secret(&raw)
+}
+
+/// Decode a JWT signing seed: hex (optional `0x`) or base64, exactly 32 bytes.
+fn decode_jwt_secret(raw: &str) -> Result<[u8; 32], ConfigError> {
+    use base64::Engine as _;
+
     let trimmed = raw.trim();
     let bytes = hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))
         .ok()
@@ -332,6 +337,12 @@ fn parse_jwt_secret() -> Result<[u8; 32], ConfigError> {
 fn parse_attester_public_key() -> Result<String, ConfigError> {
     let raw = std::env::var("ATTESTER_PUBLIC_KEY")
         .map_err(|_| ConfigError::Missing("ATTESTER_PUBLIC_KEY"))?;
+    normalize_attester_public_key(&raw)
+}
+
+/// Normalise an attester public key (hex, optional `0x`, any case) to
+/// lowercase `0x`+hex, insisting on exactly 32 bytes.
+fn normalize_attester_public_key(raw: &str) -> Result<String, ConfigError> {
     let trimmed = raw.trim();
     let bytes = hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed)).map_err(|e| {
         ConfigError::Invalid {
@@ -356,6 +367,12 @@ fn parse_signing_digest(key: &'static str) -> Result<Option<[u8; 32]>, ConfigErr
     let Ok(raw) = std::env::var(key) else {
         return Ok(None);
     };
+    decode_signing_digest(key, &raw)
+}
+
+/// Decode a signing-certificate fingerprint: colon-separated or bare hex, any
+/// case; blank means "not configured".
+fn decode_signing_digest(key: &'static str, raw: &str) -> Result<Option<[u8; 32]>, ConfigError> {
     let normalized = raw.trim().to_ascii_lowercase().replace(':', "");
     if normalized.is_empty() {
         return Ok(None);
@@ -373,12 +390,18 @@ fn parse_signing_digest(key: &'static str) -> Result<Option<[u8; 32]>, ConfigErr
 
 /// Parse the optional base64 AES-256 `PLAY_INTEGRITY_DECRYPTION_KEY`.
 fn parse_play_integrity_decryption_key() -> Result<Option<[u8; 32]>, ConfigError> {
+    let Ok(raw) = std::env::var("PLAY_INTEGRITY_DECRYPTION_KEY") else {
+        return Ok(None);
+    };
+    decode_play_integrity_decryption_key(&raw)
+}
+
+/// Decode the AES-256 decryption key: base64, exactly 32 bytes; blank means
+/// "not configured".
+fn decode_play_integrity_decryption_key(raw: &str) -> Result<Option<[u8; 32]>, ConfigError> {
     use base64::Engine as _;
 
     const KEY: &str = "PLAY_INTEGRITY_DECRYPTION_KEY";
-    let Ok(raw) = std::env::var(KEY) else {
-        return Ok(None);
-    };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -399,13 +422,19 @@ fn parse_play_integrity_decryption_key() -> Result<Option<[u8; 32]>, ConfigError
 /// Parse the optional base64 DER-SPKI `PLAY_INTEGRITY_VERIFICATION_KEY`,
 /// validating it decodes to an EC P-256 public key at startup.
 fn parse_play_integrity_verification_key() -> Result<Option<Vec<u8>>, ConfigError> {
+    let Ok(raw) = std::env::var("PLAY_INTEGRITY_VERIFICATION_KEY") else {
+        return Ok(None);
+    };
+    decode_play_integrity_verification_key(&raw)
+}
+
+/// Decode and validate the verification key: base64 DER SPKI holding an EC
+/// P-256 public key; blank means "not configured".
+fn decode_play_integrity_verification_key(raw: &str) -> Result<Option<Vec<u8>>, ConfigError> {
     use base64::Engine as _;
     use p256::pkcs8::DecodePublicKey as _;
 
     const KEY: &str = "PLAY_INTEGRITY_VERIFICATION_KEY";
-    let Ok(raw) = std::env::var(KEY) else {
-        return Ok(None);
-    };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -453,14 +482,7 @@ fn parse_device_check() -> Result<Option<DeviceCheckConfig>, ConfigError> {
             .filter(|v| !v.is_empty())
             .ok_or(ConfigError::Missing(key))
     };
-    // Tolerate `\n`-escaped PEMs from single-line env injection.
-    let private_key_pem = require("DEVICE_CHECK_PRIVATE_KEY")?.replace("\\n", "\n");
-    jsonwebtoken::EncodingKey::from_ec_pem(private_key_pem.as_bytes()).map_err(|e| {
-        ConfigError::Invalid {
-            key: "DEVICE_CHECK_PRIVATE_KEY",
-            reason: format!("not a usable EC private key PEM: {e}"),
-        }
-    })?;
+    let private_key_pem = validate_device_check_pem(&require("DEVICE_CHECK_PRIVATE_KEY")?)?;
     Ok(Some(DeviceCheckConfig {
         team_id: require("APPLE_TEAM_ID")?,
         key_id: require("DEVICE_CHECK_KEY_ID")?,
@@ -471,12 +493,23 @@ fn parse_device_check() -> Result<Option<DeviceCheckConfig>, ConfigError> {
     }))
 }
 
+/// Unescape (`\n` from single-line env injection) and validate a DeviceCheck
+/// `.p8` private key, insisting on a usable EC PEM (fail-fast).
+fn validate_device_check_pem(raw: &str) -> Result<String, ConfigError> {
+    let private_key_pem = raw.replace("\\n", "\n");
+    jsonwebtoken::EncodingKey::from_ec_pem(private_key_pem.as_bytes()).map_err(|e| {
+        ConfigError::Invalid {
+            key: "DEVICE_CHECK_PRIVATE_KEY",
+            reason: format!("not a usable EC private key PEM: {e}"),
+        }
+    })?;
+    Ok(private_key_pem)
+}
+
 /// Parse the payment-lane block: `None` while `PAYMENT_LANE_ENABLED` is
 /// false; enabled, the master account and amount are required and validated
 /// (fail-fast — a mistyped master would quote unsweepable addresses).
 fn parse_payment() -> Result<Option<PaymentConfig>, ConfigError> {
-    use std::str::FromStr as _;
-
     if !env_bool("PAYMENT_LANE_ENABLED", false)? {
         return Ok(None);
     }
@@ -485,39 +518,50 @@ fn parse_payment() -> Result<Option<PaymentConfig>, ConfigError> {
         .ok()
         .filter(|v| !v.is_empty())
         .ok_or(ConfigError::Missing("PAYMENT_MASTER_ACCOUNT"))?;
-    let master_account = subxt::utils::AccountId32::from_str(&master_raw)
+    let master_account = decode_payment_master(&master_raw)?;
+    let amount_raw = std::env::var("PAYMENT_AMOUNT_PLANCK")
+        .map_err(|_| ConfigError::Missing("PAYMENT_AMOUNT_PLANCK"))?;
+    let amount_planck = decode_payment_amount(&amount_raw)?;
+    Ok(Some(PaymentConfig {
+        master_account,
+        amount_planck,
+        request_ttl: Duration::from_secs(parse_var("PAYMENT_REQUEST_TTL_SECS", "86400")?),
+    }))
+}
+
+/// Decode the cold master account from SS58.
+fn decode_payment_master(raw: &str) -> Result<[u8; 32], ConfigError> {
+    use std::str::FromStr as _;
+
+    Ok(subxt::utils::AccountId32::from_str(raw)
         .map_err(|e| ConfigError::Invalid {
             key: "PAYMENT_MASTER_ACCOUNT",
             reason: format!("expected an SS58 address: {e}"),
         })?
-        .0;
-    let amount_planck: u64 = std::env::var("PAYMENT_AMOUNT_PLANCK")
-        .map_err(|_| ConfigError::Missing("PAYMENT_AMOUNT_PLANCK"))?
-        .trim()
-        .parse()
-        .map_err(|e| ConfigError::Invalid {
-            key: "PAYMENT_AMOUNT_PLANCK",
-            reason: format!("expected planck as an integer: {e}"),
-        })?;
+        .0)
+}
+
+/// Decode the per-registration deposit: a positive planck amount that the
+/// quote row's BIGINT column can hold (refused at startup rather than letting
+/// the insert clamp or fail late).
+fn decode_payment_amount(raw: &str) -> Result<u64, ConfigError> {
+    let amount_planck: u64 = raw.trim().parse().map_err(|e| ConfigError::Invalid {
+        key: "PAYMENT_AMOUNT_PLANCK",
+        reason: format!("expected planck as an integer: {e}"),
+    })?;
     if amount_planck == 0 {
         return Err(ConfigError::Invalid {
             key: "PAYMENT_AMOUNT_PLANCK",
             reason: "must be greater than zero".to_string(),
         });
     }
-    // The quote row stores the amount in a BIGINT column; refuse a value the
-    // database cannot hold rather than letting the insert clamp or fail late.
     if i64::try_from(amount_planck).is_err() {
         return Err(ConfigError::Invalid {
             key: "PAYMENT_AMOUNT_PLANCK",
             reason: "must fit a signed 64-bit integer (database BIGINT)".to_string(),
         });
     }
-    Ok(Some(PaymentConfig {
-        master_account,
-        amount_planck,
-        request_ttl: Duration::from_secs(parse_var("PAYMENT_REQUEST_TTL_SECS", "86400")?),
-    }))
+    Ok(amount_planck)
 }
 
 /// Parse an env var into `T`, falling back to `default` when unset.
@@ -560,14 +604,17 @@ fn parse_bool(raw: &str) -> Option<bool> {
 /// Parse a comma-separated env var into trimmed, non-empty entries.
 fn env_list(key: &str) -> Vec<String> {
     std::env::var(key)
-        .map(|raw| {
-            raw.split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
+        .map(|raw| split_list(&raw))
         .unwrap_or_default()
+}
+
+/// Split a comma-separated list into trimmed, non-empty entries.
+fn split_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
@@ -603,6 +650,264 @@ mod tests {
         let dc = format!("{:?}", config.device_check.unwrap());
         assert!(!dc.contains("P8_SECRET_MATERIAL"));
         assert!(dc.contains("REDACTED"));
+    }
+
+    #[test]
+    fn jwt_secret_decodes_hex_and_base64_to_exactly_32_bytes() {
+        use base64::Engine as _;
+
+        let seed = [3u8; 32];
+        let hex_raw = hex::encode(seed);
+        assert_eq!(decode_jwt_secret(&hex_raw).unwrap(), seed);
+        assert_eq!(decode_jwt_secret(&format!("0x{hex_raw}")).unwrap(), seed);
+        assert_eq!(decode_jwt_secret(&format!("  {hex_raw}\n")).unwrap(), seed);
+        let b64_raw = base64::engine::general_purpose::STANDARD.encode(seed);
+        assert_eq!(decode_jwt_secret(&b64_raw).unwrap(), seed);
+
+        // Neither hex nor base64.
+        let err = decode_jwt_secret("not-a-key!").unwrap_err();
+        assert!(err.to_string().contains("JWT_ED25519_SECRET"), "{err}");
+        // Valid hex, wrong length.
+        let err = decode_jwt_secret(&hex::encode([3u8; 16])).unwrap_err();
+        assert!(err.to_string().contains("exactly 32 bytes"), "{err}");
+    }
+
+    #[test]
+    fn attester_public_key_normalises_to_lowercase_0x_hex() {
+        let upper = hex::encode([0xABu8; 32]).to_ascii_uppercase();
+        let want = format!("0x{}", "ab".repeat(32));
+        assert_eq!(normalize_attester_public_key(&upper).unwrap(), want);
+        assert_eq!(
+            normalize_attester_public_key(&format!("0x{upper}")).unwrap(),
+            want
+        );
+
+        let err = normalize_attester_public_key("zz").unwrap_err();
+        assert!(err.to_string().contains("expected hex"), "{err}");
+        let err = normalize_attester_public_key(&hex::encode([1u8; 20])).unwrap_err();
+        assert!(
+            err.to_string().contains("expected 32 bytes, got 20"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn signing_digest_accepts_play_console_and_bare_hex_forms() {
+        const KEY: &str = "ANDROID_SIGNING_DIGEST_PLAYSTORE";
+        let digest = [0x5Au8; 32];
+        // The colon-separated uppercase form as published in Play Console.
+        let colons = digest
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        assert_eq!(decode_signing_digest(KEY, &colons).unwrap(), Some(digest));
+        assert_eq!(
+            decode_signing_digest(KEY, &hex::encode(digest)).unwrap(),
+            Some(digest)
+        );
+        // Blank means "not configured", not an error.
+        assert_eq!(decode_signing_digest(KEY, "   ").unwrap(), None);
+
+        let err = decode_signing_digest(KEY, "not hex").unwrap_err();
+        assert!(err.to_string().contains(KEY), "{err}");
+        // A SHA-1-length fingerprint is the classic paste mistake.
+        let err = decode_signing_digest(KEY, &hex::encode([1u8; 20])).unwrap_err();
+        assert!(err.to_string().contains("32-byte SHA-256"), "{err}");
+    }
+
+    #[test]
+    fn play_integrity_decryption_key_wants_32_base64_bytes() {
+        use base64::Engine as _;
+
+        let key = [9u8; 32];
+        let raw = base64::engine::general_purpose::STANDARD.encode(key);
+        assert_eq!(
+            decode_play_integrity_decryption_key(&raw).unwrap(),
+            Some(key)
+        );
+        assert_eq!(decode_play_integrity_decryption_key("").unwrap(), None);
+
+        let err = decode_play_integrity_decryption_key("!!!").unwrap_err();
+        assert!(err.to_string().contains("expected base64"), "{err}");
+        let short = base64::engine::general_purpose::STANDARD.encode([9u8; 16]);
+        let err = decode_play_integrity_decryption_key(&short).unwrap_err();
+        assert!(err.to_string().contains("32-byte AES-256"), "{err}");
+    }
+
+    #[test]
+    fn play_integrity_verification_key_must_be_der_spki_p256() {
+        use base64::Engine as _;
+        use p256::pkcs8::EncodePublicKey as _;
+
+        let der = p256::SecretKey::from_slice(&[7u8; 32])
+            .expect("valid scalar")
+            .public_key()
+            .to_public_key_der()
+            .expect("encode SPKI")
+            .into_vec();
+        let raw = base64::engine::general_purpose::STANDARD.encode(&der);
+        assert_eq!(
+            decode_play_integrity_verification_key(&raw).unwrap(),
+            Some(der)
+        );
+        assert_eq!(decode_play_integrity_verification_key(" ").unwrap(), None);
+
+        // Valid base64 that is not an EC P-256 SPKI.
+        let junk = base64::engine::general_purpose::STANDARD.encode([1u8; 40]);
+        let err = decode_play_integrity_verification_key(&junk).unwrap_err();
+        assert!(err.to_string().contains("EC P-256"), "{err}");
+    }
+
+    #[test]
+    fn device_check_pem_unescapes_and_validates() {
+        let pem = rcgen::KeyPair::generate()
+            .expect("generate EC key")
+            .serialize_pem();
+        assert_eq!(validate_device_check_pem(&pem).unwrap(), pem);
+        // Single-line env injection escapes the newlines; they must come back.
+        let escaped = pem.replace('\n', "\\n");
+        assert_eq!(validate_device_check_pem(&escaped).unwrap(), pem);
+
+        let err = validate_device_check_pem("garbage").unwrap_err();
+        assert!(
+            err.to_string().contains("not a usable EC private key PEM"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn payment_master_decodes_ss58() {
+        // Well-known dev account (Alice) and its sr25519 public key.
+        let alice = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+        let want: [u8; 32] =
+            hex::decode("d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        assert_eq!(decode_payment_master(alice).unwrap(), want);
+
+        let err = decode_payment_master("not-an-address").unwrap_err();
+        assert!(
+            err.to_string().contains("expected an SS58 address"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn payment_amount_is_positive_and_bigint_safe() {
+        assert_eq!(
+            decode_payment_amount(" 1000000000 ").unwrap(),
+            1_000_000_000
+        );
+
+        let err = decode_payment_amount("0").unwrap_err();
+        assert!(err.to_string().contains("greater than zero"), "{err}");
+        let err = decode_payment_amount("ten").unwrap_err();
+        assert!(err.to_string().contains("expected planck"), "{err}");
+        // u64-valid but overflows the quote row's BIGINT column.
+        let err = decode_payment_amount(&u64::MAX.to_string()).unwrap_err();
+        assert!(err.to_string().contains("signed 64-bit"), "{err}");
+    }
+
+    #[test]
+    fn split_list_trims_and_drops_empties() {
+        assert_eq!(split_list(" a , ,b,, c "), vec!["a", "b", "c"]);
+        assert!(split_list("").is_empty());
+        assert!(split_list(" , ,").is_empty());
+    }
+
+    #[test]
+    fn attestation_mode_tracks_both_gates() {
+        let mut config = Config::test_default();
+        assert!(config.attestation_mode().starts_with("disabled"));
+        config.auth_enabled = true;
+        assert!(config.attestation_mode().starts_with("soft"));
+        config.enforce_auth = true;
+        assert!(config.attestation_mode().starts_with("hard"));
+    }
+
+    /// The `from_env` composition: fail-fast ordering for missing requireds,
+    /// the paired-keys rule, and the auth-enabled required matrix. One
+    /// sequential `#[test]` (under [`crate::ENV_MUTEX`]) because env vars are
+    /// process-global.
+    #[test]
+    fn from_env_fails_fast_and_gates_requireds_on_auth_enabled() {
+        use base64::Engine as _;
+
+        const VARS: &[&str] = &[
+            "DATABASE_URL",
+            "JWT_ED25519_SECRET",
+            "ATTESTER_PUBLIC_KEY",
+            "AUTH_ENABLED",
+            "APPLE_APP_ATTEST_APP_IDS",
+            "IOS_PACKAGE_NAMES",
+            "ANDROID_PACKAGE_NAMES",
+            "ANDROID_SIGNING_DIGEST_PLAYSTORE",
+            "ANDROID_SIGNING_DIGEST_WEBSITE",
+            "PLAY_INTEGRITY_DECRYPTION_KEY",
+            "PLAY_INTEGRITY_VERIFICATION_KEY",
+        ];
+        let _guard = crate::ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let clear = || VARS.iter().for_each(|k| std::env::remove_var(k));
+        let missing = |key: &str| {
+            let err = Config::from_env().expect_err(key);
+            assert!(
+                matches!(err, ConfigError::Missing(k) if k == key),
+                "want Missing({key}), got {err}"
+            );
+        };
+        clear();
+
+        // Required-with-no-default trio, in from_env's evaluation order.
+        missing("DATABASE_URL");
+        std::env::set_var("DATABASE_URL", "postgres://unused");
+        missing("JWT_ED25519_SECRET");
+        std::env::set_var("JWT_ED25519_SECRET", hex::encode([1u8; 32]));
+        missing("ATTESTER_PUBLIC_KEY");
+        std::env::set_var("ATTESTER_PUBLIC_KEY", hex::encode([2u8; 32]));
+
+        // Minimal environment: everything else defaults.
+        let config = Config::from_env().expect("minimal env");
+        assert_eq!(config.bind_addr.to_string(), "0.0.0.0:8080");
+        assert_eq!(config.jwt_issuer, "polkadot-app");
+        assert!(!config.auth_enabled);
+        assert!(config.dotns_gateway_enabled);
+        assert_eq!(config.attester_public_key, format!("0x{}", "02".repeat(32)));
+        assert!(config.payment.is_none());
+        assert!(config.device_check.is_none());
+
+        // The self-managed Play Integrity keys only work as a pair.
+        std::env::set_var(
+            "PLAY_INTEGRITY_DECRYPTION_KEY",
+            base64::engine::general_purpose::STANDARD.encode([9u8; 32]),
+        );
+        let err = Config::from_env().expect_err("unpaired key");
+        assert!(err.to_string().contains("must be set together"), "{err}");
+        std::env::remove_var("PLAY_INTEGRITY_DECRYPTION_KEY");
+
+        // Attestation-on walks the required matrix in order.
+        std::env::set_var("AUTH_ENABLED", "true");
+        missing("APPLE_APP_ATTEST_APP_IDS");
+        std::env::set_var("APPLE_APP_ATTEST_APP_IDS", "TEAM123.app.bundle");
+        missing("IOS_PACKAGE_NAMES");
+        std::env::set_var("IOS_PACKAGE_NAMES", "app.bundle");
+        missing("ANDROID_PACKAGE_NAMES");
+        std::env::set_var("ANDROID_PACKAGE_NAMES", "com.example.app, com.example.beta");
+        missing("ANDROID_SIGNING_DIGEST_PLAYSTORE");
+        std::env::set_var("ANDROID_SIGNING_DIGEST_PLAYSTORE", "AA".repeat(32));
+        missing("ANDROID_SIGNING_DIGEST_WEBSITE");
+        std::env::set_var("ANDROID_SIGNING_DIGEST_WEBSITE", "BB".repeat(32));
+        let config = Config::from_env().expect("full auth env");
+        assert!(config.auth_enabled);
+        assert_eq!(
+            config.android_package_names,
+            vec!["com.example.app", "com.example.beta"]
+        );
+        assert_eq!(config.android_signing_digest_playstore, Some([0xAA; 32]));
+        assert_eq!(config.android_signing_digest_website, Some([0xBB; 32]));
+
+        clear();
     }
 
     #[test]

@@ -1,6 +1,6 @@
 default: check
 
-# Full local gate — matches CI.
+# Fast offline gate. CI also runs the deterministic `test-live-db` gate below.
 check: fmt-check lint test
 
 fmt:
@@ -15,44 +15,41 @@ lint:
 test:
     cargo test --workspace
 
-# On-demand live-Postgres tests (NOT in `just check`; needs Docker). A live-Postgres
-# CI dependency is deliberately deferred, so the `#[ignore]`d live tests run here.
-# Layers docker-compose.debug.yml: the base file publishes no host port, and these
-# tests connect over localhost.
-test-live:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    identity_test_port="${IDENTITY_TEST_POSTGRES_PORT:-55432}"
-    export IDENTITY_POSTGRES_PORT="$identity_test_port"
-    compose=(docker compose -f docker-compose.yml -f docker-compose.debug.yml)
-    "${compose[@]}" up -d postgres username-indexer-postgres
-    trap '"${compose[@]}" rm -fsv postgres username-indexer-postgres >/dev/null 2>&1 || true' EXIT
-    for _ in $(seq 1 30); do
-        "${compose[@]}" exec -T postgres pg_isready -U identity -d identity >/dev/null 2>&1 && break
-        sleep 1
-    done
-    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
-        cargo test -p identity-service --test allocation_live -- --ignored
-    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
-        cargo test -p identity-service --test queue_live -- --ignored
-    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
-        cargo test -p identity-service --test voucher_live -- --ignored
-    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
-        cargo test -p identity-service --test payment_live -- --ignored
-    # End-to-end through the production router; these also need a reachable
-    # People Chain RPC (PEOPLE_RPC_URL or the Paseo default).
-    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
-        cargo test -p identity-service --test voucher_http_live -- --ignored
-    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
-        cargo test -p identity-service --test payment_http_live -- --ignored
-    IDENTITY_TEST_DATABASE_URL="postgres://identity:identity@localhost:${identity_test_port}/identity" \
-        cargo test -p identity-service --test payment_watch_live -- --ignored
-    for _ in $(seq 1 30); do
-        "${compose[@]}" exec -T username-indexer-postgres pg_isready -U username_indexer -d username_indexer >/dev/null 2>&1 && break
-        sleep 1
-    done
-    DATABASE_URL=postgres://username_indexer:username_indexer@localhost:${INDEXER_POSTGRES_PORT:-5433}/username_indexer \
-        cargo test -p username-indexer --test pagination_live -- --ignored
+# Canonical deterministic live gate: 12 suites / 33 ignored tests against four
+# per-run scratch Postgres containers. CI invokes the same script directly.
+test-live: test-live-db
+
+test-live-db:
+    scripts/run_live_suites.sh db cargo test
+
+# Optional external smokes, deliberately outside the merge/release gate.
+test-live-chain:
+    scripts/run_live_suites.sh chain cargo test
+
+test-live-providers:
+    scripts/run_live_suites.sh providers cargo test
+
+# Line coverage of the offline suite only (what `just check` runs). Needs
+# cargo-llvm-cov (prebuilt releases: https://github.com/taiki-e/cargo-llvm-cov/releases)
+# plus `rustup component add llvm-tools`.
+coverage:
+    cargo llvm-cov --workspace --summary-only
+
+# Canonical deterministic coverage: offline + all DB-only live suites.
+coverage-db: _coverage-offline
+    scripts/run_live_suites.sh db cargo llvm-cov --no-report
+    cargo llvm-cov report --summary-only
+
+# Supplemental coverage including the mutable People Chain RPC suites. APNs / FCM
+# smokes are never merged because they require operator credentials.
+coverage-full: _coverage-offline
+    scripts/run_live_suites.sh db cargo llvm-cov --no-report
+    scripts/run_live_suites.sh chain cargo llvm-cov --no-report
+    cargo llvm-cov report --summary-only
+
+_coverage-offline:
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --no-report --workspace
 
 # Dependency license/advisory audit (requires `cargo install cargo-deny`).
 deny:

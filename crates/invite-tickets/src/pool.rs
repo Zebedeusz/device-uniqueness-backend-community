@@ -31,7 +31,10 @@ use crate::sign::{self, TicketKeypair};
 use crate::tickets::{self, Dim, Network};
 
 /// Advisory lock key for the tick guard (stable, service-specific).
-const POOL_LOCK_KEY: i64 = 0x1417_1CE7_0001;
+/// Public but hidden: the live-Postgres suite (`tests/pool_live_pg.rs`) probes
+/// the same key from a second connection; not part of the crate's API.
+#[doc(hidden)]
+pub const POOL_LOCK_KEY: i64 = 0x1417_1CE7_0001;
 
 /// Pool maintainer tunables (legacy defaults; all env-overridable).
 #[derive(Debug, Clone)]
@@ -67,6 +70,24 @@ pub fn settle_batch_size(current: u32, max: u32, succeeded: bool) -> u32 {
     }
 }
 
+/// How many tickets one tick should submit: the shortfall against `target`,
+/// capped by the current AIMD `batch_size`. Returns 0 when the pool is already
+/// at (or above) target — the tick submits nothing.
+pub fn plan_refill(available: i64, target: i64, batch_size: u32) -> u32 {
+    let needed = target.saturating_sub(available);
+    if needed <= 0 {
+        return 0;
+    }
+    u32::try_from(needed).unwrap_or(u32::MAX).min(batch_size)
+}
+
+/// Whether the generated keypair at `index` was accepted on chain — the
+/// positional `force_batch` contract: `items[i]` reports the i-th call, and a
+/// missing entry means not accepted (only accepted tickets may be inserted).
+pub fn item_accepted(items: &[bool], index: usize) -> bool {
+    items.get(index).copied() == Some(true)
+}
+
 /// The signing identity the maintainer submits with.
 pub struct InviterIdentity {
     /// Transaction signer (the inviter itself, or its proxy delegate).
@@ -95,7 +116,6 @@ pub async fn tick_pool(
     let available = tickets::count_available(pool, dim, network)
         .await
         .context("counting available tickets")?;
-    let needed = tuning.target.saturating_sub(available);
     tracing::debug!(
         dim = dim.as_str(),
         network = network.as_str(),
@@ -103,11 +123,11 @@ pub async fn tick_pool(
         target = tuning.target,
         "pool status"
     );
-    if needed <= 0 {
+    let size = plan_refill(available, tuning.target, batch_size);
+    if size == 0 {
         return Ok((0, batch_size));
     }
 
-    let size = u32::try_from(needed).unwrap_or(u32::MAX).min(batch_size);
     let generated: Vec<(TicketKeypair, [u8; 32])> = (0..size)
         .map(|_| {
             let seed = sign::generate_seed();
@@ -132,7 +152,7 @@ pub async fn tick_pool(
     // its keypair (the seeds drop with `generated`).
     let mut inserted = 0u32;
     for (index, (keypair, seed)) in generated.iter().enumerate() {
-        if finalized.items.get(index).copied() != Some(true) {
+        if !item_accepted(&finalized.items, index) {
             continue;
         }
         tickets::insert_available(
@@ -235,7 +255,9 @@ impl TickLock {
 }
 
 /// Try to take the tick lock on a dedicated connection; `None` = held elsewhere.
-async fn acquire_tick_lock(pool: &PgPool) -> anyhow::Result<Option<TickGuard>> {
+/// Public but hidden: exercised by `tests/pool_live_pg.rs`; not crate API.
+#[doc(hidden)]
+pub async fn acquire_tick_lock(pool: &PgPool) -> anyhow::Result<Option<TickGuard>> {
     let mut conn = pool.acquire().await.context("acquiring lock connection")?;
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(POOL_LOCK_KEY)
@@ -252,7 +274,9 @@ async fn acquire_tick_lock(pool: &PgPool) -> anyhow::Result<Option<TickGuard>> {
 }
 
 /// Drop-guard that releases the advisory lock without blocking `Drop`.
-struct TickGuard {
+/// Public but hidden: returned by [`acquire_tick_lock`] for the live-PG suite.
+#[doc(hidden)]
+pub struct TickGuard {
     lock: Option<TickLock>,
 }
 
@@ -333,18 +357,7 @@ impl MaintainerConfig {
         };
 
         let dims_raw = std::env::var("POOL_DIMS").unwrap_or_else(|_| "Game,ProofOfInk".to_string());
-        let dims: Vec<Dim> = dims_raw
-            .split(',')
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .map(|part| {
-                Dim::from_str(part)
-                    .map_err(|()| anyhow::anyhow!("POOL_DIMS entries must be Game|ProofOfInk"))
-            })
-            .collect::<anyhow::Result<_>>()?;
-        if dims.is_empty() {
-            anyhow::bail!("POOL_DIMS must name at least one DIM");
-        }
+        let dims = parse_pool_dims(&dims_raw)?;
 
         let interval_secs = env_bounded_u64("POOL_INTERVAL_SECS", 6, 1, 86_400)?;
         let target = env_bounded_u64("POOL_TARGET_SIZE", 10_000, 1, 10_000_000)?;
@@ -435,6 +448,26 @@ pub async fn run(config: MaintainerConfig) -> anyhow::Result<()> {
     .await
 }
 
+/// Parse the `POOL_DIMS` value: comma-separated DIM names, whitespace-tolerant,
+/// empty entries skipped. Errors on an unknown DIM or when nothing remains.
+fn parse_pool_dims(raw: &str) -> anyhow::Result<Vec<Dim>> {
+    use std::str::FromStr as _;
+
+    let dims: Vec<Dim> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            Dim::from_str(part)
+                .map_err(|()| anyhow::anyhow!("POOL_DIMS entries must be Game|ProofOfInk"))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    if dims.is_empty() {
+        anyhow::bail!("POOL_DIMS must name at least one DIM");
+    }
+    Ok(dims)
+}
+
 fn required_env(key: &'static str) -> anyhow::Result<String> {
     let raw =
         std::env::var(key).map_err(|_| anyhow::anyhow!("required env var {key} is not set"))?;
@@ -460,7 +493,8 @@ fn env_bounded_u64(key: &'static str, default: u64, min: u64, max: u64) -> anyho
 
 #[cfg(test)]
 mod tests {
-    use super::settle_batch_size;
+    use super::{item_accepted, parse_pool_dims, plan_refill, settle_batch_size};
+    use crate::tickets::Dim;
 
     #[test]
     fn grows_by_one_on_success_up_to_max() {
@@ -474,5 +508,101 @@ mod tests {
         assert_eq!(settle_batch_size(100, 100, false), 50);
         assert_eq!(settle_batch_size(3, 100, false), 1);
         assert_eq!(settle_batch_size(1, 100, false), 1);
+    }
+
+    #[test]
+    fn plan_refill_caps_shortfall_by_batch_size() {
+        assert_eq!(plan_refill(9_950, 10_000, 100), 50); // shortfall below cap
+        assert_eq!(plan_refill(0, 10_000, 100), 100); // shortfall above cap
+        assert_eq!(plan_refill(9_999, 10_000, 100), 1);
+    }
+
+    #[test]
+    fn plan_refill_full_or_overfull_pool_needs_nothing() {
+        assert_eq!(plan_refill(10_000, 10_000, 100), 0);
+        // Saturation: more available than target (target lowered mid-flight).
+        assert_eq!(plan_refill(15_000, 10_000, 100), 0);
+        assert_eq!(plan_refill(i64::MAX, 10_000, 100), 0);
+    }
+
+    #[test]
+    fn plan_refill_saturates_on_extreme_shortfall() {
+        // needed = MAX - (MIN) saturates rather than overflowing, then the
+        // u32 conversion clamps, then the batch cap applies.
+        assert_eq!(plan_refill(i64::MIN, i64::MAX, 100), 100);
+        assert_eq!(plan_refill(0, i64::MAX, u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn item_accepted_reads_the_positional_outcome() {
+        let items = [true, false, true];
+        assert!(item_accepted(&items, 0));
+        assert!(!item_accepted(&items, 1));
+        assert!(item_accepted(&items, 2));
+    }
+
+    #[test]
+    fn item_accepted_missing_entry_means_not_accepted() {
+        // The positional force_batch contract: an index past the reported
+        // outcomes was never confirmed, so its keypair must be discarded.
+        assert!(!item_accepted(&[true], 1));
+        assert!(!item_accepted(&[], 0));
+    }
+
+    #[test]
+    fn parse_pool_dims_accepts_single_and_multi() {
+        assert_eq!(
+            parse_pool_dims("Game").expect("single dim"),
+            vec![Dim::Game]
+        );
+        assert_eq!(
+            parse_pool_dims("Game,ProofOfInk").expect("both dims"),
+            vec![Dim::Game, Dim::ProofOfInk]
+        );
+    }
+
+    #[test]
+    fn parse_pool_dims_tolerates_whitespace_and_empty_entries() {
+        assert_eq!(
+            parse_pool_dims(" Game , ProofOfInk ").expect("trimmed"),
+            vec![Dim::Game, Dim::ProofOfInk]
+        );
+        assert_eq!(
+            parse_pool_dims("Game,,ProofOfInk,").expect("empty entries skipped"),
+            vec![Dim::Game, Dim::ProofOfInk]
+        );
+    }
+
+    #[test]
+    fn parse_pool_dims_empty_input_is_an_error() {
+        for raw in ["", "  ", ",,"] {
+            let err = parse_pool_dims(raw).expect_err("no dims");
+            assert!(err.to_string().contains("POOL_DIMS"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn parse_pool_dims_unknown_dim_is_an_error() {
+        let err = parse_pool_dims("Game,Bogus").expect_err("unknown dim");
+        assert!(err.to_string().contains("POOL_DIMS"), "got: {err}");
+    }
+
+    #[test]
+    fn debug_output_redacts_signer_secret_and_db_password() {
+        let config = super::MaintainerConfig {
+            database_url: "postgres://invite:s3cret-db-pw@localhost/invite".to_string(),
+            people_rpc_url: "wss://rpc.example".to_string(),
+            network: crate::tickets::Network::Paseo,
+            inviter_address: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
+            signer_secret: "s3cret-inviter-suri".to_string(),
+            proxy_for: None,
+            dims: vec![Dim::Game],
+            tuning: super::PoolTuning::default(),
+        };
+        let dump = format!("{config:?}");
+        assert!(!dump.contains("s3cret-inviter-suri"));
+        assert!(!dump.contains("s3cret-db-pw"));
+        assert!(dump.contains("<redacted>"));
+        assert!(dump.contains("wss://rpc.example")); // non-secrets stay visible
     }
 }

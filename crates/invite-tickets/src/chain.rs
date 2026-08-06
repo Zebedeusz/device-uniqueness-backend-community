@@ -35,6 +35,12 @@ impl ChainClient {
         })
     }
 
+    /// Wrap an already-constructed client — the mock seam the offline tests
+    /// use (same shape as dim-tickets and username-indexer).
+    pub fn from_online(client: OnlineClient<PeopleConfig>) -> Self {
+        Self { client }
+    }
+
     /// Liveness probe.
     pub async fn health(&self) -> anyhow::Result<()> {
         self.client
@@ -93,16 +99,14 @@ impl ChainClient {
                 Some(status) => match status? {
                     TransactionStatus::InFinalizedBlock(in_block) => {
                         let events = in_block.wait_for_success().await?;
-                        let items: Vec<bool> = events
-                            .iter()
-                            .filter_map(|event| event.ok())
-                            .filter(|event| event.pallet_name() == "Utility")
-                            .filter_map(|event| match event.event_name() {
-                                "ItemCompleted" => Some(true),
-                                "ItemFailed" => Some(false),
-                                _ => None,
-                            })
-                            .collect();
+                        let items = chain_client::batch_item_outcomes(
+                            events.iter().filter_map(|event| event.ok()).map(|event| {
+                                (
+                                    event.pallet_name().to_string(),
+                                    event.event_name().to_string(),
+                                )
+                            }),
+                        );
                         let block_hash = format!("{:?}", in_block.block_hash());
                         return Ok(FinalizedBatch { items, block_hash });
                     }

@@ -8,11 +8,12 @@
 //!
 //! ```sh
 //! INVITE_TICKETS_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/invite_test \
-//!   cargo test -p invite-tickets -- --ignored
+//!   cargo test -p invite-tickets -- --ignored --test-threads=1
 //! ```
 //!
 //! The suite owns the `invite_tickets` table in that database (it runs the
-//! crate's migrations and truncates between tests).
+//! crate's migrations and truncates between tests), so it must run
+//! single-threaded: parallel tests truncate each other's fixtures.
 
 use std::time::Duration;
 

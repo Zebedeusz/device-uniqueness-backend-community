@@ -205,13 +205,11 @@ async fn index_block(
         return Ok(());
     }
 
-    let ss58_prefix = at
-        .constants()
-        .entry(people::constants().system().ss58_prefix())
-        .map_err(|source| IndexError::Storage(Box::new(source)))?;
-    if ss58_prefix >= 16_384 {
-        return Err(Ss58Error::InvalidPrefix(ss58_prefix).into());
-    }
+    let ss58_prefix = crate::ss58::validate_prefix(
+        at.constants()
+            .entry(people::constants().system().ss58_prefix())
+            .map_err(|source| IndexError::Storage(Box::new(source)))?,
+    )?;
 
     let mut tx = pool.begin().await?;
     let mut block_upserts = 0_u64;

@@ -10,6 +10,17 @@ pub enum Ss58Error {
     InvalidPrefix(u16),
 }
 
+/// Reject a chain SS58 prefix [`encode`] cannot represent (>= 16,384) before a
+/// scan starts, so ingest fails fast once instead of erroring on every row.
+/// Shared by the bootstrap and incremental ingest paths.
+pub(crate) fn validate_prefix(prefix: u16) -> Result<u16, Ss58Error> {
+    if prefix >= 16_384 {
+        Err(Ss58Error::InvalidPrefix(prefix))
+    } else {
+        Ok(prefix)
+    }
+}
+
 /// Encode a 32-byte account identifier using the supplied chain SS58 prefix.
 pub fn encode(account_id: &[u8; 32], prefix: u16) -> Result<String, Ss58Error> {
     let mut payload = Vec::with_capacity(36);
@@ -32,7 +43,24 @@ pub fn encode(account_id: &[u8; 32], prefix: u16) -> Result<String, Ss58Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::encode;
+    use super::{encode, validate_prefix, Ss58Error};
+
+    /// The prefix gate matches `encode`'s own range exactly: 16,383 is the
+    /// last encodable prefix, 16,384 the first rejected one.
+    #[test]
+    fn validate_prefix_shares_encodes_boundary() {
+        assert_eq!(validate_prefix(0), Ok(0));
+        assert_eq!(validate_prefix(16_383), Ok(16_383));
+        assert!(encode(&[0u8; 32], 16_383).is_ok());
+        assert_eq!(
+            validate_prefix(16_384),
+            Err(Ss58Error::InvalidPrefix(16_384))
+        );
+        assert_eq!(
+            encode(&[0u8; 32], 16_384),
+            Err(Ss58Error::InvalidPrefix(16_384))
+        );
+    }
 
     #[test]
     fn encodes_known_substrate_alice_address() {

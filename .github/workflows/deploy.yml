@@ -6,20 +6,10 @@ on:
   pull_request:
 
 jobs:
-  # Always runs on every push and PR — cheap validation, no path gating.
+  # Always runs on every push and PR — offline + deterministic DB suites, with
+  # no path gating. Release tags call the same reusable workflow.
   check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: compose configuration boundaries
-        run: scripts/verify_compose_boundaries.sh
-      - uses: Swatinem/rust-cache@v2
-      - name: rustfmt
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: tests
-        run: cargo test --workspace
+    uses: ./.github/workflows/check.yml
 
   # Marks a push deployable only when a build/deploy-affecting path changed (an
   # allow-list). Markdown-only pushes (docs, plans, README) match nothing, so
@@ -50,7 +40,7 @@ jobs:
               - 'gateway/**'
 
   build:
-    needs: changes
+    needs: [check, changes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.deployable == 'true'
     runs-on: ubuntu-latest
     permissions:

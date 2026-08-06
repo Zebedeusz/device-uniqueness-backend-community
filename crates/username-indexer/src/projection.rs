@@ -37,7 +37,8 @@ pub struct AssignedUsername {
 
 /// Advisory-lock id shared by bootstrap + incremental sync so only one writer
 /// mutates the projection at a time — safe across replicas and rolling deploys.
-pub(crate) const PROJECTION_LOCK_ID: i64 = 0x7573_6572_6E61_6D65;
+/// Public so the live-PG suite can contend on the real lock.
+pub const PROJECTION_LOCK_ID: i64 = 0x7573_6572_6E61_6D65;
 
 /// Malformed consumer username data.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

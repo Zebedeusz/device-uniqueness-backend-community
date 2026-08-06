@@ -6,7 +6,10 @@
 //! verified against the Apple root ([`verify`]) and the credential key
 //! persisted ([`store`]); failures mirror the legacy `401 {_tag, error}` pair.
 
-pub(crate) mod store;
+// `pub` (not `pub(crate)`) so lib.rs can re-export it for the live-PG suite;
+// the enclosing modules stay private, so the only external path is the
+// `#[doc(hidden)]` alias.
+pub mod store;
 pub(crate) mod verify;
 
 use axum::extract::State;

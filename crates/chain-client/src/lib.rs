@@ -107,6 +107,27 @@ impl subxt::tx::Signer<PeopleConfig> for WriterSigner {
     }
 }
 
+/// Map a finalized `Utility.force_batch`'s events onto ordered per-item
+/// outcomes: `Utility.ItemCompleted` → `true`, `Utility.ItemFailed` →
+/// `false`, everything else ignored. Index = inner-call index (the
+/// positional contract both ticket writers rely on: `force_batch` keeps
+/// executing after an inner failure and emits one item event per call).
+pub fn batch_item_outcomes<P, E>(events: impl IntoIterator<Item = (P, E)>) -> Vec<bool>
+where
+    P: AsRef<str>,
+    E: AsRef<str>,
+{
+    events
+        .into_iter()
+        .filter(|(pallet, _)| pallet.as_ref() == "Utility")
+        .filter_map(|(_, event)| match event.as_ref() {
+            "ItemCompleted" => Some(true),
+            "ItemFailed" => Some(false),
+            _ => None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -219,5 +240,22 @@ mod tests {
         assert!(public
             .verify_simple(b"substrate", message, &signature)
             .is_ok());
+    }
+
+    /// Positional item mapping: only `Utility.ItemCompleted`/`ItemFailed`
+    /// count, in order; foreign pallets and other Utility events (including a
+    /// same-named event on another pallet) are ignored.
+    #[test]
+    fn batch_item_outcomes_keeps_order_and_ignores_foreign_events() {
+        let events = [
+            ("System", "ExtrinsicSuccess"),
+            ("Utility", "ItemCompleted"),
+            ("Game", "ItemCompleted"), // same name, wrong pallet
+            ("Utility", "ItemFailed"),
+            ("Utility", "BatchCompletedWithErrors"),
+            ("Utility", "ItemCompleted"),
+        ];
+        assert_eq!(batch_item_outcomes(events), vec![true, false, true]);
+        assert!(batch_item_outcomes(Vec::<(&str, &str)>::new()).is_empty());
     }
 }

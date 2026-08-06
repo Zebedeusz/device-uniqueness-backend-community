@@ -455,4 +455,163 @@ mod tests {
         assert_eq!(poi.pallet_name(), "ProofOfInk");
         assert_eq!(poi.entry_name(), "AvailableInvites");
     }
+
+    /// The vendored metadata, decoded the same way subxt would receive it from
+    /// a node, so extension construction and encoding can run offline.
+    fn people_metadata() -> subxt::ArcMetadata {
+        subxt::Metadata::decode_from(include_bytes!("../metadata/people.scale"))
+            .expect("vendored metadata decodes")
+            .arc()
+    }
+
+    /// An offline stand-in for the client state subxt hands to transaction
+    /// extensions, using the versions the crate docs record for the vendored
+    /// runtime.
+    fn offline_client_state() -> subxt::config::ClientState<super::PeopleConfig> {
+        subxt::config::ClientState {
+            genesis_hash: subxt::utils::H256::zero(),
+            spec_version: 1_000_029,
+            transaction_version: 3,
+            metadata: people_metadata(),
+        }
+    }
+
+    /// `.nonce(n)` must reach the wire. The params tuple hides the nonce behind
+    /// a private field, so the `CheckNonce` slot is run through subxt's own
+    /// offline constructor and encoder: an explicit nonce comes out as its
+    /// SCALE compact encoding, while the `new()` default stays fetch-from-chain
+    /// (`None`), observable offline only via the params' `Debug` shape.
+    #[test]
+    fn builder_nonce_flows_into_check_nonce_encoding() {
+        use subxt::config::transaction_extensions::CheckNonce;
+        use subxt::config::TransactionExtension as _;
+        use subxt::ext::frame_decode::extrinsics::TransactionExtension as _;
+
+        let state = offline_client_state();
+
+        let (.., nonce, _, _, _) =
+            super::PeopleExtrinsicParamsBuilder::<super::PeopleConfig>::new()
+                .nonce(7)
+                .build();
+        assert_eq!(format!("{nonce:?}"), "CheckNonceParams(Some(7))");
+        let mut encoded = Vec::new();
+        CheckNonce::new(&state, nonce)
+            .expect("CheckNonce builds offline")
+            .encode_value_to(0, state.metadata.types(), &mut encoded)
+            .expect("CheckNonce encodes offline");
+        assert_eq!(encoded, [28], "nonce 7 must encode as Compact(7), 7 << 2");
+
+        let (.., nonce, _, _, _) =
+            super::PeopleExtrinsicParamsBuilder::<super::PeopleConfig>::new().build();
+        assert_eq!(
+            format!("{nonce:?}"),
+            "CheckNonceParams(None)",
+            "without an explicit nonce the slot must defer to the chain lookup"
+        );
+    }
+
+    /// `new()` promises an immortal, no-tip transaction: the mortality slot
+    /// must encode the immortal era byte and the payment slot must carry a
+    /// zero tip in the native token, both checked through subxt's own
+    /// constructors rather than the builder's inputs.
+    #[test]
+    fn builder_starts_immortal_with_no_tip() {
+        use subxt::config::transaction_extensions::{ChargeAssetTxPayment, CheckMortality};
+        use subxt::config::TransactionExtension as _;
+        use subxt::ext::frame_decode::extrinsics::TransactionExtension as _;
+
+        let state = offline_client_state();
+        let (.., mortality, _, _, tip, _) =
+            super::PeopleExtrinsicParamsBuilder::<super::PeopleConfig>::new().build();
+
+        let mut era = Vec::new();
+        CheckMortality::new(&state, mortality)
+            .expect("immortal params build offline")
+            .encode_value_to(0, state.metadata.types(), &mut era)
+            .expect("CheckMortality encodes offline");
+        assert_eq!(era, [0], "immortal era is the single zero byte");
+
+        let payment = ChargeAssetTxPayment::new(&state, tip).expect("tip params build offline");
+        assert_eq!(payment.tip(), 0, "the builder must not tip by default");
+        assert!(payment.asset_id().is_none(), "tip is in the native token");
+    }
+
+    /// `Default` must stay in lockstep with `new()`: same fetch-from-chain
+    /// nonce, same zero-tip payment params.
+    #[test]
+    fn default_builder_matches_new() {
+        let (.., new_nonce, _, new_tip, _) =
+            super::PeopleExtrinsicParamsBuilder::<super::PeopleConfig>::new().build();
+        let (.., default_nonce, _, default_tip, _) =
+            super::PeopleExtrinsicParamsBuilder::<super::PeopleConfig>::default().build();
+
+        assert_eq!(format!("{default_nonce:?}"), format!("{new_nonce:?}"));
+        assert_eq!(format!("{default_tip:?}"), format!("{new_tip:?}"));
+    }
+
+    /// The `Noop` encoder impl is the code path that actually writes a gate's
+    /// bytes into an extrinsic: `encode_value_to` must append exactly the
+    /// declared value (the encoded-`None` byte for `AuthorizeValueTransfer`,
+    /// nothing for the unit-valued `UnitTransactionExtension`) and
+    /// `encode_implicit_to` must write nothing, whatever the buffer holds.
+    #[test]
+    fn noop_encoders_write_value_bytes_and_empty_implicit() {
+        use subxt::config::TransactionExtension as _;
+        use subxt::ext::frame_decode::extrinsics::TransactionExtension as _;
+
+        let state = offline_client_state();
+        let types = state.metadata.types();
+
+        let authorize = super::Noop::<super::AuthorizeValueTransfer>::new(&state, ())
+            .expect("noop gates build offline");
+        let mut out = vec![0xAA];
+        authorize
+            .encode_value_to(0, types, &mut out)
+            .expect("noop value encodes");
+        assert_eq!(out, [0xAA, 0x00], "appends exactly the encoded-None byte");
+        authorize
+            .encode_implicit_to(0, types, &mut out)
+            .expect("noop implicit encodes");
+        assert_eq!(out, [0xAA, 0x00], "the implicit part writes nothing");
+
+        let unit = super::Noop::<super::UnitTransactionExtension>::new(&state, ())
+            .expect("noop gates build offline");
+        let mut out = vec![0xAA];
+        unit.encode_value_to(0, types, &mut out)
+            .expect("noop value encodes");
+        unit.encode_implicit_to(0, types, &mut out)
+            .expect("noop implicit encodes");
+        assert_eq!(out, [0xAA], "a unit-valued gate writes no bytes at all");
+    }
+
+    /// The `Config` impl must hand PolkadotConfig's caches through unchanged:
+    /// a fresh offline config knows nothing (no genesis hash, no spec-version
+    /// ranges, no metadata), and a metadata registration is readable back
+    /// through the same wrapper as the same `Arc`, not a rebuild.
+    #[test]
+    fn config_delegates_caches_to_polkadot_config() {
+        use subxt::Config as _;
+
+        let config = super::PeopleConfig::default();
+        assert_eq!(config.genesis_hash(), None);
+        assert_eq!(
+            config.spec_and_transaction_version_for_block_number(0),
+            None
+        );
+        assert!(config.metadata_for_spec_version(1_000_029).is_none());
+
+        let metadata = people_metadata();
+        config.set_metadata_for_spec_version(1_000_029, metadata.clone());
+        let cached = config
+            .metadata_for_spec_version(1_000_029)
+            .expect("registered metadata is readable back");
+        assert!(
+            std::sync::Arc::ptr_eq(&cached, &metadata),
+            "delegation must return the registered Arc"
+        );
+        assert!(
+            config.metadata_for_spec_version(1_000_030).is_none(),
+            "registration must not leak to other spec versions"
+        );
+    }
 }

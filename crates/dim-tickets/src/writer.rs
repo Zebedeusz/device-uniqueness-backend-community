@@ -25,7 +25,7 @@ use subxt::utils::AccountId32;
 use time::OffsetDateTime;
 
 use crate::chain::ChainClient;
-use crate::plan::{self, DueTicket};
+use crate::plan;
 use crate::tickets::{self, Dim, Network};
 
 const MAX_INTERVAL_SECS: u64 = 86_400;
@@ -234,27 +234,15 @@ impl Writer {
     async fn acquire_lease(&self) -> anyhow::Result<Guard> {
         let ttl = self.config.lease_ttl.as_secs() as i64;
         loop {
-            let row = sqlx::query(
-                "INSERT INTO writer_lease (name, holder_id, lease_epoch, expires_at, heartbeat_at) \
-                 VALUES ($1, $2, 1, now() + ($3 * interval '1 second'), now()) \
-                 ON CONFLICT (name) DO UPDATE \
-                   SET holder_id = EXCLUDED.holder_id, \
-                       lease_epoch = writer_lease.lease_epoch + 1, \
-                       expires_at = now() + ($3 * interval '1 second'), \
-                       heartbeat_at = now() \
-                   WHERE writer_lease.expires_at < now() OR writer_lease.holder_id = $2 \
-                 RETURNING lease_epoch",
+            if let Some(epoch) = try_acquire_lease(
+                &self.pool,
+                &self.config.lease_name,
+                &self.config.holder_id,
+                ttl,
             )
-            .bind(&self.config.lease_name)
-            .bind(&self.config.holder_id)
-            .bind(ttl)
-            .fetch_optional(&self.pool)
-            .await?;
-
-            if let Some(row) = row {
-                return Ok(Guard {
-                    epoch: row.try_get("lease_epoch")?,
-                });
+            .await?
+            {
+                return Ok(Guard { epoch });
             }
             tracing::info!("writer lease held by another instance; waiting");
             tokio::time::sleep(self.config.poll_interval).await;
@@ -264,18 +252,14 @@ impl Writer {
     /// Renew the lease. Returns `false` if it is no longer ours.
     async fn heartbeat(&self, guard: &Guard) -> anyhow::Result<bool> {
         let ttl = self.config.lease_ttl.as_secs() as i64;
-        let done = sqlx::query(
-            "UPDATE writer_lease \
-             SET expires_at = now() + ($4 * interval '1 second'), heartbeat_at = now() \
-             WHERE name = $1 AND holder_id = $2 AND lease_epoch = $3",
+        Ok(heartbeat_lease(
+            &self.pool,
+            &self.config.lease_name,
+            &self.config.holder_id,
+            guard.epoch,
+            ttl,
         )
-        .bind(&self.config.lease_name)
-        .bind(&self.config.holder_id)
-        .bind(guard.epoch)
-        .bind(ttl)
-        .execute(&self.pool)
-        .await?;
-        Ok(done.rows_affected() == 1)
+        .await?)
     }
 
     async fn active_loop(&self, guard: &Guard) -> anyhow::Result<()> {
@@ -291,7 +275,8 @@ impl Writer {
         }
     }
 
-    /// One legacy-shaped tick: fetch → plan → execute.
+    /// One legacy-shaped tick: fetch → plan ([`crate::plan`]) → execute. All
+    /// decisions live in the pure plan functions; this is the I/O plumbing.
     async fn tick(&self, guard: &Guard) -> anyhow::Result<()> {
         let now = OffsetDateTime::now_utc();
         let rows = tickets::fetch_due(
@@ -308,21 +293,10 @@ impl Writer {
         tracing::info!(count = rows.len(), "processing batch");
 
         // Decode rows; malformed ones are logged and skipped (legacy behavior).
-        let due: Vec<DueTicket> = rows
-            .iter()
-            .filter_map(|row| match Dim::from_str(&row.dim) {
-                Ok(dim) => Some(DueTicket {
-                    ticket: row.ticket.clone(),
-                    dim,
-                    in_flight: row.status == "SUBMITTING" || row.status == "SUBMITTED",
-                    retry_count: row.retry_count,
-                }),
-                Err(()) => {
-                    tracing::warn!(ticket = %row.ticket, dim = %row.dim, "malformed ticket row skipped");
-                    None
-                }
-            })
-            .collect();
+        let (due, skipped) = plan::decode_due(&rows);
+        for (ticket, dim) in &skipped {
+            tracing::warn!(ticket = %ticket, dim = %dim, "malformed ticket row skipped");
+        }
 
         let delay = plan::retry_delay_ms(
             self.config.retry_base_ms,
@@ -357,36 +331,23 @@ impl Writer {
 
         // Parse the batch addresses; a row whose key is not valid SS58 cannot
         // ever submit — fail it terminally rather than looping on it.
-        let mut batch: Vec<(String, AccountId32, Dim)> = Vec::with_capacity(plan.batch.len());
-        for (ticket, dim) in &plan.batch {
-            match AccountId32::from_str(ticket) {
-                Ok(account) => batch.push((ticket.clone(), account, *dim)),
-                Err(e) => {
-                    tracing::warn!(ticket = %ticket, error = %e, "unparseable ticket address; failing terminally");
-                    tickets::mark_failed(
-                        &self.pool,
-                        std::slice::from_ref(ticket),
-                        self.config.network,
-                        &self.config.inviter_address,
-                    )
-                    .await?;
-                }
-            }
+        let (batch, unparseable) = plan::parse_batch(&plan.batch);
+        for (ticket, error) in &unparseable {
+            tracing::warn!(ticket = %ticket, error = %error, "unparseable ticket address; failing terminally");
+            tickets::mark_failed(
+                &self.pool,
+                std::slice::from_ref(ticket),
+                self.config.network,
+                &self.config.inviter_address,
+            )
+            .await?;
         }
         if batch.is_empty() {
             return Ok(());
         }
 
         let ticket_ids: Vec<String> = batch.iter().map(|(t, _, _)| t.clone()).collect();
-        let retry_counts: Vec<i32> = batch
-            .iter()
-            .map(|(t, _, _)| {
-                due.iter()
-                    .find(|d| &d.ticket == t)
-                    .map(|d| d.retry_count)
-                    .unwrap_or(0)
-            })
-            .collect();
+        let retry_counts = plan::batch_retry_counts(&ticket_ids, &due);
         let lease_until = now + time::Duration::milliseconds(plan.lease_delay_ms as i64);
         tickets::mark_submitting(
             &self.pool,
@@ -442,18 +403,14 @@ impl Writer {
             tracing::warn!(warning = %warning, "force_batch event mismatch");
         }
 
-        let completed: Vec<String> = split
-            .completed
-            .iter()
-            .filter_map(|&i| batch.get(i).map(|(t, _, _)| t.clone()))
-            .collect();
+        let (registered, retries) = plan::apply_split(&split, &ticket_ids, &retry_counts, delay);
         let onchain_data = serde_json::json!({
             "blockHash": finalized.block_hash,
             "blockNumber": finalized.block_number,
         });
         tickets::mark_registered(
             &self.pool,
-            &completed,
+            &registered,
             &onchain_data,
             self.config.network,
             &self.config.inviter_address,
@@ -461,16 +418,12 @@ impl Writer {
         .await?;
 
         let retry_now = OffsetDateTime::now_utc();
-        for &i in &split.failed {
-            let Some((ticket, _, _)) = batch.get(i) else {
-                continue;
-            };
-            let new_count = retry_counts.get(i).copied().unwrap_or(0) + 1;
-            let retry_at = retry_now + time::Duration::milliseconds(delay(new_count) as i64);
+        for retry in &retries {
+            let retry_at = retry_now + time::Duration::milliseconds(retry.delay_ms as i64);
             tickets::schedule_retry(
                 &self.pool,
-                ticket,
-                new_count,
+                &retry.ticket,
+                retry.retry_count,
                 retry_at,
                 self.config.network,
                 &self.config.inviter_address,
@@ -479,13 +432,72 @@ impl Writer {
         }
 
         tracing::info!(
-            registered = completed.len(),
+            registered = registered.len(),
             failed = split.failed.len(),
             block = finalized.block_number,
             "batch submission completed"
         );
         Ok(())
     }
+}
+
+/// One attempt to claim (or renew) the single-writer lease: takes it only
+/// when the row is free, expired, or already held by `holder_id`; every take
+/// bumps `lease_epoch`. `None` means another live writer holds it.
+///
+/// Test-only seam for the live-Postgres suite (`tests/tickets_live_pg.rs`);
+/// not part of the crate's API.
+#[doc(hidden)]
+pub async fn try_acquire_lease(
+    pool: &PgPool,
+    name: &str,
+    holder_id: &str,
+    ttl_secs: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    let row = sqlx::query(
+        "INSERT INTO writer_lease (name, holder_id, lease_epoch, expires_at, heartbeat_at) \
+         VALUES ($1, $2, 1, now() + ($3 * interval '1 second'), now()) \
+         ON CONFLICT (name) DO UPDATE \
+           SET holder_id = EXCLUDED.holder_id, \
+               lease_epoch = writer_lease.lease_epoch + 1, \
+               expires_at = now() + ($3 * interval '1 second'), \
+               heartbeat_at = now() \
+           WHERE writer_lease.expires_at < now() OR writer_lease.holder_id = $2 \
+         RETURNING lease_epoch",
+    )
+    .bind(name)
+    .bind(holder_id)
+    .bind(ttl_secs)
+    .fetch_optional(pool)
+    .await?;
+    row.map(|row| row.try_get("lease_epoch")).transpose()
+}
+
+/// Renew the lease. `false` means it is no longer ours (a takeover changed
+/// the holder or bumped the epoch).
+///
+/// Test-only seam for the live-Postgres suite (`tests/tickets_live_pg.rs`);
+/// not part of the crate's API.
+#[doc(hidden)]
+pub async fn heartbeat_lease(
+    pool: &PgPool,
+    name: &str,
+    holder_id: &str,
+    epoch: i64,
+    ttl_secs: i64,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE writer_lease \
+         SET expires_at = now() + ($4 * interval '1 second'), heartbeat_at = now() \
+         WHERE name = $1 AND holder_id = $2 AND lease_epoch = $3",
+    )
+    .bind(name)
+    .bind(holder_id)
+    .bind(epoch)
+    .bind(ttl_secs)
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 fn required_env(key: &str) -> anyhow::Result<String> {
@@ -572,5 +584,231 @@ mod tests {
         assert!(!dump.contains("s3cret-db-pw"));
         assert!(dump.contains("<redacted>"));
         assert!(dump.contains("wss://rpc.example")); // non-secrets stay visible
+    }
+
+    /// Every env var `from_env` reads, cleared around each case so neither a
+    /// previous case nor the developer's ambient shell leaks into the next.
+    const FROM_ENV_VARS: &[&str] = &[
+        "DATABASE_URL",
+        "PEOPLE_RPC_URL",
+        "PEOPLE_NETWORK",
+        "INVITER_ADDRESS",
+        "INVITER_SIGNER_SURI",
+        "INVITER_PROXY_FOR",
+        "WRITER_HOLDER_ID",
+        "WRITER_LEASE_NAME",
+        "WRITER_LEASE_TTL_SECS",
+        "WRITER_POLL_SECS",
+        "WRITER_BATCH_SIZE",
+        "WRITER_MAX_RETRIES",
+        "WRITER_RETRY_BASE_MS",
+        "WRITER_RETRY_MAX_MS",
+        "WRITER_RETRY_MAX_EXPONENT",
+        "WRITER_FINALIZE_SECS",
+    ];
+
+    /// The five vars `from_env` fails on rather than defaults.
+    const REQUIRED_ENV: &[(&str, &str)] = &[
+        ("DATABASE_URL", "postgres://dim:pw@localhost/dim"),
+        ("PEOPLE_RPC_URL", "wss://rpc.example"),
+        ("PEOPLE_NETWORK", "paseo"),
+        (
+            "INVITER_ADDRESS",
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", // Alice
+        ),
+        ("INVITER_SIGNER_SURI", "//Inviter"),
+    ];
+
+    /// Bob's well-known dev account: the SS58 form and the sr25519 public key
+    /// bytes it encodes, so the proxy parse is asserted against an independent
+    /// constant rather than round-tripped through the same parser.
+    const BOB_SS58: &str = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty";
+    const BOB_HEX: &str = "8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
+
+    /// Clear the writer's vars, set `vars`, run `from_env`, then clear again —
+    /// success and error paths alike leave the process environment clean.
+    fn from_env_with(vars: &[(&str, &str)]) -> anyhow::Result<WriterConfig> {
+        for key in FROM_ENV_VARS {
+            std::env::remove_var(key);
+        }
+        for (key, value) in vars {
+            std::env::set_var(key, value);
+        }
+        let result = WriterConfig::from_env();
+        for key in FROM_ENV_VARS {
+            std::env::remove_var(key);
+        }
+        result
+    }
+
+    /// Env vars are process-global and cargo runs `#[test]`s on parallel
+    /// threads, so ALL `from_env` cases run sequentially inside this one test
+    /// — never split them into separate `#[test]` fns. (No other test in this
+    /// binary reads or writes these vars; the `parse_bounded_u64` tests above
+    /// take their raw value as an argument.)
+    #[test]
+    fn from_env_reads_and_validates_the_environment() {
+        // Fully populated: every var lands in its field, and required values
+        // are trimmed of accidental padding.
+        let config = from_env_with(&[
+            ("DATABASE_URL", "  postgres://dim:pw@localhost/dim  "),
+            ("PEOPLE_RPC_URL", "wss://rpc.example"),
+            ("PEOPLE_NETWORK", "westend2"),
+            (
+                "INVITER_ADDRESS",
+                "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+            ),
+            ("INVITER_SIGNER_SURI", "//Inviter"),
+            ("INVITER_PROXY_FOR", BOB_SS58),
+            ("WRITER_HOLDER_ID", "writer-test-1"),
+            ("WRITER_LEASE_NAME", "custom-lease"),
+            ("WRITER_LEASE_TTL_SECS", "45"),
+            ("WRITER_POLL_SECS", "3"),
+            ("WRITER_BATCH_SIZE", "50"),
+            ("WRITER_MAX_RETRIES", "7"),
+            ("WRITER_RETRY_BASE_MS", "500"),
+            ("WRITER_RETRY_MAX_MS", "30000"),
+            ("WRITER_RETRY_MAX_EXPONENT", "8"),
+            ("WRITER_FINALIZE_SECS", "90"),
+        ])
+        .unwrap();
+        assert_eq!(config.database_url, "postgres://dim:pw@localhost/dim");
+        assert_eq!(config.people_rpc_url, "wss://rpc.example");
+        assert_eq!(config.network, Network::Westend2);
+        assert_eq!(
+            config.inviter_address,
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        );
+        assert_eq!(config.signer_secret, "//Inviter");
+        let bob: [u8; 32] = hex::decode(BOB_HEX).unwrap().try_into().unwrap();
+        assert_eq!(config.proxy_for, Some(AccountId32(bob)));
+        assert_eq!(config.holder_id, "writer-test-1");
+        assert_eq!(config.lease_name, "custom-lease");
+        assert_eq!(config.lease_ttl, Duration::from_secs(45));
+        assert_eq!(config.poll_interval, Duration::from_secs(3));
+        assert_eq!(config.batch_size, 50);
+        assert_eq!(config.max_retries, 7);
+        assert_eq!(config.retry_base_ms, 500);
+        assert_eq!(config.retry_max_ms, 30_000);
+        assert_eq!(config.retry_max_exponent, 8);
+        assert_eq!(config.finalize_timeout, Duration::from_secs(90));
+
+        // Required-only: every optional var falls back to its legacy default,
+        // and a whitespace-only proxy counts as unset.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("INVITER_PROXY_FOR", "   "));
+        let config = from_env_with(&vars).unwrap();
+        assert_eq!(config.network, Network::Paseo);
+        assert_eq!(config.proxy_for, None);
+        assert_eq!(
+            config.holder_id,
+            format!("dim-tickets-writer-{}", std::process::id())
+        );
+        assert_eq!(config.lease_name, "dim-tickets-writer");
+        assert_eq!(config.lease_ttl, Duration::from_secs(30));
+        assert_eq!(config.poll_interval, Duration::from_secs(6));
+        assert_eq!(config.batch_size, 10);
+        assert_eq!(config.max_retries, 5);
+        assert_eq!(config.retry_base_ms, 1_000);
+        assert_eq!(config.retry_max_ms, 60_000);
+        assert_eq!(config.retry_max_exponent, 10);
+        assert_eq!(config.finalize_timeout, Duration::from_secs(120));
+
+        // Each missing required var fails naming exactly that var.
+        for missing in [
+            "DATABASE_URL",
+            "PEOPLE_RPC_URL",
+            "PEOPLE_NETWORK",
+            "INVITER_ADDRESS",
+            "INVITER_SIGNER_SURI",
+        ] {
+            let vars: Vec<_> = REQUIRED_ENV
+                .iter()
+                .copied()
+                .filter(|(key, _)| *key != missing)
+                .collect();
+            let err = from_env_with(&vars).unwrap_err();
+            assert!(
+                err.to_string().contains(&format!("{missing} is required")),
+                "{missing}: {err}"
+            );
+        }
+
+        // A required var set to whitespace is rejected, not treated as a value.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("INVITER_SIGNER_SURI", "   ")); // later set_var wins
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("INVITER_SIGNER_SURI must not be empty"),
+            "{err}"
+        );
+
+        // The network partition only accepts the frozen literals.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("PEOPLE_NETWORK", "kusama"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("PEOPLE_NETWORK is invalid: expected westend2|paseo|polkadot"),
+            "{err}"
+        );
+
+        // Inviter and proxy addresses must be valid SS58, naming the var.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("INVITER_ADDRESS", "not-an-address"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("INVITER_ADDRESS is not valid SS58"),
+            "{err}"
+        );
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("INVITER_PROXY_FOR", "not-an-address"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("INVITER_PROXY_FOR is not valid SS58"),
+            "{err}"
+        );
+
+        // Bounded knobs reject out-of-range and malformed values, naming the
+        // var and its bounds.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("WRITER_LEASE_TTL_SECS", "2")); // below the min of 3
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("WRITER_LEASE_TTL_SECS must be between 3 and 86400, got 2"),
+            "{err}"
+        );
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("WRITER_BATCH_SIZE", "1001")); // above the max of 1000
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("WRITER_BATCH_SIZE must be between 1 and 1000, got 1001"),
+            "{err}"
+        );
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("WRITER_POLL_SECS", "soon"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("WRITER_POLL_SECS must be an integer"),
+            "{err}"
+        );
+
+        // The backoff cap's lower bound is the configured base: a max below
+        // the base can never be reached and is rejected as inconsistent.
+        let mut vars = REQUIRED_ENV.to_vec();
+        vars.push(("WRITER_RETRY_BASE_MS", "5000"));
+        vars.push(("WRITER_RETRY_MAX_MS", "4999"));
+        let err = from_env_with(&vars).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("WRITER_RETRY_MAX_MS must be between 5000 and 86400000, got 4999"),
+            "{err}"
+        );
     }
 }

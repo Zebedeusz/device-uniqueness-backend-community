@@ -8,10 +8,14 @@ on:
     tags: ['v*']
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
   # Builds one architecture per native runner, pushing by digest only (no tags).
   # `manifest` joins the digests into the tagged image. Native runners replace
   # QEMU emulation, which took over an hour for arm64 alone.
   build:
+    needs: check
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +97,5 @@ jobs:
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
-      - name: Verify both architectures are present
-        run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"
       - name: Verify both architectures are present
         run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"

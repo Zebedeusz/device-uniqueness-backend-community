@@ -92,13 +92,11 @@ async fn bootstrap_locked(
     let snapshot_number = at.block_number();
     let snapshot_number_db = i64::try_from(snapshot_number)
         .map_err(|_| BootstrapError::SnapshotNumber(snapshot_number))?;
-    let ss58_prefix = at
-        .constants()
-        .entry(people::constants().system().ss58_prefix())
-        .map_err(|source| BootstrapError::Storage(Box::new(source)))?;
-    if ss58_prefix >= 16_384 {
-        return Err(Ss58Error::InvalidPrefix(ss58_prefix).into());
-    }
+    let ss58_prefix = crate::ss58::validate_prefix(
+        at.constants()
+            .entry(people::constants().system().ss58_prefix())
+            .map_err(|source| BootstrapError::Storage(Box::new(source)))?,
+    )?;
 
     let address = people::storage().resources().consumers();
     let mut entries = at

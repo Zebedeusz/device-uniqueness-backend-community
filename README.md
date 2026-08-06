@@ -31,10 +31,13 @@ Or natively: `just run` (api) / `just run-writer` / `just run-notify`, with env 
 ## Develop
 
 ```bash
-just check                 # fmt + clippy + tests (same as CI)
-just test-live             # #[ignore]d live-Postgres tests (needs Docker)
-just openapi               # regenerate docs/api-reference after route/DTO changes
-                           #   (a test in `just check` fails if it is stale)
+just check                 # fast offline gate: fmt + clippy + workspace tests
+just test-live-db          # deterministic Postgres suites; also required by CI
+just test-live-chain       # optional Postgres + live People Chain smokes
+just test-live-providers   # optional credentialed APNs / FCM smokes
+just coverage-db           # canonical offline + Postgres coverage report
+just openapi               # regenerate docs/api-reference after route/DTO changes;
+                           # a test in `just check` fails if it is stale
 ```
 
 ## Deploy

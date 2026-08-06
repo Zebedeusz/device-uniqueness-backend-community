@@ -131,16 +131,14 @@ impl ChainClient {
                     Some(status) => match status? {
                         TransactionStatus::InFinalizedBlock(in_block) => {
                             let events = in_block.wait_for_success().await?;
-                            let items: Vec<bool> = events
-                                .iter()
-                                .filter_map(|event| event.ok())
-                                .filter(|event| event.pallet_name() == "Utility")
-                                .filter_map(|event| match event.event_name() {
-                                    "ItemCompleted" => Some(true),
-                                    "ItemFailed" => Some(false),
-                                    _ => None,
-                                })
-                                .collect();
+                            let items = chain_client::batch_item_outcomes(
+                                events.iter().filter_map(|event| event.ok()).map(|event| {
+                                    (
+                                        event.pallet_name().to_string(),
+                                        event.event_name().to_string(),
+                                    )
+                                }),
+                            );
                             let block_hash = format!("{:?}", in_block.block_hash());
                             return anyhow::Ok((items, in_block.block_hash(), block_hash));
                         }

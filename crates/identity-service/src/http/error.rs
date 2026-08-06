@@ -115,3 +115,95 @@ impl From<sqlx::Error> for AppError {
         AppError::Internal(err.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt as _;
+
+    async fn observe(err: AppError) -> (StatusCode, serde_json::Value) {
+        let response = err.into_response();
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("read body")
+            .to_bytes();
+        (status, serde_json::from_slice(&bytes).expect("json body"))
+    }
+
+    #[tokio::test]
+    async fn every_variant_maps_to_its_frozen_status_code_and_message() {
+        let cases = [
+            (
+                AppError::RateLimited,
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+                "rate limited",
+            ),
+            (
+                AppError::bad_request("candidateSignature is malformed"),
+                StatusCode::BAD_REQUEST,
+                "WRONG_DATA",
+                "candidateSignature is malformed",
+            ),
+            (
+                AppError::Unauthorized,
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED",
+                "unauthorized",
+            ),
+            (
+                AppError::forbidden("who does not match subject"),
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                "who does not match subject",
+            ),
+            (
+                AppError::IntegrityFailed("basic integrity not met".into()),
+                StatusCode::FORBIDDEN,
+                "INTEGRITY_FAILED",
+                "basic integrity not met",
+            ),
+            (
+                AppError::CrlUnavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ATTESTATION_CRL_UNAVAILABLE",
+                "attestation CRL unavailable",
+            ),
+            (
+                AppError::conflict("username already registered"),
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "username already registered",
+            ),
+        ];
+        for (err, want_status, want_code, want_message) in cases {
+            let label = format!("{err:?}");
+            let (status, body) = observe(err).await;
+            assert_eq!(status, want_status, "{label}");
+            assert_eq!(body["error"], want_code, "{label}");
+            assert_eq!(body["message"], want_message, "{label}");
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlx_errors_surface_as_internal_500() {
+        let (status, body) = observe(AppError::from(sqlx::Error::PoolTimedOut)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"], "INTERNAL");
+    }
+
+    // The module doc promises internal failures are "surfaced as an opaque
+    // 500", but `Internal` is `#[error(transparent)]`, so the wrapped error's
+    // own text reaches the wire as `message`. Pinned here as-is; making the
+    // body actually opaque is a wire change that needs its own decision.
+    #[tokio::test]
+    async fn internal_message_currently_echoes_the_wrapped_error_text() {
+        let (status, body) = observe(AppError::Internal(anyhow::anyhow!("pool exhausted"))).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"], "INTERNAL");
+        assert_eq!(body["message"], "pool exhausted");
+    }
+}
