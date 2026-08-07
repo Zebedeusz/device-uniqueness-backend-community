@@ -1,8 +1,10 @@
-//! People Chain access and the username write path.
+//! Chain access and the username write path.
 //!
-//! Groups the read/submit RPC [`client`], the reservation [`outbox`], and the
-//! single-instance [`writer`] worker that drains the outbox onto chain.
+//! Groups the People read/submit RPC [`client`], the [`asset_hub`] client
+//! behind the dotNS gateway lane, and the reservation [`outbox`]. The
+//! single-instance [`writer`] worker drains that outbox onto both chains.
 
+pub mod asset_hub;
 pub mod client;
 pub mod lease;
 pub mod outbox;

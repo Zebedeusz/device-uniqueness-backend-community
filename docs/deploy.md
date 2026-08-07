@@ -222,8 +222,32 @@ and the edge; it shares no database, no signing key, and no chain.
    JWT_ED25519_SECRET=0x<fresh 64-hex>                  # its own issuer
    ATTESTER_ACCOUNT=5GCF223UbXNZiH78V6DhsWeZ6hrQ6xRfGTfdn6MraprJKbWj
    QUEUE_ENABLED=false
-   DOTNS_GATEWAY_ENABLED=false                          # dotns is not deployed there
    ```
+
+   **The dotNS gateway lane is opt-in, and PreviewNet is the environment that opts
+   in.** `DOTNS_GATEWAY_ENABLED` defaults to `false`, so add it to this `.env`
+   alongside the matching Asset Hub:
+
+   ```bash
+   DOTNS_GATEWAY_ENABLED=true
+   ASSET_HUB_RPC_URL=wss://previewnet.substrate.dev/asset-hub    # compose default
+   ```
+
+   On, identity-api accepts the `dotns` block AND identity-chain-writer submits
+   `DotnsGateway::reserve_name` on Asset Hub. Both halves read the same variable;
+   a split value is intake accepting blocks nothing ever writes.
+
+   **The two URLs must name the same network.** `reserve_name` writes
+   `LiteLabelOwner`, a global claim on the label, so a writer attesting usernames
+   on one network's People while claiming their labels on another's Asset Hub
+   produces a claim on the wrong chain that **cannot be undone** — only the client
+   holds the key that could re-sign. That is the pairing the old default made easy
+   and the `false` default now prevents: `paseo-next-v2` simply leaves the variable
+   alone, because Paseo next's Asset Hub still runs the older `reserve_name`
+   (`ring_vrf_key` + `proof_of_ownership`, no `signed_at`). Should it ever be
+   enabled there by mistake, the writer's shape assertion catches it and parks the
+   dotNS lane with both argument lists named — People registration keeps running.
+   Enable it there once that runtime is upgraded.
 
 3. **Start only the services that environment needs**, as its own project:
 
@@ -295,7 +319,7 @@ declares `build: .`. The services each fail fast on missing configuration:
 | Service | Required |
 |---|---|
 | `identity-api` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `JWT_ED25519_SECRET`, `ATTESTER_ACCOUNT` |
-| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI`, `ATTESTER_ACCOUNT` |
+| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI`, `ATTESTER_ACCOUNT`, and `ASSET_HUB_RPC_URL` only where `DOTNS_GATEWAY_ENABLED` has been turned on (it defaults to off) |
 | `username-indexer` | `DATABASE_URL`, `PEOPLE_RPC_URL` |
 
 `identity-api` and `username-indexer` need **separate databases**: each applies its own

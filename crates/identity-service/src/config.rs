@@ -224,12 +224,18 @@ impl Config {
             enforce_auth: env_bool("ENFORCE_AUTH", false)?,
             queue_enabled: env_bool("QUEUE_ENABLED", false)?,
             registration_vouchers_enabled: env_bool("REGISTRATION_VOUCHERS_ENABLED", false)?,
-            dotns_gateway_enabled: env_bool("DOTNS_GATEWAY_ENABLED", true)?,
+            // Defaults **off**. On means identity-api accepts dotns blocks and
+            // identity-chain-writer claims labels on Asset Hub — a global,
+            // unrecoverable claim. Turning that on is a per-environment decision
+            // that has to name a matching ASSET_HUB_RPC_URL, not something a
+            // copied .env should inherit. Must match the writer's default.
+            dotns_gateway_enabled: env_bool("DOTNS_GATEWAY_ENABLED", false)?,
             dotns_intake_freshness_max_age_secs: parse_var(
                 "DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS",
                 "600",
             )?,
-            dotns_max_future_skew_secs: parse_var("DOTNS_MAX_FUTURE_SKEW_SECS", "600")?,
+            // 30s matches the gateway pallet's MaxFutureSkewSeconds
+            dotns_max_future_skew_secs: parse_var("DOTNS_MAX_FUTURE_SKEW_SECS", "30")?,
             apple_app_attest_app_ids,
             ios_package_names,
             android_package_names,
@@ -875,7 +881,10 @@ mod tests {
         assert_eq!(config.bind_addr.to_string(), "0.0.0.0:8080");
         assert_eq!(config.jwt_issuer, "polkadot-app");
         assert!(!config.auth_enabled);
-        assert!(config.dotns_gateway_enabled);
+        assert!(
+            !config.dotns_gateway_enabled,
+            "the gateway is opt-in; a minimal environment must not claim dotNS labels"
+        );
         let alice: [u8; 32] =
             hex::decode("d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d")
                 .unwrap()

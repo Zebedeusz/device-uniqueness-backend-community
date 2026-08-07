@@ -188,9 +188,43 @@ Operational invariants an agent must respect when touching the code.
   separate per-install auth wallet — so `candidateAccountId` is deliberately **not** required to
   equal the JWT subject. Stored `account_id` (JWT subject) is the abuse-control/rate-limit key;
   `candidate_account_id` is the on-chain beneficiary the writer submits for.
-- **`identity-chain-writer` is single-instance by design** — one signer = one nonce lane. The
-  `writer_lease` table is a best-effort deploy-overlap guard only; the chain nonce + outbox
-  reconciliation is the real serializer. Never run two writers / never scale it.
+- **`identity-chain-writer` is single-instance by design** — a nonce lane is **(signing account,
+  chain)**, and one process holds one lane per chain. The `writer_lease` table is a best-effort
+  deploy-overlap guard only; the chain nonce + outbox reconciliation is the real serializer.
+  Never run two writers / never scale it. The writer owns **two** lanes on one account, People
+  and Asset Hub. That is safe because nonces are per chain. Both sit behind the same single
+  lease, so one lease still means one submitter on each.
+- **The dotNS gateway lane is a second state machine on the same row.** Since
+  paritytech/individuality#755 there are two independent username stores. People
+  `Resources::UsernameOwnerOf` is written by `PeopleLite.attest`. The Asset Hub dotNS contracts
+  are written **only** by `DotnsGateway::reserve_name`. There is no bridge between them.
+  A row therefore carries `status` (People) and `dotns_status` (Asset Hub). The two advance
+  independently through `PENDING → SUBMITTING → RESERVED | RETRY_AFTER | FAILED_TERMINAL |
+  EXPIRED`. **A dotNS failure never changes `status`.** `ASSIGNED` + `DOTNS_FAILED_TERMINAL` is a
+  legitimate resting state: the username works, the dotNS name does not. The dependency runs one
+  way only: a People `FAILED_TERMINAL` closes an open dotNS half as `ABANDONED`, since a name with
+  no username behind it can never be submitted. Ordering is not free.
+  `reserve_name` writes `LiteLabelOwner`, a global claim on the label. Asset Hub is therefore
+  attempted **only** for rows already `ASSIGNED` on People. `dotns_status` `NULL` means the
+  request carried no `dotns` block *or* the row predates the lane. There is no backfill, so
+  pre-existing rows are never submitted.
+- **The gateway lane's freshness bounds come from the chain, not from config.** `reserve_name`
+  enforces `MaxValiditySeconds`/`MaxFutureSkewSeconds` against the client's `signedAt`, and the
+  writer enforces **both** before spending an extrinsic — identity-api's
+  `DOTNS_MAX_FUTURE_SKEW_SECS` is a separate value on a separate process and cannot be the only
+  guard. The backend **cannot re-sign**; only the client holds the candidate key. An aged-out row
+  is `EXPIRED`: terminal, never retried. A future-dated one is *deferred* behind
+  `dotns_not_before` without spending an attempt — the clock resolves it, so failing it would kill
+  a row that was always going to succeed.
+- **A dotNS problem parks the dotNS lane; it never stops the writer.** Only one dotNS condition is
+  a startup abort: `DOTNS_GATEWAY_ENABLED` on with no `ASSET_HUB_RPC_URL`, a config error knowable
+  before any row is claimed. Everything else is runtime. Asset Hub is connected lazily on the
+  first pass, not at boot, so an unreachable endpoint — an RPC bounce, a DNS blip, maintenance —
+  leaves rows in `PENDING` and keeps People attesting, instead of crash-looping the process. The
+  `DotnsGateway::reserve_name` shape assertion sits on that same path: the live Asset Hubs
+  genuinely disagree on this call, and a runtime upgrade can start failing it at any time, so it
+  is asserted per connect and parks the lane rather than the writer. `ibv2_dotns_lane_connected`
+  is the signal.
 - **Signing:** one canonical `ATTESTER_ACCOUNT` (SS58) names the attester authority, and **proxying
   is derived, not configured**: the writer signs `PeopleLite.attest` directly when that account is
   its own signer, and wraps it in `Proxy.proxy(real = authority, …)` otherwise. A proxied call's
@@ -202,11 +236,17 @@ Operational invariants an agent must respect when touching the code.
   `GET /api/v1/attester` and bind their consumer-registration signature to it, so the published key
   and the attesting account are one value by construction and cannot drift into
   `PeopleLite::InvalidAttestationSignature`. The API derives the `0x`+hex wire form; nothing
-  configures it separately.
+  configures it separately. Both pallets see that same account as the attester — under
+  `Proxy.proxy(real = P)`, `P` is what `GET /api/v1/attester` returns, on People and Asset Hub
+  alike.
 - **`chain-types` is the only place chain types live.** Static codegen from vendored metadata at
   `crates/chain-types/metadata/people.scale`; online transport + signing live in
   `identity-service::chain`, never in `chain-types`. Regenerate with the `subxt metadata …` command
-  at the top of `crates/chain-types/src/lib.rs`.
+  at the top of `crates/chain-types/src/lib.rs`. It holds one subxt config per chain family,
+  `PeopleConfig` and `AssetHubConfig`. Their transaction-extension sets differ, and a merged
+  tuple would exceed subxt's 26-member ceiling. **Only People is code-generated.** The Asset Hub
+  surface is one extrinsic and two storage reads, built dynamically by name rather than by
+  vendoring a second, faster-churning metadata blob.
 - **HTTP** (`identity-service::http`): router in `http.rs` wrapped in a tower-http stack
   (request-id → trace → 30s timeout) with graceful shutdown. Health at `/livez`, `/readyz` (gates on
   a live Postgres `SELECT 1`), `/healthcheck`; JWKS at `/.well-known/jwks.json`. `AppState` =

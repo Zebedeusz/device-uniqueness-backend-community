@@ -3,10 +3,12 @@
 //!
 //! Owns exactly two concerns (extracted when dim-tickets became the second
 //! consumer, per the lazy-extraction rule in `docs/architecture.md`):
-//! - [`connect`]: an auto-reconnecting subxt [`OnlineClient`] over the
-//!   [`chain_types::PeopleConfig`] transaction-extension pipeline.
+//! - [`connect`] / [`connect_asset_hub`]: an auto-reconnecting subxt
+//!   [`OnlineClient`] over the [`chain_types::PeopleConfig`] or
+//!   [`chain_types::AssetHubConfig`] transaction-extension pipeline.
 //! - [`WriterSigner`]: the sr25519 signing key a single-instance chain writer
-//!   submits with.
+//!   submits with. It signs for either chain, both being Polkadot-shaped.
+//!   Nonces are per chain. One account can therefore hold a lane on each.
 //!
 //! Product logic — which storage to read, which calls to build — stays in each
 //! service; generated chain types stay in `chain-types`.
@@ -14,24 +16,37 @@
 use std::str::FromStr as _;
 
 use anyhow::Context as _;
-use chain_types::PeopleConfig;
+use chain_types::{AssetHubConfig, PeopleConfig};
 use subxt::utils::{AccountId32, MultiSignature};
 use subxt::OnlineClient;
 use subxt_rpcs::client::{ReconnectingRpcClient, RpcClient};
 
-/// Connect to a People Chain RPC with an auto-reconnecting transport and load
+/// Connects to a People Chain RPC with an auto-reconnecting transport. Loads
 /// its metadata.
 pub async fn connect(url: &str) -> anyhow::Result<OnlineClient<PeopleConfig>> {
-    OnlineClient::<PeopleConfig>::from_rpc_client(reconnecting_rpc_client(url).await?)
-        .await
-        .with_context(|| format!("connecting to People Chain at {url}"))
+    connect_as::<PeopleConfig>(url, "People Chain").await
 }
 
-async fn reconnecting_rpc_client(url: &str) -> anyhow::Result<RpcClient> {
+/// Connects to an Asset Hub RPC with an auto-reconnecting transport. Loads its
+/// metadata.
+pub async fn connect_asset_hub(url: &str) -> anyhow::Result<OnlineClient<AssetHubConfig>> {
+    connect_as::<AssetHubConfig>(url, "Asset Hub").await
+}
+
+async fn connect_as<T: subxt::Config + Default>(
+    url: &str,
+    chain: &str,
+) -> anyhow::Result<OnlineClient<T>> {
+    OnlineClient::<T>::from_rpc_client(reconnecting_rpc_client(url, chain).await?)
+        .await
+        .with_context(|| format!("connecting to {chain} at {url}"))
+}
+
+async fn reconnecting_rpc_client(url: &str, chain: &str) -> anyhow::Result<RpcClient> {
     let rpc_client = ReconnectingRpcClient::builder()
         .build(url)
         .await
-        .with_context(|| format!("connecting to People Chain at {url}"))?;
+        .with_context(|| format!("connecting to {chain} at {url}"))?;
     Ok(RpcClient::new(rpc_client))
 }
 
@@ -107,6 +122,16 @@ impl subxt::tx::Signer<PeopleConfig> for WriterSigner {
     }
 }
 
+impl subxt::tx::Signer<AssetHubConfig> for WriterSigner {
+    fn account_id(&self) -> AccountId32 {
+        AccountId32(self.public_bytes())
+    }
+
+    fn sign(&self, signer_payload: &[u8]) -> MultiSignature {
+        MultiSignature::Sr25519(self.sign_bytes(signer_payload))
+    }
+}
+
 /// Map a finalized `Utility.force_batch`'s events onto ordered per-item
 /// outcomes: `Utility.ItemCompleted` → `true`, `Utility.ItemFailed` →
 /// `false`, everything else ignored. Index = inner-call index (the
@@ -143,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn reconnecting_rpc_client_recovers_after_server_restart() -> anyhow::Result<()> {
         let (server, url) = TestRpcServer::start(None).await?;
-        let rpc = reconnecting_rpc_client(&url).await?;
+        let rpc = reconnecting_rpc_client(&url, "test RPC").await?;
 
         let first: String = rpc.request("ping", rpc_params![]).await?;
         assert_eq!(first, "pong");

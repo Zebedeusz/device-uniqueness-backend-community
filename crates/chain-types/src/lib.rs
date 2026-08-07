@@ -1,4 +1,5 @@
-//! Typed People Chain surface for the workspace's services.
+//! Typed People Chain surface, plus the signing configs for the individuality
+//! chains the workspace talks to.
 //!
 //! Static [`subxt`] codegen generated from vendored People Chain metadata. It is
 //! the single canonical chain-facing type surface for the workspace: the read
@@ -6,6 +7,12 @@
 //! the identity-chain-writer's registration/attestation calls, and the dim-tickets
 //! service's `Game`/`ProofOfInk` invite-ticket calls all build against it.
 //! The online transport and signing live in adapter crates, never here.
+//!
+//! Two subxt configs live here, one per chain family: [`PeopleConfig`] and
+//! [`AssetHubConfig`]. Only People is code-generated. The Asset Hub surface the
+//! writer needs is `DotnsGateway::reserve_name` plus two storage reads. It is
+//! built dynamically by name rather than by vendoring a second, faster-churning
+//! metadata blob. See `docs/plans/active/dotns-gateway-write.md`.
 //!
 //! # Vendored metadata provenance
 //!
@@ -173,6 +180,134 @@ impl<T: subxt::Config> Default for PeopleExtrinsicParamsBuilder<T> {
     }
 }
 
+/// subxt [`Config`](subxt::Config) for the individuality Asset Hub runtimes.
+///
+/// Same Polkadot shape as [`PeopleConfig`]: `AccountId32`,
+/// `MultiAddress<_, ()>`, `MultiSignature`, Blake2. The
+/// transaction-extension tuple is **separate**. Asset Hub declares five gates
+/// People does not (`AsPgas`, `AsRingAlias`, `AsDotnsGateway`,
+/// `CheckMetadataHash`, `EthSetOrigin`) and omits `VerifyMultiSignature`.
+/// Merging the two sets would exceed subxt's 26-member tuple ceiling. Keeping
+/// them apart also leaves the proven People pipeline untouched.
+///
+/// One tuple still serves *both* Asset Hub runtimes. They differ only in the
+/// slot-0 name. That is the same split [`PeopleConfig`] already carries.
+#[derive(Debug, Clone, Default)]
+pub struct AssetHubConfig(subxt::PolkadotConfig);
+
+impl subxt::Config for AssetHubConfig {
+    type AccountId = <subxt::PolkadotConfig as subxt::Config>::AccountId;
+    type Address = <subxt::PolkadotConfig as subxt::Config>::Address;
+    type Signature = <subxt::PolkadotConfig as subxt::Config>::Signature;
+    type Header = <subxt::PolkadotConfig as subxt::Config>::Header;
+    type TransactionExtensions = AssetHubTransactionExtensions<Self>;
+    type AssetId = <subxt::PolkadotConfig as subxt::Config>::AssetId;
+    type Hasher = <subxt::PolkadotConfig as subxt::Config>::Hasher;
+
+    fn genesis_hash(&self) -> Option<subxt::config::HashFor<Self>> {
+        self.0.genesis_hash()
+    }
+
+    fn spec_and_transaction_version_for_block_number(
+        &self,
+        block_number: u64,
+    ) -> Option<(u32, u32)> {
+        self.0
+            .spec_and_transaction_version_for_block_number(block_number)
+    }
+
+    fn metadata_for_spec_version(&self, spec_version: u32) -> Option<subxt::ArcMetadata> {
+        self.0.metadata_for_spec_version(spec_version)
+    }
+
+    fn set_metadata_for_spec_version(&self, spec_version: u32, metadata: subxt::ArcMetadata) {
+        self.0.set_metadata_for_spec_version(spec_version, metadata);
+    }
+}
+
+type AssetHubTransactionExtensions<T> = (
+    Noop<UnitTransactionExtension>,
+    Noop<AuthorizeValueTransfer>,
+    Noop<AuthorizeCall>,
+    Noop<AsPgas>,
+    Noop<AsRingAlias>,
+    Noop<AsDotnsGateway>,
+    Noop<RestrictOrigins>,
+    Noop<CheckNonZeroSender>,
+    subxt::config::transaction_extensions::CheckSpecVersion,
+    subxt::config::transaction_extensions::CheckTxVersion,
+    subxt::config::transaction_extensions::CheckGenesis<T>,
+    subxt::config::transaction_extensions::CheckMortality<T>,
+    subxt::config::transaction_extensions::CheckNonce,
+    Noop<CheckWeight>,
+    subxt::config::transaction_extensions::ChargeAssetTxPayment<T>,
+    // Real, not a `Noop`. Its *implicit* is `Option<[u8; 32]> = None`. A `Noop`
+    // would encode that as nothing, which is a signer-payload mismatch. subxt's
+    // version never provides a hash, so it encodes disabled mode.
+    subxt::config::transaction_extensions::CheckMetadataHash,
+    Noop<EthSetOrigin>,
+    Noop<StorageWeightReclaim>,
+);
+
+/// Builder for the Asset Hub transaction extension params used by the writer.
+pub struct AssetHubExtrinsicParamsBuilder<T: subxt::Config> {
+    mortality: subxt::config::transaction_extensions::CheckMortalityParams<T>,
+    nonce: Option<u64>,
+    tip: u128,
+}
+
+impl<T: subxt::Config> AssetHubExtrinsicParamsBuilder<T> {
+    /// Start with an immortal, no-tip transaction.
+    pub fn new() -> Self {
+        Self {
+            mortality: subxt::config::transaction_extensions::CheckMortalityParams::immortal(),
+            nonce: None,
+            tip: 0,
+        }
+    }
+
+    /// Provide a specific nonce.
+    pub fn nonce(mut self, nonce: u64) -> Self {
+        self.nonce = Some(nonce);
+        self
+    }
+
+    /// Build params for [`AssetHubTransactionExtensions`].
+    pub fn build(
+        self,
+    ) -> <AssetHubTransactionExtensions<T> as subxt::config::TransactionExtensions<T>>::Params {
+        (
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            (),
+            self.mortality,
+            self.nonce.map_or_else(
+                subxt::config::transaction_extensions::CheckNonceParams::from_chain,
+                subxt::config::transaction_extensions::CheckNonceParams::with_nonce,
+            ),
+            (),
+            subxt::config::transaction_extensions::ChargeAssetTxPaymentParams::tip(self.tip),
+            (),
+            (),
+            (),
+        )
+    }
+}
+
+impl<T: subxt::Config> Default for AssetHubExtrinsicParamsBuilder<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait NoopName {
     const NAME: &'static str;
     const VALUE: &'static [u8] = &[];
@@ -258,6 +393,13 @@ noop_name!(CheckNonZeroSender, "CheckNonZeroSender");
 noop_name!(CheckWeight, "CheckWeight");
 noop_name!(StorageWeightReclaim, "StorageWeightReclaim");
 
+// Asset Hub-only origin modifiers. All three are `Option<…>`, encoded `None`.
+// `EthSetOrigin` (pallet_revive's `SetOrigin`) carries no value at all.
+noop_name!(AsPgas, "AsPgas", &[0]);
+noop_name!(AsRingAlias, "AsRingAlias", &[0]);
+noop_name!(AsDotnsGateway, "AsDotnsGateway", &[0]);
+noop_name!(EthSetOrigin, "EthSetOrigin");
+
 #[cfg(test)]
 mod tests {
     use super::people;
@@ -292,29 +434,58 @@ mod tests {
         "StorageWeightReclaim",
     ];
 
-    /// One People runtime this workspace knows about: what the chain calls
-    /// itself, which runtime build was inspected, and the extension names it
-    /// declared.
+    /// Every extension name [`AssetHubTransactionExtensions`](super::AssetHubTransactionExtensions)
+    /// can satisfy. Deliberately a second list rather than a superset of
+    /// [`TUPLE_EXTENSIONS`]. The merged set is 28 members and subxt's tuple
+    /// impls stop at 26. The two chain families therefore keep separate
+    /// pipelines.
+    const ASSET_HUB_TUPLE_EXTENSIONS: &[&str] = &[
+        "UnitTransactionExtension",
+        "AuthorizeValueTransfer",
+        "AuthorizeCall",
+        "AsPgas",
+        "AsRingAlias",
+        "AsDotnsGateway",
+        "RestrictOrigins",
+        "CheckNonZeroSender",
+        "CheckSpecVersion",
+        "CheckTxVersion",
+        "CheckGenesis",
+        "CheckMortality",
+        "CheckNonce",
+        "CheckWeight",
+        "ChargeAssetTxPayment",
+        "CheckMetadataHash",
+        "EthSetOrigin",
+        "StorageWeightReclaim",
+    ];
+
+    /// One runtime this workspace knows about: what the chain calls itself,
+    /// which runtime build was inspected, and the extension names it declared.
     ///
-    /// A human name for diagnostics plus `spec_name`/`spec_version` to say which
-    /// build the list was captured from — `next-people-paseo` numbers two
-    /// different deployments, so the version alone does not identify a chain.
+    /// A human name for diagnostics, plus `spec_name`/`spec_version` to say
+    /// which build the list was captured from. `next-people-paseo` numbers two
+    /// different deployments. The version alone does not identify a chain.
     struct KnownRuntime {
         /// Human label for diagnostics; never used as a key.
         env: &'static str,
         spec_name: &'static str,
         spec_version: u32,
+        /// The tuple that must be able to sign on this runtime.
+        tuple: &'static [&'static str],
         /// Ordered transaction-extension identifiers, as declared by that build.
         extensions: &'static [&'static str],
     }
 
-    /// The People runtimes this workspace is verified against, captured
-    /// 2026-08-01. Not exhaustive — they differ in slot 0 only.
+    /// The runtimes this workspace is verified against. Two People builds
+    /// captured 2026-08-01, two Asset Hub builds captured 2026-08-06. Not
+    /// exhaustive. Within each family they differ in slot 0 only.
     const KNOWN_RUNTIMES: &[KnownRuntime] = &[
         KnownRuntime {
             env: "paseo-next-v2",
             spec_name: "next-people-paseo",
             spec_version: 1_000_029,
+            tuple: TUPLE_EXTENSIONS,
             extensions: &[
                 "AuthorizeValueTransfer",
                 "VerifyMultiSignature",
@@ -344,6 +515,7 @@ mod tests {
             env: "previewnet",
             spec_name: "next-people-paseo",
             spec_version: 1_000_030,
+            tuple: TUPLE_EXTENSIONS,
             extensions: &[
                 "UnitTransactionExtension",
                 "VerifyMultiSignature",
@@ -369,12 +541,62 @@ mod tests {
                 "StorageWeightReclaim",
             ],
         },
+        KnownRuntime {
+            env: "paseo-next-v2 asset hub",
+            spec_name: "next-asset-hub-paseo",
+            spec_version: 2_000_033,
+            tuple: ASSET_HUB_TUPLE_EXTENSIONS,
+            extensions: &[
+                "AuthorizeValueTransfer",
+                "AuthorizeCall",
+                "AsPgas",
+                "AsRingAlias",
+                "AsDotnsGateway",
+                "RestrictOrigins",
+                "CheckNonZeroSender",
+                "CheckSpecVersion",
+                "CheckTxVersion",
+                "CheckGenesis",
+                "CheckMortality",
+                "CheckNonce",
+                "CheckWeight",
+                "ChargeAssetTxPayment",
+                "CheckMetadataHash",
+                "EthSetOrigin",
+                "StorageWeightReclaim",
+            ],
+        },
+        KnownRuntime {
+            env: "previewnet asset hub",
+            spec_name: "next-asset-hub-paseo",
+            spec_version: 2_000_034,
+            tuple: ASSET_HUB_TUPLE_EXTENSIONS,
+            extensions: &[
+                "UnitTransactionExtension",
+                "AuthorizeCall",
+                "AsPgas",
+                "AsRingAlias",
+                "AsDotnsGateway",
+                "RestrictOrigins",
+                "CheckNonZeroSender",
+                "CheckSpecVersion",
+                "CheckTxVersion",
+                "CheckGenesis",
+                "CheckMortality",
+                "CheckNonce",
+                "CheckWeight",
+                "ChargeAssetTxPayment",
+                "CheckMetadataHash",
+                "EthSetOrigin",
+                "StorageWeightReclaim",
+            ],
+        },
     ];
 
-    /// One binary signs on either People runtime: subxt resolves extensions by
-    /// name against the connected runtime's list, so the tuple must be able to
-    /// satisfy every name each known build declares. A runtime that adds a
-    /// name (e.g. `CheckMetadataHash` on public Paseo) fails here first.
+    /// One binary signs on either runtime of a family. subxt resolves
+    /// extensions by name against the connected runtime's list. The tuple must
+    /// therefore satisfy every name each known build declares. A runtime that
+    /// adds a name (e.g. `CheckMetadataHash` on public Paseo) fails here first.
     ///
     /// This is a snapshot, not a live check: it holds the tuple to what was
     /// observed, and cannot notice a runtime that has since been upgraded.
@@ -383,7 +605,7 @@ mod tests {
         for runtime in KNOWN_RUNTIMES {
             for name in runtime.extensions {
                 assert!(
-                    TUPLE_EXTENSIONS.contains(name),
+                    runtime.tuple.contains(name),
                     "{} ({} {}) declares extension {name}, which the tuple cannot satisfy",
                     runtime.env,
                     runtime.spec_name,

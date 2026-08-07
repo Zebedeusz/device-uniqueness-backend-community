@@ -11,6 +11,7 @@ pub mod chain;
 pub mod config;
 pub mod db;
 pub mod device_check;
+pub mod dotns;
 pub mod eligibility;
 pub mod http;
 pub mod jwt;

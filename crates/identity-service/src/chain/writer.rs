@@ -13,11 +13,14 @@
 //! cached nonce reset on error).
 
 use std::str::FromStr as _;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use chain_types::people::runtime_types::sp_runtime::DispatchError;
-use chain_types::{people, PeopleConfig, PeopleExtrinsicParamsBuilder};
+use chain_types::{
+    people, AssetHubConfig, AssetHubExtrinsicParamsBuilder, PeopleConfig,
+    PeopleExtrinsicParamsBuilder,
+};
 use secrecy::{ExposeSecret as _, SecretString};
 use sqlx::PgPool;
 use subxt::dynamic::{self, Value};
@@ -28,9 +31,11 @@ use time::OffsetDateTime;
 
 use chain_client::WriterSigner;
 
+use super::asset_hub::{AssetHubClient, ValidityWindow};
 use super::client::ChainClient;
 use super::lease;
 use super::outbox::{self, Guard, Reservation};
+use crate::dotns;
 
 /// Chain-writer configuration, loaded from the environment.
 #[derive(Debug, Clone)]
@@ -82,6 +87,12 @@ pub struct WriterConfig {
     /// WARN below this signer free balance, in planck (transaction fees come
     /// from the signer, not the proxied primary).
     pub signer_balance_floor_planck: u128,
+    /// Whether the dotNS gateway lane is live (`DOTNS_GATEWAY_ENABLED`). Must
+    /// match identity-api's value, which gates intake. When off, no Asset Hub
+    /// connection is opened at all and `dotns_status` rows are left alone.
+    pub dotns_gateway_enabled: bool,
+    /// Asset Hub RPC endpoint. Required when the dotNS lane is enabled.
+    pub asset_hub_rpc_url: Option<String>,
 }
 
 impl WriterConfig {
@@ -140,6 +151,14 @@ impl WriterConfig {
                 "ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK",
                 10_000_000_000,
             )?),
+            // Matches identity-api's intake gate (`config.rs`). Absent on one
+            // side and set on the other is the accepted-but-never-submitted
+            // split; the same default on both is what stops it.
+            dotns_gateway_enabled: crate::config::env_bool("DOTNS_GATEWAY_ENABLED", false)?,
+            asset_hub_rpc_url: match std::env::var("ASSET_HUB_RPC_URL") {
+                Ok(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
+                _ => None,
+            },
         })
     }
 }
@@ -158,6 +177,33 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     let signer = WriterSigner::from_secret(config.signer_suri.expose_secret())?;
     let signer_account = AccountId32(signer.public_bytes());
     let proxy_for = proxy_target(config.attester, signer_account.0);
+
+    let dotns_lane = match (config.dotns_gateway_enabled, &config.asset_hub_rpc_url) {
+        (true, Some(url)) => {
+            tracing::info!(
+                asset_hub_rpc = %url,
+                "dotns lane enabled; Asset Hub connects on the first pass"
+            );
+            DotnsLane::Enabled {
+                rpc_url: url.clone(),
+                connected: None,
+                last_error: None,
+                retry_at: None,
+            }
+        }
+        // A config error, not a chain one: the two processes disagree about
+        // whether the lane exists. Nothing a retry fixes, and it is knowable
+        // before a single row is claimed, so it stays a startup abort.
+        (true, None) => anyhow::bail!(
+            "DOTNS_GATEWAY_ENABLED is on but ASSET_HUB_RPC_URL is unset. identity-api would \
+             accept dotns blocks that nothing ever submits — set the RPC URL, or turn the \
+             gateway off for this environment."
+        ),
+        (false, _) => {
+            tracing::info!("dotns lane disabled");
+            DotnsLane::Disabled
+        }
+    };
     tracing::info!(
         signer = %hex_account(&signer_account.0),
         attester = %hex_account(&config.attester),
@@ -174,11 +220,13 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     let mut writer = Writer {
         pool,
         chain,
+        dotns_lane,
         signer,
         signer_account,
         proxy_for,
         config,
         next_nonce: None,
+        next_nonce_ah: None,
     };
     writer.run_forever().await
 }
@@ -186,13 +234,129 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
 struct Writer {
     pool: PgPool,
     chain: ChainClient,
+    /// The dotNS lane's Asset Hub connection. See [`DotnsLane`].
+    dotns_lane: DotnsLane,
     signer: WriterSigner,
     signer_account: AccountId32,
     /// Derived once at connect time by [`proxy_target`].
     proxy_for: Option<[u8; 32]>,
     config: WriterConfig,
-    /// Locally-tracked nonce; reset to a chain re-fetch on any error.
+    /// Locally-tracked People nonce; reset to a chain re-fetch on any error.
     next_nonce: Option<u64>,
+    /// Locally-tracked Asset Hub nonce. A **separate lane**. Nonces are per
+    /// chain, so one account can have one in flight on each. Same reset
+    /// discipline as `next_nonce`.
+    next_nonce_ah: Option<u64>,
+}
+
+/// How long the lane waits before retrying a failed Asset Hub connect. The
+/// dotNS pass runs on `CHAIN_WRITER_POLL_SECS` (2s by default) and a connect
+/// costs a metadata fetch, so a down endpoint is not dialled once per pass.
+const DOTNS_RECONNECT_INTERVAL: Duration = Duration::from_secs(30);
+
+/// The dotNS lane's Asset Hub connection, opened on demand.
+///
+/// Deliberately **not** opened at startup. Every post-startup Asset Hub error is
+/// already demoted to a per-row `RETRY_AFTER` precisely so the dotNS half can
+/// never affect the People half — but a boot-time one used to be the exception
+/// that propagated out of `run`, crash-looping the process and stalling People
+/// registrations entirely. An Asset Hub that is merely unreachable when the
+/// writer happens to restart (an RPC bounce, a DNS blip, PreviewNet
+/// maintenance) is not a reason to stop attesting usernames.
+///
+/// The `reserve_name` shape assertion lives on this path too, and it is not a
+/// startup-only risk: a runtime upgrade can start failing it at any time. Both
+/// failures now park the dotNS lane, leaving rows in `PENDING` for whenever the
+/// endpoint comes back, and leave People running.
+enum DotnsLane {
+    /// `DOTNS_GATEWAY_ENABLED` is off. No connection is ever opened.
+    Disabled,
+    /// Enabled, with the endpoint to reach.
+    Enabled {
+        rpc_url: String,
+        /// `None` until the first successful connect.
+        connected: Option<(AssetHubClient, ValidityWindow)>,
+        /// The last connect failure, so a lastingly unreachable or mis-shaped
+        /// Asset Hub logs once per distinct cause rather than once per pass.
+        last_error: Option<String>,
+        /// Earliest next connect attempt, once one has failed.
+        retry_at: Option<Instant>,
+    },
+}
+
+/// What the lane wants done before the dotNS half of a pass can run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DotnsDial {
+    /// Already connected. Use the cached client.
+    Ready,
+    /// Not connected and the backoff has elapsed. Dial.
+    Dial,
+    /// Skip the dotNS half this pass: the lane is off, or the backoff has not
+    /// elapsed since the last failed dial.
+    Skip,
+}
+
+impl DotnsLane {
+    /// Whether to dial, reuse, or skip — the whole backoff decision, kept pure
+    /// so it can be tested without a chain.
+    fn dial_state(&self, now: Instant) -> DotnsDial {
+        match self {
+            DotnsLane::Disabled => DotnsDial::Skip,
+            DotnsLane::Enabled { connected, .. } if connected.is_some() => DotnsDial::Ready,
+            DotnsLane::Enabled { retry_at, .. } => match retry_at {
+                Some(at) if now < *at => DotnsDial::Skip,
+                _ => DotnsDial::Dial,
+            },
+        }
+    }
+
+    /// Records a failed dial and reports whether this cause is new.
+    ///
+    /// `false` means an identical failure was already logged, so the caller
+    /// stays quiet: a shape mismatch is not transient and would otherwise print
+    /// every backoff interval, forever.
+    fn record_dial_failure(&mut self, reason: String, now: Instant) -> bool {
+        let DotnsLane::Enabled {
+            last_error,
+            retry_at,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        *retry_at = Some(now + DOTNS_RECONNECT_INTERVAL);
+        let is_new = last_error.as_deref() != Some(reason.as_str());
+        if is_new {
+            *last_error = Some(reason);
+        }
+        is_new
+    }
+
+    /// Records a successful dial, clearing the parked state.
+    fn record_dial_success(&mut self, up: (AssetHubClient, ValidityWindow)) {
+        if let DotnsLane::Enabled {
+            connected,
+            last_error,
+            retry_at,
+            ..
+        } = self
+        {
+            *connected = Some(up);
+            *last_error = None;
+            *retry_at = None;
+        }
+    }
+}
+
+/// Connects and reads the gateway's freshness constants.
+///
+/// [`AssetHubClient::connect`] asserts the runtime's `reserve_name` argument
+/// names, so a chain running the other variant fails here rather than
+/// mid-submit.
+async fn connect_asset_hub(url: &str) -> anyhow::Result<(AssetHubClient, ValidityWindow)> {
+    let client = AssetHubClient::connect(url).await?;
+    let window = client.validity_window().await?;
+    Ok((client, window))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,6 +364,112 @@ enum SubmitFailureAction {
     Assign,
     Retry,
     Fail,
+}
+
+/// Why a row cannot be submitted to Asset Hub as it stands.
+///
+/// All of them would otherwise cost a fee to discover on chain. Every variant
+/// is terminal except [`DotnsReject::FutureDated`], which the passage of time
+/// resolves on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DotnsReject {
+    /// The row carries no dotns block, or an incomplete one.
+    NotInLane,
+    /// The lite label is not `<stem>.<digits>`, or it exceeds `BaseLabel`'s
+    /// 32-byte bound.
+    UnbuildableLabel(String),
+    /// `reservedUsername` exceeds `BaseLabel`'s 32-byte bound.
+    UnbuildableReserved(String),
+    /// The stored signature does not verify against the reservation payload.
+    BadSignature,
+    /// `signed_at` aged out of the pallet's validity window.
+    Expired { signed_at: i64, deadline_secs: u64 },
+    /// `signed_at` is further ahead of the chain's clock than
+    /// `MaxFutureSkewSeconds` allows.
+    ///
+    /// The only non-terminal reject. The row becomes submittable at
+    /// `submittable_at` with no client involvement, so it is deferred rather
+    /// than failed.
+    FutureDated { signed_at: i64, submittable_at: i64 },
+}
+
+/// `BaseLabel` is `BoundedVec<u8, ConstU32<32>>` in the gateway pallet.
+const MAX_LABEL_BYTES: usize = 32;
+
+/// Runs every offline gate over a row before it costs an extrinsic.
+///
+/// Ordered cheapest-first, though all of them are pure. The expensive
+/// `LiteLabelOwner` read happens only after this returns `Ok`.
+fn check_dotns_submittable(
+    r: &Reservation,
+    candidate: &[u8; 32],
+    attester: &[u8; 32],
+    window: ValidityWindow,
+    now: i64,
+) -> Result<(), DotnsReject> {
+    let (Some(signature), Some(signed_at)) = (&r.dotns_signature, r.dotns_signed_at) else {
+        return Err(DotnsReject::NotInLane);
+    };
+
+    let label = &r.full_username;
+    if label.len() > MAX_LABEL_BYTES {
+        return Err(DotnsReject::UnbuildableLabel(format!(
+            "lite label is {} bytes, over BaseLabel's {MAX_LABEL_BYTES}",
+            label.len()
+        )));
+    }
+    let base = dotns::lite_base(label);
+    if base.len() == label.len() {
+        return Err(DotnsReject::UnbuildableLabel(
+            "lite label has no digit suffix".to_string(),
+        ));
+    }
+    if let Some(reserved) = &r.reserved_username {
+        if reserved.len() > MAX_LABEL_BYTES {
+            return Err(DotnsReject::UnbuildableReserved(format!(
+                "reservedUsername is {} bytes, over BaseLabel's {MAX_LABEL_BYTES}",
+                reserved.len()
+            )));
+        }
+    }
+
+    // `reserve_name` bounds `signed_at` on both sides. Intake has its own
+    // DOTNS_MAX_FUTURE_SKEW_SECS, but that is a separate value on a separate
+    // process: if it drifts above the pallet's, or a row reaches the lane
+    // through a path configured differently, a future-dated signature would
+    // sail through every other gate and burn a fee on a call the pallet
+    // rejects. This is the only place the chain's own bound is enforced.
+    let max_future_skew = i64::try_from(window.max_future_skew_secs).unwrap_or(i64::MAX);
+    if signed_at > now.saturating_add(max_future_skew) {
+        return Err(DotnsReject::FutureDated {
+            signed_at,
+            submittable_at: signed_at.saturating_sub(max_future_skew),
+        });
+    }
+
+    // Checking expiry before signature verification. An aged-out row is EXPIRED
+    // even if its signature is also wrong. That is the state the client can act
+    // on by re-signing, rather than a bug report.
+    if dotns::reservation_expired(signed_at, window.max_validity_secs, now) {
+        return Err(DotnsReject::Expired {
+            signed_at,
+            deadline_secs: window.max_validity_secs,
+        });
+    }
+
+    let signed_at = u64::try_from(signed_at).map_err(|_| DotnsReject::BadSignature)?;
+    if !dotns::verify_reservation_signature(
+        signature,
+        candidate,
+        attester,
+        base.as_bytes(),
+        &r.identifier_key,
+        r.reserved_username.as_ref().map(|s| s.as_bytes()),
+        signed_at,
+    ) {
+        return Err(DotnsReject::BadSignature);
+    }
+    Ok(())
 }
 
 fn classify_submit_failure(
@@ -224,8 +494,12 @@ impl Writer {
             let guard = self.acquire_lease().await?;
             tracing::info!(epoch = guard.epoch, "acquired writer lease");
             self.next_nonce = None;
+            self.next_nonce_ah = None;
             if let Err(e) = self.reconcile_submitting(&guard).await {
                 tracing::warn!(error = %e, "startup reconcile failed");
+            }
+            if let Err(e) = self.reconcile_dotns_submitting(&guard).await {
+                tracing::warn!(error = %e, "startup dotns reconcile failed");
             }
             if let Err(e) = self.active_loop(&guard).await {
                 tracing::warn!(error = %e, "writer loop exited; re-acquiring lease");
@@ -343,10 +617,6 @@ impl Writer {
                 }
             }
             let due = outbox::claim_due(&self.pool, self.config.batch_size).await?;
-            if due.is_empty() {
-                tokio::time::sleep(self.config.poll_interval).await;
-                continue;
-            }
             for r in &due {
                 // Renew before each row: a batch drains sequentially and each
                 // submit awaits finalization, so a batch can outlast the lease TTL.
@@ -354,6 +624,13 @@ impl Writer {
                     anyhow::bail!("lost writer lease");
                 }
                 self.process(guard, r).await?;
+            }
+            // Asset Hub second. A row is only eligible once People has assigned
+            // it. This picks up both the batch just drained and anything a
+            // previous pass left in RETRY_AFTER.
+            self.dotns_pass(guard).await?;
+            if due.is_empty() {
+                tokio::time::sleep(self.config.poll_interval).await;
             }
         }
     }
@@ -540,11 +817,422 @@ impl Writer {
         Ok(n)
     }
 
+    /// The Asset Hub nonce. A lane of its own. Nonces are per chain, so this
+    /// never interacts with `next_nonce`.
+    async fn nonce_ah(&mut self, asset_hub: &AssetHubClient) -> anyhow::Result<u64> {
+        if let Some(n) = self.next_nonce_ah {
+            return Ok(n);
+        }
+        let n = asset_hub
+            .online()
+            .tx()
+            .await?
+            .account_nonce(&self.signer_account)
+            .await?;
+        self.next_nonce_ah = Some(n);
+        Ok(n)
+    }
+
+    /// The connected Asset Hub, dialling it if the lane is enabled and not yet
+    /// up.
+    ///
+    /// `None` means the dotNS half is skipped this pass: the lane is off, or a
+    /// connect failed and the backoff has not elapsed. Deliberately returns no
+    /// error — nothing on this path may propagate into the People lane.
+    async fn dotns_client(&mut self) -> Option<(AssetHubClient, ValidityWindow)> {
+        let now = Instant::now();
+        match self.dotns_lane.dial_state(now) {
+            DotnsDial::Skip => return None,
+            DotnsDial::Ready => {
+                let DotnsLane::Enabled {
+                    connected: Some(up),
+                    ..
+                } = &self.dotns_lane
+                else {
+                    return None;
+                };
+                return Some(up.clone());
+            }
+            DotnsDial::Dial => {}
+        }
+        let DotnsLane::Enabled { rpc_url, .. } = &self.dotns_lane else {
+            return None;
+        };
+        let rpc_url = rpc_url.clone();
+        match connect_asset_hub(&rpc_url).await {
+            Ok(up) => {
+                tracing::info!(
+                    asset_hub_rpc = %rpc_url,
+                    max_validity_secs = up.1.max_validity_secs,
+                    max_future_skew_secs = up.1.max_future_skew_secs,
+                    "dotns lane connected"
+                );
+                metrics::gauge!("ibv2_dotns_lane_connected").set(1.0);
+                self.dotns_lane.record_dial_success(up.clone());
+                Some(up)
+            }
+            Err(e) => {
+                let reason = format!("{e:#}");
+                if self.dotns_lane.record_dial_failure(reason.clone(), now) {
+                    tracing::warn!(
+                        asset_hub_rpc = %rpc_url,
+                        error = %reason,
+                        retry_secs = DOTNS_RECONNECT_INTERVAL.as_secs(),
+                        "dotns lane parked; People registration is unaffected"
+                    );
+                }
+                metrics::gauge!("ibv2_dotns_lane_connected").set(0.0);
+                None
+            }
+        }
+    }
+
+    /// Drains rows due for Asset Hub reservation.
+    ///
+    /// Only rows already `ASSIGNED` on People are eligible. This can never
+    /// claim a label for a username that failed to register.
+    async fn dotns_pass(&mut self, guard: &Guard) -> anyhow::Result<()> {
+        let Some((asset_hub, window)) = self.dotns_client().await else {
+            return Ok(());
+        };
+        let due = outbox::claim_dotns_due(&self.pool, self.config.batch_size).await?;
+        for r in &due {
+            if !self.heartbeat(guard).await? {
+                anyhow::bail!("lost writer lease");
+            }
+            self.process_dotns(guard, &asset_hub, window, r).await?;
+        }
+        Ok(())
+    }
+
+    /// Processes one reservation's Asset Hub half.
+    ///
+    /// Row-level failures are recorded on `dotns_status`. They never touch the
+    /// People `status`.
+    async fn process_dotns(
+        &mut self,
+        guard: &Guard,
+        asset_hub: &AssetHubClient,
+        window: ValidityWindow,
+        r: &Reservation,
+    ) -> anyhow::Result<()> {
+        let Some(candidate) = parse_account(&r.candidate_account_id).ok() else {
+            return self.dotns_fail(guard, r, "invalid candidate SS58").await;
+        };
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+
+        // Offline gates first. Each one is a fee not spent on a doomed call.
+        if let Err(reject) =
+            check_dotns_submittable(r, &candidate, &self.config.attester, window, now)
+        {
+            return match reject {
+                DotnsReject::Expired {
+                    signed_at,
+                    deadline_secs,
+                } => {
+                    self.dotns_expire(
+                        guard,
+                        r,
+                        &format!(
+                            "reservation signature expired: signed_at={signed_at}, window \
+                             {deadline_secs}s, now={now}. Only the client can re-sign."
+                        ),
+                    )
+                    .await
+                }
+                DotnsReject::NotInLane => {
+                    self.dotns_fail(guard, r, "row has no complete dotns block")
+                        .await
+                }
+                DotnsReject::BadSignature => {
+                    self.dotns_fail(guard, r, "dotns signature does not verify")
+                        .await
+                }
+                DotnsReject::UnbuildableLabel(why) | DotnsReject::UnbuildableReserved(why) => {
+                    self.dotns_fail(guard, r, &why).await
+                }
+                DotnsReject::FutureDated {
+                    signed_at,
+                    submittable_at,
+                } => {
+                    let until = OffsetDateTime::from_unix_timestamp(submittable_at)
+                        .unwrap_or_else(|_| OffsetDateTime::now_utc());
+                    self.dotns_defer(
+                        guard,
+                        r,
+                        until,
+                        &format!(
+                            "reservation signature is future-dated: signed_at={signed_at}, \
+                             now={now}, gateway tolerates {}s of skew. Re-queued until \
+                             {submittable_at}.",
+                            window.max_future_skew_secs
+                        ),
+                    )
+                    .await
+                }
+            };
+        }
+
+        // Checking idempotency. The label may already be claimed.
+        match asset_hub.lite_label_owner(&r.full_username).await {
+            Ok(Some(owner)) if owner == candidate => return self.dotns_reserve(guard, r).await,
+            Ok(Some(_)) => {
+                return self
+                    .dotns_fail(guard, r, "lite label reserved by another account")
+                    .await
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return self
+                    .dotns_retry(guard, r, &format!("label owner read failed: {e}"))
+                    .await
+            }
+        }
+
+        let payload = build_reserve_name_tx(r, &candidate, self.proxy_for.as_ref());
+        let nonce = match self.nonce_ah(asset_hub).await {
+            Ok(n) => n,
+            Err(e) => {
+                return self
+                    .dotns_retry(guard, r, &format!("asset hub nonce fetch: {e}"))
+                    .await
+            }
+        };
+
+        match self
+            .submit_dotns(guard, asset_hub, r, &payload, nonce)
+            .await
+        {
+            Ok(()) => {
+                self.next_nonce_ah = Some(nonce + 1);
+                self.dotns_reserve(guard, r).await
+            }
+            Err(e) => {
+                self.next_nonce_ah = None;
+                let reason = e.to_string();
+                let observed = asset_hub
+                    .lite_label_owner(&r.full_username)
+                    .await
+                    .ok()
+                    .flatten();
+                match classify_submit_failure(
+                    &reason,
+                    observed,
+                    candidate,
+                    r.dotns_attempt + 1,
+                    self.config.max_attempts,
+                ) {
+                    SubmitFailureAction::Assign => self.dotns_reserve(guard, r).await,
+                    SubmitFailureAction::Retry => self.dotns_retry(guard, r, &reason).await,
+                    SubmitFailureAction::Fail => {
+                        self.dotns_fail(guard, r, &format!("max attempts reached: {reason}"))
+                            .await
+                    }
+                }
+            }
+        }
+    }
+
+    /// Signs and submits on Asset Hub.
+    ///
+    /// Records `SUBMITTING` before awaiting inclusion, so a crash mid-flight
+    /// reconciles instead of resubmitting.
+    async fn submit_dotns(
+        &self,
+        guard: &Guard,
+        asset_hub: &AssetHubClient,
+        r: &Reservation,
+        payload: &DynamicPayload<Vec<Value>>,
+        nonce: u64,
+    ) -> anyhow::Result<()> {
+        let params = AssetHubExtrinsicParamsBuilder::<AssetHubConfig>::new()
+            .nonce(nonce)
+            .build();
+        let mut tx_client = asset_hub.online().tx().await?;
+        let signed = tx_client
+            .create_signed(payload, &self.signer, params)
+            .await?;
+        let tx_hash = format!("{:?}", signed.hash());
+
+        if !outbox::mark_dotns_submitting(&self.pool, guard, r.id, &tx_hash, r.dotns_attempt + 1)
+            .await?
+        {
+            anyhow::bail!("lease lost before dotns submit");
+        }
+        tracing::info!(
+            id = r.id,
+            username = %r.full_username,
+            nonce,
+            tx = %tx_hash,
+            "submitting dotns reservation"
+        );
+
+        let progress = signed.submit_and_watch().await?;
+        let wait = async {
+            let mut progress = progress;
+            loop {
+                match progress.next().await {
+                    Some(status) => match status? {
+                        TransactionStatus::InFinalizedBlock(in_block) => {
+                            in_block.wait_for_success().await?;
+                            return anyhow::Ok(());
+                        }
+                        TransactionStatus::Error { message } => {
+                            anyhow::bail!("tx error: {message}")
+                        }
+                        TransactionStatus::Invalid { message } => {
+                            anyhow::bail!("tx invalid: {message}")
+                        }
+                        TransactionStatus::Dropped { message } => {
+                            anyhow::bail!("tx dropped: {message}")
+                        }
+                        _ => {}
+                    },
+                    None => anyhow::bail!("tx status stream ended before finalization"),
+                }
+            }
+        };
+        let watched = async move {
+            tokio::pin!(wait);
+            let mut renew = tokio::time::interval(self.config.lease_ttl / 3);
+            renew.tick().await;
+            loop {
+                tokio::select! {
+                    result = &mut wait => return result,
+                    _ = renew.tick() => {
+                        if !self.heartbeat(guard).await? {
+                            anyhow::bail!("lost writer lease during dotns submit");
+                        }
+                    }
+                }
+            }
+        };
+        tokio::time::timeout(self.config.finalize_timeout, watched)
+            .await
+            .map_err(|_| anyhow::anyhow!("finalization timed out"))??;
+        Ok(())
+    }
+
+    /// Reconciles dotNS rows left in `SUBMITTING` by a previous writer.
+    ///
+    /// Skipped while the lane is parked. Those rows keep their `SUBMITTING`
+    /// status and are reconciled by the next lease acquisition that finds Asset
+    /// Hub reachable — never resubmitted blind.
+    async fn reconcile_dotns_submitting(&mut self, guard: &Guard) -> anyhow::Result<()> {
+        let Some((asset_hub, _)) = self.dotns_client().await else {
+            return Ok(());
+        };
+        for r in outbox::dotns_submitting(&self.pool).await? {
+            let Some(candidate) = parse_account(&r.candidate_account_id).ok() else {
+                self.dotns_fail(guard, &r, "invalid candidate SS58").await?;
+                continue;
+            };
+            match asset_hub.lite_label_owner(&r.full_username).await? {
+                Some(owner) if owner == candidate => self.dotns_reserve(guard, &r).await?,
+                _ => {
+                    self.dotns_retry(guard, &r, "reconcile: not yet on Asset Hub, re-queued")
+                        .await?
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn dotns_reserve(&self, guard: &Guard, r: &Reservation) -> anyhow::Result<()> {
+        if !outbox::mark_dotns_reserved(&self.pool, guard, r.id).await? {
+            anyhow::bail!("lease lost while reserving dotns name");
+        }
+        tracing::info!(id = r.id, username = %r.full_username, "dotns reserved on-chain");
+        Ok(())
+    }
+
+    async fn dotns_fail(&self, guard: &Guard, r: &Reservation, reason: &str) -> anyhow::Result<()> {
+        if !outbox::mark_dotns_failed(&self.pool, guard, r.id, reason).await? {
+            anyhow::bail!("lease lost while failing dotns reservation");
+        }
+        tracing::warn!(
+            id = r.id,
+            username = %r.full_username,
+            reason,
+            "dotns reservation failed terminally; the People registration is unaffected"
+        );
+        Ok(())
+    }
+
+    async fn dotns_expire(
+        &self,
+        guard: &Guard,
+        r: &Reservation,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        if !outbox::mark_dotns_expired(&self.pool, guard, r.id, reason).await? {
+            anyhow::bail!("lease lost while expiring dotns reservation");
+        }
+        tracing::warn!(
+            id = r.id,
+            username = %r.full_username,
+            reason,
+            "dotns reservation signature expired before submission"
+        );
+        Ok(())
+    }
+
+    /// Re-queues a row that is not yet submittable, **without** spending an
+    /// attempt.
+    ///
+    /// Distinct from [`Writer::dotns_retry`]: nothing failed. A future-dated
+    /// `signed_at` becomes valid as the clock advances, so counting it against
+    /// `CHAIN_WRITER_MAX_ATTEMPTS` would eventually fail a row that was always
+    /// going to succeed.
+    async fn dotns_defer(
+        &self,
+        guard: &Guard,
+        r: &Reservation,
+        until: OffsetDateTime,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        if !outbox::mark_dotns_retry(&self.pool, guard, r.id, until, r.dotns_attempt, reason)
+            .await?
+        {
+            anyhow::bail!("lease lost while deferring dotns reservation");
+        }
+        tracing::warn!(
+            id = r.id,
+            username = %r.full_username,
+            until = %until,
+            reason,
+            "dotns reservation deferred; not yet within the gateway's skew bound"
+        );
+        Ok(())
+    }
+
+    async fn dotns_retry(
+        &self,
+        guard: &Guard,
+        r: &Reservation,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        let attempt = r.dotns_attempt + 1;
+        let backoff = 2u64.saturating_pow(attempt.clamp(0, 6) as u32);
+        let not_before = OffsetDateTime::now_utc() + time::Duration::seconds(backoff as i64);
+        if !outbox::mark_dotns_retry(&self.pool, guard, r.id, not_before, attempt, reason).await? {
+            anyhow::bail!("lease lost while scheduling dotns retry");
+        }
+        tracing::warn!(
+            id = r.id,
+            attempt,
+            backoff_secs = backoff,
+            reason,
+            "dotns reservation retry scheduled"
+        );
+        Ok(())
+    }
+
     /// Log one `attester_resources` line and warn below the configured floors.
     ///
     /// Under proxy signing the two resources sit on different accounts: the
     /// allowance on the primary, the transaction fee on the signer.
-    async fn log_attester_resources(&self) -> anyhow::Result<()> {
+    async fn log_attester_resources(&mut self) -> anyhow::Result<()> {
         let allowance_account = self.config.attester;
         let allowance = self.chain.attestation_allowance(allowance_account).await?;
         let signer_balance = self.chain.free_balance(self.signer_account.0).await?;
@@ -562,11 +1250,24 @@ impl Writer {
             "attester_resources"
         );
         metrics::gauge!("ibv2_attester_allowance").set(allowance as f64);
-        metrics::gauge!("ibv2_account_free_balance_planck", "role" => "signer")
-            .set(signer_balance as f64);
+        // `chain` is carried by every series in this family, People included.
+        // Prometheus matchers are subset-based: without it, a selector written
+        // as {role="signer"} would match the Asset Hub series too, so a
+        // below-floor alert would fire on the wrong balance and any sum() over
+        // it would silently double.
+        metrics::gauge!(
+            "ibv2_account_free_balance_planck",
+            "role" => "signer",
+            "chain" => "people"
+        )
+        .set(signer_balance as f64);
         if let Some(primary) = primary_balance {
-            metrics::gauge!("ibv2_account_free_balance_planck", "role" => "primary")
-                .set(primary as f64);
+            metrics::gauge!(
+                "ibv2_account_free_balance_planck",
+                "role" => "primary",
+                "chain" => "people"
+            )
+            .set(primary as f64);
         }
 
         if allowance < self.config.allowance_floor {
@@ -584,6 +1285,46 @@ impl Writer {
                 signer = %hex_account(&self.signer_account.0),
                 "chain-writer signer balance below floor; registrations will fail to pay fees"
             );
+        }
+
+        // The Asset Hub lane spends a second, independent budget. That is the
+        // gateway's own allowance on the attester, plus fees on the signer.
+        // reserve_name is Pays::No only when it succeeds. Skipped while the
+        // lane is parked — this pass doubles as its reconnect attempt.
+        if let Some((asset_hub, _)) = self.dotns_client().await {
+            let allowance = asset_hub.attestation_allowance(allowance_account).await?;
+            let ah_signer_balance = asset_hub.free_balance(self.signer_account.0).await?;
+            tracing::info!(
+                allowance,
+                allowance_account = %hex_account(&allowance_account),
+                signer_balance_planck = ah_signer_balance,
+                "dotns_attester_resources"
+            );
+            metrics::gauge!("ibv2_dotns_attester_allowance").set(allowance as f64);
+            metrics::gauge!(
+                "ibv2_account_free_balance_planck",
+                "role" => "signer",
+                "chain" => "asset-hub"
+            )
+            .set(ah_signer_balance as f64);
+
+            if allowance < self.config.allowance_floor {
+                tracing::warn!(
+                    allowance,
+                    floor = self.config.allowance_floor,
+                    allowance_account = %hex_account(&allowance_account),
+                    "dotns gateway allowance below floor; reservations stop at zero"
+                );
+            }
+            if ah_signer_balance < self.config.signer_balance_floor_planck {
+                tracing::warn!(
+                    signer_balance_planck = ah_signer_balance,
+                    floor_planck = self.config.signer_balance_floor_planck,
+                    signer = %hex_account(&self.signer_account.0),
+                    "chain-writer signer balance on Asset Hub below floor; \
+                     failed reservations will not pay their fees"
+                );
+            }
         }
         Ok(())
     }
@@ -630,6 +1371,14 @@ async fn record_outbox_gauges(pool: &PgPool) -> Result<(), sqlx::Error> {
         let status = status.as_str();
         metrics::gauge!("ibv2_outbox_depth", "status" => status).set(depth.depth as f64);
         metrics::gauge!("ibv2_outbox_oldest_age_seconds", "status" => status)
+            .set(depth.oldest_age_secs.unwrap_or(0.0));
+    }
+    // The Asset Hub lane's own depths. A separate series, because a row can
+    // rest in ASSIGNED + DOTNS_FAILED_TERMINAL and one gauge cannot say both.
+    for (status, depth) in outbox::dotns_depth_by_status(pool).await? {
+        let status = status.as_str();
+        metrics::gauge!("ibv2_dotns_outbox_depth", "status" => status).set(depth.depth as f64);
+        metrics::gauge!("ibv2_dotns_outbox_oldest_age_seconds", "status" => status)
             .set(depth.oldest_age_secs.unwrap_or(0.0));
     }
     Ok(())
@@ -695,6 +1444,58 @@ fn build_registration_tx(
         }
         None => dynamic::tx("PeopleLite", "attest", attest_args(r, candidate)),
     }
+}
+
+/// Builds the dotNS reservation extrinsic: `DotnsGateway.reserve_name`.
+///
+/// Optionally wrapped in `Proxy.proxy(real = attester authority, …)`.
+///
+/// Argument order is asserted against the connected runtime's metadata at
+/// startup ([`AssetHubClient::connect`]). A chain running the older
+/// proof-of-ownership variant never reaches this function.
+fn build_reserve_name_tx(
+    r: &Reservation,
+    candidate: &[u8; 32],
+    proxy_for: Option<&[u8; 32]>,
+) -> DynamicPayload<Vec<Value>> {
+    match proxy_for {
+        Some(real) => {
+            let args = vec![
+                Value::unnamed_variant("Id", [Value::from_bytes(real)]),
+                Value::unnamed_variant("None", []),
+                Value::unnamed_variant(
+                    "DotnsGateway",
+                    [Value::unnamed_variant(
+                        "reserve_name",
+                        reserve_name_args(r, candidate),
+                    )],
+                ),
+            ];
+            dynamic::tx("Proxy", "proxy", args)
+        }
+        None => dynamic::tx(
+            "DotnsGateway",
+            "reserve_name",
+            reserve_name_args(r, candidate),
+        ),
+    }
+}
+
+fn reserve_name_args(r: &Reservation, candidate: &[u8; 32]) -> Vec<Value> {
+    let reserved_base_label = match &r.reserved_username {
+        Some(name) => Value::unnamed_variant("Some", [Value::from_bytes(name.as_bytes())]),
+        None => Value::unnamed_variant("None", []),
+    };
+    vec![
+        Value::from_bytes(candidate),
+        sr25519_signature(r.dotns_signature.as_deref().unwrap_or_default()),
+        Value::from_bytes(r.full_username.as_bytes()),
+        Value::from_bytes(&r.identifier_key),
+        reserved_base_label,
+        Value::u128(u128::from(
+            r.dotns_signed_at.unwrap_or_default().unsigned_abs(),
+        )),
+    ]
 }
 
 /// One `PeopleLite.attest` call as a `RuntimeCall` value.
@@ -774,6 +1575,9 @@ mod tests {
             identifier_key: vec![5; 65],
             reserved_username: None,
             attempt: 0,
+            dotns_signature: None,
+            dotns_signed_at: None,
+            dotns_attempt: 0,
         }
     }
 
@@ -1096,5 +1900,273 @@ mod tests {
 
         assert_eq!(payload.pallet_name(), "PeopleLite");
         assert_eq!(payload.call_name(), "attest");
+    }
+    // --- dotNS gateway lane -------------------------------------------------
+
+    /// The window both Asset Hubs configure (`MaxValiditySeconds`, 3 days).
+    const WINDOW: u64 = 259_200;
+    /// `MaxFutureSkewSeconds` on both Asset Hubs.
+    const SKEW: u64 = 30;
+    const SIGNED_AT: i64 = 1_750_000_000;
+
+    /// The freshness bounds the gate tests run against, as read from chain.
+    const BOUNDS: ValidityWindow = ValidityWindow {
+        max_validity_secs: WINDOW,
+        max_future_skew_secs: SKEW,
+    };
+
+    /// A reservation whose stored dotns signature actually verifies. The gate
+    /// tests therefore exercise the real verifier rather than a stub.
+    fn signed_reservation() -> (Reservation, [u8; 32], [u8; 32]) {
+        let keypair = subxt_signer::sr25519::Keypair::from_uri(
+            &subxt_signer::SecretUri::from_str("//dotns-writer-test").expect("valid uri"),
+        )
+        .expect("keypair");
+        let candidate = keypair.public_key().0;
+        let attester = [11u8; 32];
+        let identifier_key = vec![5; 65];
+
+        let message = dotns::reservation_message(
+            &candidate,
+            &attester,
+            b"testing",
+            &identifier_key,
+            None,
+            SIGNED_AT as u64,
+        );
+
+        let mut r = reservation();
+        r.identifier_key = identifier_key;
+        r.dotns_signature = Some(keypair.sign(&message).0.to_vec());
+        r.dotns_signed_at = Some(SIGNED_AT);
+        (r, candidate, attester)
+    }
+
+    /// A well-formed row inside its validity window passes every offline gate.
+    #[test]
+    fn a_fresh_verified_reservation_passes_the_gates() {
+        let (r, candidate, attester) = signed_reservation();
+        assert_eq!(
+            check_dotns_submittable(&r, &candidate, &attester, BOUNDS, SIGNED_AT + 60),
+            Ok(())
+        );
+    }
+
+    /// A failed Asset Hub dial parks the lane instead of stopping the writer,
+    /// backs off rather than re-dialling every pass, and logs once per distinct
+    /// cause rather than once per attempt.
+    #[test]
+    fn a_parked_dotns_lane_backs_off_and_logs_each_cause_once() {
+        let t0 = Instant::now();
+        let mut lane = DotnsLane::Enabled {
+            rpc_url: "wss://example.invalid".to_string(),
+            connected: None,
+            last_error: None,
+            retry_at: None,
+        };
+
+        // A lane that has never dialled dials immediately.
+        assert_eq!(lane.dial_state(t0), DotnsDial::Dial);
+
+        // First failure: worth logging, and no re-dial until the interval is up.
+        assert!(lane.record_dial_failure("unreachable".to_string(), t0));
+        assert_eq!(lane.dial_state(t0), DotnsDial::Skip);
+        assert_eq!(
+            lane.dial_state(t0 + DOTNS_RECONNECT_INTERVAL - Duration::from_secs(1)),
+            DotnsDial::Skip
+        );
+        let t1 = t0 + DOTNS_RECONNECT_INTERVAL;
+        assert_eq!(lane.dial_state(t1), DotnsDial::Dial);
+
+        // Same cause again: silent, but still backs off. This is the shape
+        // assertion case — permanent, and it must not print forever.
+        assert!(!lane.record_dial_failure("unreachable".to_string(), t1));
+        assert_eq!(lane.dial_state(t1), DotnsDial::Skip);
+
+        // A different cause is worth a line.
+        let t2 = t1 + DOTNS_RECONNECT_INTERVAL;
+        assert!(lane.record_dial_failure("reserve_name shape mismatch".to_string(), t2));
+        // ...and the original cause is new again once it has been superseded.
+        let t3 = t2 + DOTNS_RECONNECT_INTERVAL;
+        assert!(lane.record_dial_failure("unreachable".to_string(), t3));
+
+        // A disabled lane never dials, whatever else happens.
+        assert_eq!(DotnsLane::Disabled.dial_state(t0), DotnsDial::Skip);
+        assert!(!DotnsLane::Disabled.record_dial_failure("ignored".to_string(), t0));
+    }
+
+    /// The gateway bounds `signed_at` on **both** sides, and the writer
+    /// enforces the chain's own `MaxFutureSkewSeconds` rather than trusting
+    /// identity-api's `DOTNS_MAX_FUTURE_SKEW_SECS` to match it. Unlike every
+    /// other reject this one is not terminal: the row becomes submittable as
+    /// the clock advances, so it reports when.
+    #[test]
+    fn a_future_dated_reservation_is_deferred_not_failed() {
+        let (r, candidate, attester) = signed_reservation();
+
+        // Inside the tolerance: submittable even though the chain's clock has
+        // not reached signed_at.
+        assert_eq!(
+            check_dotns_submittable(&r, &candidate, &attester, BOUNDS, SIGNED_AT - SKEW as i64),
+            Ok(())
+        );
+
+        // One second beyond it. Deferred until the skew bound lets it through,
+        // not failed — nothing about the row is wrong.
+        assert_eq!(
+            check_dotns_submittable(
+                &r,
+                &candidate,
+                &attester,
+                BOUNDS,
+                SIGNED_AT - SKEW as i64 - 1
+            ),
+            Err(DotnsReject::FutureDated {
+                signed_at: SIGNED_AT,
+                submittable_at: SIGNED_AT - SKEW as i64,
+            })
+        );
+
+        // The skew gate runs before the signature check, so a future-dated row
+        // is deferred on its timestamp rather than reported as a bad signature
+        // the client would try to re-sign.
+        assert_eq!(
+            check_dotns_submittable(
+                &r,
+                &candidate,
+                &[99; 32],
+                BOUNDS,
+                SIGNED_AT - SKEW as i64 - 1
+            ),
+            Err(DotnsReject::FutureDated {
+                signed_at: SIGNED_AT,
+                submittable_at: SIGNED_AT - SKEW as i64,
+            })
+        );
+
+        // A chain reporting an absurd skew bound must not overflow the
+        // comparison into rejecting everything.
+        let absurd = ValidityWindow {
+            max_validity_secs: WINDOW,
+            max_future_skew_secs: u64::MAX,
+        };
+        assert_eq!(
+            check_dotns_submittable(&r, &candidate, &attester, absurd, SIGNED_AT),
+            Ok(())
+        );
+    }
+
+    /// Each gate produces its own terminal state. `EXPIRED` is separate from
+    /// `FAILED_TERMINAL`. The client can act on it by re-signing.
+    #[test]
+    fn each_offline_gate_maps_to_its_own_terminal_state() {
+        let (r, candidate, attester) = signed_reservation();
+
+        // Aged out. Reported as expired even one second past the bound.
+        assert_eq!(
+            check_dotns_submittable(
+                &r,
+                &candidate,
+                &attester,
+                BOUNDS,
+                SIGNED_AT + WINDOW as i64 + 1
+            ),
+            Err(DotnsReject::Expired {
+                signed_at: SIGNED_AT,
+                deadline_secs: WINDOW
+            })
+        );
+        // Still valid on the final second of the window.
+        assert_eq!(
+            check_dotns_submittable(&r, &candidate, &attester, BOUNDS, SIGNED_AT + WINDOW as i64),
+            Ok(())
+        );
+
+        // A different attester than the one the client bound its signature to.
+        assert_eq!(
+            check_dotns_submittable(&r, &candidate, &[99; 32], BOUNDS, SIGNED_AT),
+            Err(DotnsReject::BadSignature)
+        );
+
+        // No dotns block at all. Not in the lane.
+        assert_eq!(
+            check_dotns_submittable(&reservation(), &candidate, &attester, BOUNDS, SIGNED_AT),
+            Err(DotnsReject::NotInLane)
+        );
+
+        // A label with no digit suffix cannot be a valid lite label.
+        let mut no_digits = r.clone();
+        no_digits.full_username = "testing".to_string();
+        assert!(matches!(
+            check_dotns_submittable(&no_digits, &candidate, &attester, BOUNDS, SIGNED_AT),
+            Err(DotnsReject::UnbuildableLabel(_))
+        ));
+
+        // BaseLabel is BoundedVec<u8, 32> on both ends of the call.
+        let mut long_label = r.clone();
+        long_label.full_username = format!("{}.42", "a".repeat(30));
+        assert!(matches!(
+            check_dotns_submittable(&long_label, &candidate, &attester, BOUNDS, SIGNED_AT),
+            Err(DotnsReject::UnbuildableLabel(_))
+        ));
+
+        // reservedUsername is unbounded at intake today. The writer catches it
+        // rather than failing to build the extrinsic.
+        let mut long_reserved = r.clone();
+        long_reserved.reserved_username = Some("a".repeat(33));
+        assert!(matches!(
+            check_dotns_submittable(&long_reserved, &candidate, &attester, BOUNDS, SIGNED_AT),
+            Err(DotnsReject::UnbuildableReserved(_))
+        ));
+    }
+
+    /// An expired row is reported as expired even when its signature is also
+    /// wrong. Expiry is the state the client can recover from.
+    #[test]
+    fn expiry_is_reported_ahead_of_a_bad_signature() {
+        let (mut r, candidate, attester) = signed_reservation();
+        r.dotns_signature = Some(vec![0; 64]);
+        assert!(matches!(
+            check_dotns_submittable(
+                &r,
+                &candidate,
+                &attester,
+                BOUNDS,
+                SIGNED_AT + WINDOW as i64 + 1
+            ),
+            Err(DotnsReject::Expired { .. })
+        ));
+    }
+
+    #[test]
+    fn direct_reservation_targets_the_gateway_pallet() {
+        let (r, candidate, _) = signed_reservation();
+        let payload = build_reserve_name_tx(&r, &candidate, None);
+
+        assert_eq!(payload.pallet_name(), "DotnsGateway");
+        assert_eq!(payload.call_name(), "reserve_name");
+        // One argument per `RESERVE_NAME_FIELDS` entry. Same order.
+        assert_eq!(payload.call_data().len(), dotns::RESERVE_NAME_FIELDS.len());
+        assert_eq!(payload.call_data(), &reserve_name_args(&r, &candidate));
+    }
+
+    #[test]
+    fn proxied_reservation_wraps_reserve_name_directly() {
+        let (r, candidate, _) = signed_reservation();
+        let proxy_for = [8; 32];
+        let payload = build_reserve_name_tx(&r, &candidate, Some(&proxy_for));
+
+        assert_eq!(payload.pallet_name(), "Proxy");
+        assert_eq!(payload.call_name(), "proxy");
+        assert_eq!(
+            payload.call_data()[2],
+            Value::unnamed_variant(
+                "DotnsGateway",
+                [Value::unnamed_variant(
+                    "reserve_name",
+                    reserve_name_args(&r, &candidate)
+                )]
+            )
+        );
     }
 }

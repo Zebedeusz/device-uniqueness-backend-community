@@ -57,10 +57,80 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
 - `RETRY_AFTER` retries automatically (max 8 attempts); `FAILED_TERMINAL` never retries — inspect `last_error`.
 - Independent check: query `Resources.UsernameOwnerOf("<base>.<NN>")` on the People Chain.
 
+## dotNS gateway lane (Asset Hub)
+
+A second, independent state machine on the same row. `status` is the People
+registration. `dotns_status` is the Asset Hub reservation. **A dotNS failure never
+changes `status`.** `ASSIGNED` + `DOTNS_FAILED_TERMINAL` means the username works
+and the dotNS name does not. **Opt-in** (`DOTNS_GATEWAY_ENABLED`, default off);
+only `previewnet` turns it on, because `ASSET_HUB_RPC_URL` must name the Asset
+Hub of the same network as `PEOPLE_RPC_URL` and PreviewNet's is the only one
+running the `signed_at` `reserve_name`. `paseo-next-v2` leaves it alone pending
+its Asset Hub runtime upgrade.
+
+```bash
+sudo docker compose exec -T postgres psql -U identity -d identity \
+  -c "select id, full_username, status, dotns_status, dotns_attempt, dotns_tx_hash,
+             left(dotns_last_error,120) as err
+      from username_reservations where dotns_status is not null
+      order by id desc limit 10;"
+```
+
+- `dotns_status` `NULL` = the request carried no `dotns` block, or the row predates
+  the lane. There is no backfill; those are never submitted.
+- `EXPIRED` is **not** a bug to retry. `reserve_name` enforces a 3-day window on the
+  client's `signedAt`, and **the backend cannot re-sign** — only the client holds the
+  candidate key. It means the row sat unsubmitted for days: writer down, or parked
+  in `QUEUED`. The client must re-register to get a dotNS name.
+- `FAILED_TERMINAL` — inspect `dotns_last_error`. Common causes: `dotns signature
+  does not verify`, meaning the client bound it to a different attester than
+  `GET /api/v1/attester` returns; `lite label reserved by another account`; or a
+  contract revert.
+- `ABANDONED` — the **People** half reached `FAILED_TERMINAL`, so this half was
+  never attempted. Nothing is wrong with the reservation; there is no username to
+  attach a name to. Diagnose the People `last_error`, not `dotns_last_error`. The
+  lane closes itself in the same statement that fails the People row, because
+  `claim_dotns_due` only takes rows already `ASSIGNED` — a row left `PENDING` here
+  would be unclaimable forever while still inflating the `PENDING` gauges below.
+- Independent check: query `DotnsGateway.LiteLabelOwner("<base>.<NN>")` on Asset Hub.
+- `RETRY_AFTER` with a `dotns_last_error` about a **future-dated** signature is not
+  a failure: the client's `signedAt` is further ahead of the chain's clock than
+  `MaxFutureSkewSeconds` allows. It clears itself once `dotns_not_before` passes,
+  and costs no attempt. A steady stream of these means client clock skew.
+- Watch `ibv2_dotns_lane_connected` (`1` up, `0` parked), `ibv2_dotns_outbox_depth{status}`,
+  `ibv2_dotns_attester_allowance`, and
+  `ibv2_account_free_balance_planck{role="signer",chain="asset-hub"}`. A parked lane
+  with a rising `PENDING` depth is the expected shape while Asset Hub is down; a
+  connected lane with a rising `PENDING` depth is not. The allowance
+  is a **second budget**, separate from People's. Either hitting zero stops
+  registration in its own half. `reserve_name` is fee-free only when it succeeds, so
+  a run of failures drains the signer's Asset Hub balance.
+- `ibv2_account_free_balance_planck` carries `chain` on **every** series, People
+  included. A selector written as `{role="signer"}` alone matches both chains —
+  always pin `chain="people"` or `chain="asset-hub"` in alerts and dashboards.
+
 ## Writer rules
 
-- **Exactly one instance.** One signer = one nonce lane; never `--scale identity-chain-writer`.
-- Restart-safe: reconciles `SUBMITTING` rows against chain state instead of resubmitting.
+- **Exactly one instance.** A nonce lane is (signing account, chain). Never
+  `--scale identity-chain-writer`. It holds two lanes on one account, People and
+  Asset Hub. That is safe because nonces are per chain, and both sit behind the
+  same single lease.
+- Restart-safe: reconciles `SUBMITTING` rows on both chains against chain state
+  instead of resubmitting.
+- **One dotNS condition refuses to start:** `DOTNS_GATEWAY_ENABLED` on with no
+  `ASSET_HUB_RPC_URL`. That is a config error — identity-api would accept blocks
+  nothing submits — and is not restart-fixable; correct the `.env`.
+  The attester identity needs no separate check: `ATTESTER_ACCOUNT` names the
+  authority and proxying is derived from it, so the writer's signing origin
+  equals the published attester on both chains by construction.
+- **Everything else dotNS parks the lane, not the writer.** Asset Hub is dialled
+  on the first pass rather than at boot, and re-dialled every 30s while down, so
+  an unreachable endpoint or a `reserve_name` shape mismatch (Paseo next still
+  runs the older proof-of-ownership variant) leaves rows in `PENDING` and keeps
+  People registrations flowing. Watch `ibv2_dotns_lane_connected`: `1` = up,
+  `0` = parked, absent = lane disabled. The parking `warn!` names the cause and
+  is logged once per distinct cause, not once per pass — check the first
+  occurrence, not the latest.
 - Restart alone: `sudo docker compose restart identity-chain-writer`.
 
 ## Config / secrets

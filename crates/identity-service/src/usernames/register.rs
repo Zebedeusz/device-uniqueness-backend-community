@@ -164,6 +164,8 @@ const MSG_DIGITS: &str = "Digits must be between 01-99";
 const MSG_INVALID_SS58: &str = "Invalid ss58 address.";
 const MSG_INVALID_SIGNATURE: &str = "Invalid signature.";
 const MSG_DOTNS_DISABLED: &str = "dotNS gateway is not enabled in this environment.";
+/// `BaseLabel` is `BoundedVec<u8, ConstU32<32>>` in the dotns-gateway pallet.
+const MAX_DOTNS_LABEL_LEN: usize = 32;
 const PATTERN_BASE: &str = "/^([a-z]{6,})$/";
 const PATTERN_HEX_STRING: &str = "/^(0x)?[a-fA-F0-9]+$/";
 const DEVICE_TOKEN_HEADER: &str = "Device-Token-iOS";
@@ -979,31 +981,69 @@ fn validate_register(
             }
         }
 
-        if let Some((_, signed_at, _)) = &dotns {
+        if let Some((_signature, signed_at, reserved_username)) = &dotns {
             if !config.dotns_gateway_enabled {
                 errors.push(FieldError {
                     detail: MSG_DOTNS_DISABLED.to_string(),
                     pointer: "#/dotns".to_string(),
                 });
-            } else if let Some(signed_at) = signed_at {
-                let now = time::OffsetDateTime::now_utc().unix_timestamp();
-                let skew = config.dotns_max_future_skew_secs as i64;
-                let max_age = config.dotns_intake_freshness_max_age_secs as i64;
-                if *signed_at > now + skew {
-                    errors.push(FieldError {
-                        detail: format!("signedAt is in the future (tolerance {skew}s)."),
-                        pointer: "#/dotns/signedAt".to_string(),
-                    });
+            } else {
+                if let Some(signed_at) = signed_at {
+                    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                    let skew = config.dotns_max_future_skew_secs as i64;
+                    let max_age = config.dotns_intake_freshness_max_age_secs as i64;
+                    if *signed_at > now + skew {
+                        errors.push(FieldError {
+                            detail: format!("signedAt is in the future (tolerance {skew}s)."),
+                            pointer: "#/dotns/signedAt".to_string(),
+                        });
+                    }
+                    if now - signed_at > max_age {
+                        errors.push(FieldError {
+                            detail: format!(
+                                "signedAt is older than the intake freshness bound ({max_age}s). \
+                                 Re-sign with a fresh timestamp and resubmit."
+                            ),
+                            pointer: "#/dotns/signedAt".to_string(),
+                        });
+                    }
                 }
-                if now - signed_at > max_age {
-                    errors.push(FieldError {
-                        detail: format!(
-                            "signedAt is older than the intake freshness bound ({max_age}s). \
-                             Re-sign with a fresh timestamp and resubmit."
-                        ),
-                        pointer: "#/dotns/signedAt".to_string(),
-                    });
+
+                // `reservedUsername` is relayed verbatim into `reserve_name`'s
+                // `Option<BaseLabel>`, a `BoundedVec<u8, 32>`. A longer value
+                // makes the extrinsic unbuildable. Rejecting it here rather
+                // than letting the writer discover it.
+                if let Some(reserved) = reserved_username {
+                    if reserved.len() > MAX_DOTNS_LABEL_LEN {
+                        errors.push(FieldError {
+                            detail: format!(
+                                "reservedUsername exceeds the maximum label length: \
+                                 ({MAX_DOTNS_LABEL_LEN})."
+                            ),
+                            pointer: "#/dotns/reservedUsername".to_string(),
+                        });
+                    }
                 }
+
+                // The reservation signature is deliberately **not** verified
+                // here, and an unverifiable one is deliberately not a 400.
+                //
+                // The dotNS half is optional and independent: the writer's own
+                // policy is that `ASSIGNED` + `DOTNS_FAILED_TERMINAL` is a
+                // legitimate resting state, where the username works and the
+                // dotNS name does not. Rejecting the whole request would cost
+                // the caller its **People username** over a problem in the
+                // optional half — which is what a client still signing an older
+                // reservation payload would get, having previously received a
+                // 202 and a working username. The writer runs the same check
+                // (`check_dotns_submittable`) before spending an extrinsic, so
+                // nothing mis-shaped reaches the chain either way; the
+                // difference is only whether the caller keeps its username.
+                //
+                // The gates above stay 400s: they reject blocks that are
+                // *malformed* (missing fields, an over-long label, a timestamp
+                // outside the intake bounds) rather than blocks whose signature
+                // merely does not verify.
             }
         }
     }
@@ -1058,10 +1098,12 @@ fn decode_prefixed_hex(value: Option<&str>) -> Vec<u8> {
 /// `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey`.
 const POP_REGISTER_PREFIX: &[u8] = b"pop:people-lite:register using";
 
-/// Verify the caller controls `candidate_pubkey`: the candidate's sr25519 key
-/// must have signed `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey`. Uses
-/// `subxt_signer` (schnorrkel with the Substrate signing context), symmetric
-/// with the shipping Polkadot wallets and the on-chain verifier.
+/// Verifies the caller controls `candidate_pubkey`.
+///
+/// The candidate's sr25519 key must have signed
+/// `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey`. Uses `subxt_signer`
+/// (schnorrkel with the Substrate signing context). Symmetric with the shipping
+/// Polkadot wallets and the on-chain verifier.
 fn verify_candidate_signature(
     candidate_pubkey: &[u8; 32],
     candidate_signature: &[u8],
@@ -1331,15 +1373,149 @@ mod tests {
              Re-sign with a fresh timestamp and resubmit."
         );
 
+        // The freshness cases above all carry a junk signature. Their 400 still
+        // names `#/dotns/signedAt`. The verifier only runs once every input it
+        // commits to is itself valid, so one failure means one cause.
+
         let mut valid = valid_body();
-        valid["dotns"] = json!({
-            "signature": format!("0x{}", "ab".repeat(64)),
-            "signedAt": now,
-            "reservedUsername": "reservedname"
-        });
+        valid["dotns"] = dotns_block(now, Some("reservedname"), &enabled);
         let parsed = validate_register(&valid, &enabled).expect("valid dotns");
         let dotns = parsed.dotns.expect("dotns parsed");
         assert_eq!(dotns.reserved_username.as_deref(), Some("reservedname"));
+    }
+
+    /// Builds a `dotns` block signed by `//Alice`, the `valid_body` candidate,
+    /// for the configured attester. Exactly as a client would.
+    fn dotns_block(
+        signed_at: i64,
+        reserved: Option<&str>,
+        config: &crate::config::Config,
+    ) -> serde_json::Value {
+        use subxt_signer::sr25519::Keypair;
+        use subxt_signer::SecretUri;
+
+        let keypair = Keypair::from_uri(&SecretUri::from_str("//Alice").unwrap()).unwrap();
+        let message = crate::dotns::reservation_message(
+            &keypair.public_key().0,
+            &config.attester_account,
+            b"aliceuser",
+            &[5u8; 65],
+            reserved.map(str::as_bytes),
+            signed_at as u64,
+        );
+        let mut block = json!({
+            "signature": format!("0x{}", hex::encode(keypair.sign(&message).0)),
+            "signedAt": signed_at,
+        });
+        if let Some(reserved) = reserved {
+            block["reservedUsername"] = json!(reserved);
+        }
+        block
+    }
+
+    /// A dotns signature that does not verify is **accepted** at intake.
+    ///
+    /// The dotNS half is optional and independent, and the writer's own policy
+    /// is that `ASSIGNED` + `DOTNS_FAILED_TERMINAL` is a legitimate resting
+    /// state. A 400 here would cost the caller its People username over a
+    /// problem in the optional half — the exact regression a client still
+    /// signing an older reservation payload would hit, having previously got a
+    /// 202 and a working username. `check_dotns_submittable` in the writer is
+    /// what stops a bad signature reaching the chain, before any fee is spent.
+    #[test]
+    fn an_unverifiable_dotns_signature_still_yields_a_username() {
+        let config = config();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+        // Outright junk in the signature field.
+        let mut junk = valid_body();
+        junk["dotns"] = json!({ "signature": format!("0x{}", "ab".repeat(64)), "signedAt": now });
+        let parsed = validate_register(&junk, &config).expect("junk dotns signature is accepted");
+        assert_eq!(parsed.username, "aliceuser");
+        assert!(
+            parsed.dotns.is_some(),
+            "the block is stored, so the writer decides its fate"
+        );
+
+        // Signed for a different attester than GET /api/v1/attester returns.
+        let mut other_attester = self::config();
+        other_attester.attester_account = [0xbb; 32];
+        let mut wrong = valid_body();
+        wrong["dotns"] = dotns_block(now, None, &other_attester);
+        assert!(validate_register(&wrong, &config).is_ok());
+
+        // Committing to a `reservedUsername` the request does not carry.
+        let mut reserved_mismatch = valid_body();
+        let mut block = dotns_block(now, Some("reservedname"), &config);
+        block.as_object_mut().unwrap().remove("reservedUsername");
+        reserved_mismatch["dotns"] = block;
+        assert!(validate_register(&reserved_mismatch, &config).is_ok());
+    }
+
+    /// Softening the signature check does not soften the rest of the block.
+    /// A *malformed* dotns block is still a 400: those reject requests that
+    /// cannot be relayed at all, rather than ones whose signature merely fails
+    /// to verify.
+    #[test]
+    fn a_malformed_dotns_block_is_still_rejected() {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+        // Over-long reservedUsername: unbuildable as `BoundedVec<u8, 32>`.
+        let mut too_long = valid_body();
+        too_long["dotns"] = json!({
+            "signature": format!("0x{}", "ab".repeat(64)),
+            "signedAt": now,
+            "reservedUsername": "x".repeat(MAX_DOTNS_LABEL_LEN + 1),
+        });
+        assert_eq!(
+            errors_of(too_long)
+                .into_iter()
+                .map(|(pointer, _)| pointer)
+                .collect::<Vec<_>>(),
+            ["#/dotns/reservedUsername".to_string()]
+        );
+
+        // Outside the intake freshness bound.
+        let mut stale = valid_body();
+        stale["dotns"] = json!({
+            "signature": format!("0x{}", "ab".repeat(64)),
+            "signedAt": now - 86_400,
+        });
+        assert_eq!(
+            errors_of(stale)
+                .into_iter()
+                .map(|(pointer, _)| pointer)
+                .collect::<Vec<_>>(),
+            ["#/dotns/signedAt".to_string()]
+        );
+    }
+
+    /// `reservedUsername` is relayed into a `BoundedVec<u8, 32>`. A longer one
+    /// makes the extrinsic unbuildable, so intake rejects it. It is reported on
+    /// its own pointer. The signature check is not also run against it.
+    #[test]
+    fn an_oversized_reserved_username_is_rejected_before_the_signature_check() {
+        let config = config();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let oversized = "a".repeat(MAX_DOTNS_LABEL_LEN + 1);
+
+        let mut body = valid_body();
+        body["dotns"] = dotns_block(now, Some(&oversized), &config);
+        assert_eq!(
+            errors_of(body),
+            [(
+                "#/dotns/reservedUsername".to_string(),
+                format!(
+                    "reservedUsername exceeds the maximum label length: ({MAX_DOTNS_LABEL_LEN})."
+                )
+            )]
+        );
+
+        // The 32-byte boundary itself is accepted.
+        let mut at_bound = valid_body();
+        let exact = "a".repeat(MAX_DOTNS_LABEL_LEN);
+        at_bound["dotns"] = dotns_block(now, Some(&exact), &config);
+        assert!(validate_register(&at_bound, &config).is_ok());
     }
 
     #[test]

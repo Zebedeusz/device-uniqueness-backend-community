@@ -34,7 +34,7 @@ and both WARNs fired (`attestation allowance below floor`, `signer balance below
 - [x] Add `metrics` + Prometheus exporter, serve `/metrics` on port 9090 (not through Caddy — the edge is the only thing that publishes host ports)
       — shared `http_common::metrics::spawn`, installed by all ten processes including the headless workers
 - [x] Export: allowance, balances, finalized head, indexer checkpoint lag, outbox depth, oldest queued row
-      (`ibv2_attester_allowance`, `ibv2_account_free_balance_planck{role}`,
+      (`ibv2_attester_allowance`, `ibv2_account_free_balance_planck{role,chain}`,
       `ibv2_chain_finalized_head_block`, `ibv2_indexer_checkpoint_lag_blocks`,
       `ibv2_outbox_depth{status}`, `ibv2_outbox_oldest_age_seconds{status}`)
 - [x] Add Prometheus in its own compose project on a private network

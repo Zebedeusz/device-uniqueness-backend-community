@@ -54,9 +54,18 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       ENFORCE_AUTH: ${ENFORCE_AUTH:-false}
       QUEUE_ENABLED: ${QUEUE_ENABLED:-false}
-      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-true}
+      # Off by default: turn it on only where ASSET_HUB_RPC_URL names the Asset
+      # Hub of the SAME network as PEOPLE_RPC_URL. Today that is PreviewNet
+      # alone — the only Asset Hub running the signed_at reserve_name shape —
+      # while PEOPLE_RPC_URL defaults to Paseo next. On, the writer would claim
+      # LiteLabelOwner on one network for usernames attested on another: a
+      # global claim, and unrecoverable, because only the client can re-sign.
+      # Both halves move together; intake accepting blocks the writer never
+      # submits is the other gap this pair closes.
+      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-false}
       DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: ${DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS:-600}
-      DOTNS_MAX_FUTURE_SKEW_SECS: ${DOTNS_MAX_FUTURE_SKEW_SECS:-600}
+      # Matches the gateway pallet's MaxFutureSkewSeconds; see .env.example.
+      DOTNS_MAX_FUTURE_SKEW_SECS: ${DOTNS_MAX_FUTURE_SKEW_SECS:-30}
       # Prometheus exporter, scraped on the private metrics network only.
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
@@ -104,6 +113,20 @@ services:
       CHAIN_WRITER_BATCH_SIZE: ${CHAIN_WRITER_BATCH_SIZE:-25}
       CHAIN_WRITER_FINALIZE_SECS: ${CHAIN_WRITER_FINALIZE_SECS:-120}
       CHAIN_WRITER_MAX_ATTEMPTS: ${CHAIN_WRITER_MAX_ATTEMPTS:-8}
+      # dotNS gateway lane (Asset Hub). Off by default, and must match
+      # identity-api's DOTNS_GATEWAY_ENABLED. That side gates intake, this side
+      # submits. A split value means blocks are accepted that nothing ever
+      # writes. On + no ASSET_HUB_RPC_URL = startup abort, by design; every
+      # other dotNS failure parks the lane rather than the writer, including a
+      # reserve_name shape the connected runtime does not match.
+      # ATTESTER_ACCOUNT above covers both chains: proxying is derived from it,
+      # so the account clients bind their signatures to is this writer's
+      # signing origin by construction.
+      # The URL below is a convenience default, NOT an instruction to enable
+      # the lane: it must name the Asset Hub of the same network PEOPLE_RPC_URL
+      # points at, or the writer claims labels on the wrong chain.
+      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-false}
+      ASSET_HUB_RPC_URL: ${ASSET_HUB_RPC_URL:-wss://previewnet.substrate.dev/asset-hub}
       # Must match identity-api's QUEUE_ENABLED: on = QUEUED rows are never
       # drained here (stranded-queue warning only); off = janitor drain.
       QUEUE_ENABLED: ${QUEUE_ENABLED:-false}
