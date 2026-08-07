@@ -47,3 +47,25 @@ Push to `main`. CI tests, builds the image, and updates the test server
 
 - Live: <https://identity.dotspark.app> · [API reference](https://identity.dotspark.app/docs) · PreviewNet: <https://identity-previewnet.dotspark.app>
 - From-zero setup: [docs/deploy.md](docs/deploy.md) · Operations: [docs/runbook.md](docs/runbook.md)
+
+## Releases
+
+Images are published to `ghcr.io/paritytech/identity-backend-rust`, multi-arch
+(amd64 + arm64). Three kinds of tag, and the difference matters:
+
+| Tag | Points at | Use it for |
+| --- | --- | --- |
+| `vX.Y.Z` | that release, forever | anything reproducible — pin this |
+| `stable` | the newest release | "track releases, not `main`" |
+| `latest` | tip of `main` | our own test server; **contains unreleased work** |
+
+Every service runs from the same image, wired together by `docker-compose.yml`;
+each release attaches an `ibv2-compose-*.tar.gz` with that file, `.env.example`
+and the gateway config, so a standalone stack has something to start from.
+
+Changes per release: [CHANGELOG.md](CHANGELOG.md). Pre-1.0, breaking changes bump
+the **minor** — `0.1.x` → `0.2.0` can break you.
+
+To cut a release: bump `version` under `[workspace.package]`, add the matching
+`## [X.Y.Z]` changelog section, merge, then push a `vX.Y.Z` tag. CI refuses a tag
+that disagrees with either ([workflow](.github/workflows/release.yml)).

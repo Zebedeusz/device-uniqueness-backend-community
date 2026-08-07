@@ -11,11 +11,41 @@ jobs:
   check:
     uses: ./.github/workflows/check.yml
 
+  # Fails before the (long) image builds if the tag and the workspace version
+  # disagree, so `stable` and the changelog can never point at an image whose
+  # binaries report a different version. Releasing is therefore: bump
+  # [workspace.package] version + write the changelog entry, merge, then tag.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        run: |
+          tag='${{ github.ref_name }}'
+          manifest=$(grep -m1 -oP '^version = "\K[^"]+' Cargo.toml)
+          if [ "$tag" != "v$manifest" ]; then
+            echo "::error::tag $tag disagrees with Cargo.toml version $manifest"
+            echo "bump [workspace.package] version to ${tag#v}, or retag" >&2
+            exit 1
+          fi
+          echo "version=$manifest" >> "$GITHUB_OUTPUT"
+
+      # A release the changelog does not describe is the failure mode this whole
+      # change exists to prevent, so it is a hard gate rather than a warning.
+      - name: Require a changelog entry
+        run: |
+          grep -qF '## [${{ steps.check.outputs.version }}]' CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has no '## [${{ steps.check.outputs.version }}]' section"
+            exit 1
+          }
+
   # Builds one architecture per native runner, pushing by digest only (no tags).
   # `manifest` joins the digests into the tagged image. Native runners replace
   # QEMU emulation, which took over an hour for arm64 alone.
   build:
-    needs: check
+    needs: [check, version]
     strategy:
       fail-fast: false
       matrix:
@@ -78,8 +108,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Exact version only. No `latest` (it tracks `main`) and no moving major /
-      # minor tags, which would jump across breaking changes while pre-1.0.
+      # Exact version, plus `stable` for consumers who want "newest release"
+      # without pinning. No moving major / minor tags, which would jump across
+      # breaking changes while pre-1.0.
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -88,9 +119,13 @@ jobs:
           # jump to a release. metadata-action would otherwise add it for any
           # semver tag.
           flavor: latest=false
+          # `stable` is the release-lane counterpart of `latest`. Guarded on the
+          # tag having no `-`, so a pre-release (v0.2.0-rc1) publishes its exact
+          # version without moving `stable` off the last stable image.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
+            type=raw,value=stable,enable=${{ !contains(github.ref_name, '-') }}
       - name: Create and push manifest list
         working-directory: ${{ runner.temp }}/digests
         run: |
@@ -99,3 +134,65 @@ jobs:
             $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
       - name: Verify both architectures are present
         run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"
+
+  # The human-facing half of a release: notes lifted from CHANGELOG.md, plus the
+  # compose bundle — the image alone does not say how the services are wired
+  # together, and a forked stack needs the gateway and env template to stand up.
+  # Runs after `manifest`, so a release never advertises an image that failed to
+  # publish.
+  release:
+    needs: [version, manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          # The section body for this version: everything between its heading
+          # and the next `## `, which is the previous release. Link definitions
+          # live at the end of the file, outside every section, so they are
+          # appended separately — without them the `[#31]` references in the
+          # notes would render as literal text.
+          awk -v heading="## [$VERSION]" '
+            /^\[[^]]+\]: / { next }
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > section.md
+          [ -s section.md ] || {
+            echo "::error::the CHANGELOG.md section for $VERSION is empty"
+            exit 1
+          }
+          {
+            printf '```bash\ndocker pull %s:%s\n```\n' "$IMAGE" "${{ github.ref_name }}"
+            cat section.md
+            grep -E '^\[[^]]+\]: ' CHANGELOG.md
+          } > notes.md
+
+      - name: Bundle the compose files
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tar czf "ibv2-compose-$VERSION.tar.gz" \
+            docker-compose.yml .env.example gateway
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # A `-` in the tag (v0.2.0-rc1) is the same pre-release signal the
+          # `stable` tag is guarded on, so the two never disagree.
+          prerelease=''
+          case "$TAG" in *-*) prerelease='--prerelease' ;; esac
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            $prerelease \
+            "ibv2-compose-$VERSION.tar.gz"

@@ -4,7 +4,7 @@
 # Transport-shape only: no domain logic, no DB schema, no chain types.
 [package]
 name = "http-common"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
