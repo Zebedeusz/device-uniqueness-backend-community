@@ -64,7 +64,7 @@ the apps use the synchronous claim flow instead.)
   People transaction-extension pipeline — including the no-op encodings for `GameAsInvited` and
   `AsProofOfInkParticipant` (`&[0]`) that the legacy TS signer hand-patched as
   `VerifyMultiSignature`-style extensions. `identity-service` has the working chain client,
-  signer/proxy submission (`CHAIN_WRITER_PROXY_FOR`), outbox worker, tower-http stack, fail-fast
+  signer/proxy submission (derived from `ATTESTER_ACCOUNT`), outbox worker, tower-http stack, fail-fast
   config, and auto-run sqlx migrations to copy from.
 - ✅ Demo: `identity-chain-writer` submits and finalizes People Chain calls on Paseo Next v2 today.
 - Gaps: the vendored metadata is trimmed to

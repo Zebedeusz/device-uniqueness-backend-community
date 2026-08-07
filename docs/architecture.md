@@ -191,8 +191,18 @@ Operational invariants an agent must respect when touching the code.
 - **`identity-chain-writer` is single-instance by design** — one signer = one nonce lane. The
   `writer_lease` table is a best-effort deploy-overlap guard only; the chain nonce + outbox
   reconciliation is the real serializer. Never run two writers / never scale it.
-- **Signing:** the writer signs as a least-privilege `Proxy` of a cold attester primary when
-  `CHAIN_WRITER_PROXY_FOR` is set, else directly as its SURI.
+- **Signing:** one canonical `ATTESTER_ACCOUNT` (SS58) names the attester authority, and **proxying
+  is derived, not configured**: the writer signs `PeopleLite.attest` directly when that account is
+  its own signer, and wraps it in `Proxy.proxy(real = authority, …)` otherwise. A proxied call's
+  real outcome is `Proxy.ProxyExecuted`, not the extrinsic's — the outer extrinsic succeeds even
+  when the inner call is rejected — so the writer inspects `ProxyExecuted` before advancing a row to
+  `ASSIGNED`, recording any rejection as `Pallet::Variant` (resolved through the vendored metadata).
+  `ASSIGNED` therefore always means the registration is on chain.
+- **identity-api and identity-chain-writer read the same `ATTESTER_ACCOUNT`.** Clients fetch
+  `GET /api/v1/attester` and bind their consumer-registration signature to it, so the published key
+  and the attesting account are one value by construction and cannot drift into
+  `PeopleLite::InvalidAttestationSignature`. The API derives the `0x`+hex wire form; nothing
+  configures it separately.
 - **`chain-types` is the only place chain types live.** Static codegen from vendored metadata at
   `crates/chain-types/metadata/people.scale`; online transport + signing live in
   `identity-service::chain`, never in `chain-types`. Regenerate with the `subxt metadata …` command

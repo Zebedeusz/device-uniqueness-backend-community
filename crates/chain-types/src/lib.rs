@@ -27,6 +27,19 @@ pub mod people {}
 
 pub use subxt;
 
+/// The vendored metadata [`people`] is generated from, decoded once.
+///
+/// Same bytes as the codegen, so pallet and error indices agree with the typed
+/// surface. Lets a service resolve a runtime `DispatchError` to its
+/// `Pallet::Variant` names without a chain round-trip.
+pub fn metadata() -> &'static subxt::Metadata {
+    static METADATA: std::sync::LazyLock<subxt::Metadata> = std::sync::LazyLock::new(|| {
+        subxt::Metadata::decode_from(include_bytes!("../metadata/people.scale"))
+            .expect("vendored People Chain metadata decodes")
+    });
+    &METADATA
+}
+
 /// subxt [`Config`](subxt::Config) for People Chain.
 ///
 /// People Chain is Polkadot-shaped (`AccountId32` + `MultiAddress<_, ()>` +

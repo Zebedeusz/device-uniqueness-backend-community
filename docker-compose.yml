@@ -42,8 +42,9 @@ services:
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
       # Dev-only 32-byte Ed25519 seed (0x + 64 hex). Replace in prod.
       JWT_ED25519_SECRET: ${JWT_ED25519_SECRET:-0x0101010101010101010101010101010101010101010101010101010101010101}
-      # Dev default = //Alice's sr25519 public key (coherent with the writer SURI below).
-      ATTESTER_PUBLIC_KEY: ${ATTESTER_PUBLIC_KEY:-0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d}
+      # Dev default = //Alice, matching the writer SURI below (signer ==
+      # attester, so the writer attests directly rather than via proxy).
+      ATTESTER_ACCOUNT: ${ATTESTER_ACCOUNT:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
       JWT_ISSUER: ${JWT_ISSUER:-polkadot-app}
       ACCESS_TOKEN_TTL_SECS: ${ACCESS_TOKEN_TTL_SECS:-86400}
       REFRESH_TOKEN_TTL_SECS: ${REFRESH_TOKEN_TTL_SECS:-2592000}
@@ -91,10 +92,11 @@ services:
     environment:
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
-      # Dev signer. In prod this is the least-privilege proxy key; set
-      # CHAIN_WRITER_PROXY_FOR to the cold attester primary it signs for.
+      # Dev signer. In prod the least-privilege proxy key; the writer proxies
+      # whenever ATTESTER_ACCOUNT is not this key.
       CHAIN_WRITER_SIGNER_SURI: ${CHAIN_WRITER_SIGNER_SURI:-//Alice}
-      CHAIN_WRITER_PROXY_FOR: ${CHAIN_WRITER_PROXY_FOR:-}
+      # Same value identity-api publishes at /api/v1/attester.
+      ATTESTER_ACCOUNT: ${ATTESTER_ACCOUNT:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
       CHAIN_WRITER_HOLDER_ID: ${CHAIN_WRITER_HOLDER_ID:-}
       CHAIN_WRITER_LEASE_NAME: ${CHAIN_WRITER_LEASE_NAME:-people-chain-writer}
       CHAIN_WRITER_LEASE_TTL_SECS: ${CHAIN_WRITER_LEASE_TTL_SECS:-30}

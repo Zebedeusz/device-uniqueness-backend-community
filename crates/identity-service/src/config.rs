@@ -7,8 +7,10 @@
 //! must stop the process loudly, not crash-loop or half-start.
 
 use std::net::SocketAddr;
+use std::str::FromStr as _;
 use std::time::Duration;
 
+use chain_types::subxt::utils::AccountId32;
 use secrecy::{SecretBox, SecretString};
 
 /// identity-service runtime configuration.
@@ -33,8 +35,9 @@ pub struct Config {
     pub jwt_issuer: String,
     /// People Chain RPC endpoint for read-path chain queries.
     pub people_rpc_url: String,
-    /// Attester authority public key, normalised as `0x`+hex (32 bytes).
-    pub attester_public_key: String,
+    /// Attester authority: published by `GET /api/v1/attester` as `0x`+hex and
+    /// attested as by identity-chain-writer, from one shared value.
+    pub attester_account: [u8; 32],
     /// Access-token lifetime.
     pub access_ttl: Duration,
     /// Refresh-token lifetime.
@@ -211,7 +214,7 @@ impl Config {
             jwt_issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "polkadot-app".to_string()),
             people_rpc_url: std::env::var("PEOPLE_RPC_URL")
                 .unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".to_string()),
-            attester_public_key: parse_attester_public_key()?,
+            attester_account: attester_account_from_env()?,
             access_ttl: Duration::from_secs(parse_var("ACCESS_TOKEN_TTL_SECS", "86400")?),
             refresh_ttl: Duration::from_secs(parse_var("REFRESH_TOKEN_TTL_SECS", "2592000")?),
             challenge_ttl: Duration::from_secs(parse_var("CHALLENGE_TTL_SECS", "300")?),
@@ -262,7 +265,7 @@ impl Config {
             jwt_secret: SecretBox::new(Box::new([7u8; 32])),
             jwt_issuer: "polkadot-app".to_string(),
             people_rpc_url: "unused".to_string(),
-            attester_public_key: format!("0x{}", "aa".repeat(32)),
+            attester_account: [0xaa; 32],
             access_ttl: Duration::from_secs(86_400),
             refresh_ttl: Duration::from_secs(2_592_000),
             challenge_ttl: Duration::from_secs(300),
@@ -332,31 +335,25 @@ fn decode_jwt_secret(raw: &str) -> Result<[u8; 32], ConfigError> {
     })
 }
 
-/// Parse `ATTESTER_PUBLIC_KEY` (hex, optional `0x`) into a normalised `0x`+hex
-/// 32-byte string served by `GET /api/v1/attester`.
-fn parse_attester_public_key() -> Result<String, ConfigError> {
-    let raw = std::env::var("ATTESTER_PUBLIC_KEY")
-        .map_err(|_| ConfigError::Missing("ATTESTER_PUBLIC_KEY"))?;
-    normalize_attester_public_key(&raw)
+/// Parse `ATTESTER_ACCOUNT` (SS58) into the raw 32-byte account.
+///
+/// Shared by identity-api and identity-chain-writer: clients bind their
+/// registration signature to the published key, so a separately-configured
+/// attester drifts into `PeopleLite::InvalidAttestationSignature`. The `0x`+hex
+/// wire form is derived from this, never configured.
+pub(crate) fn attester_account_from_env() -> Result<[u8; 32], ConfigError> {
+    let raw =
+        std::env::var("ATTESTER_ACCOUNT").map_err(|_| ConfigError::Missing("ATTESTER_ACCOUNT"))?;
+    parse_attester_account(&raw)
 }
 
-/// Normalise an attester public key (hex, optional `0x`, any case) to
-/// lowercase `0x`+hex, insisting on exactly 32 bytes.
-fn normalize_attester_public_key(raw: &str) -> Result<String, ConfigError> {
-    let trimmed = raw.trim();
-    let bytes = hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed)).map_err(|e| {
-        ConfigError::Invalid {
-            key: "ATTESTER_PUBLIC_KEY",
-            reason: format!("expected hex: {e}"),
-        }
+/// Decode one SS58 attester account into its raw 32 bytes.
+fn parse_attester_account(raw: &str) -> Result<[u8; 32], ConfigError> {
+    let account = AccountId32::from_str(raw.trim()).map_err(|e| ConfigError::Invalid {
+        key: "ATTESTER_ACCOUNT",
+        reason: format!("expected an SS58 account: {e}"),
     })?;
-    if bytes.len() != 32 {
-        return Err(ConfigError::Invalid {
-            key: "ATTESTER_PUBLIC_KEY",
-            reason: format!("expected 32 bytes, got {}", bytes.len()),
-        });
-    }
-    Ok(format!("0x{}", hex::encode(bytes)))
+    Ok(account.0)
 }
 
 /// Parse an optional Android signing-certificate SHA-256 fingerprint env var.
@@ -673,20 +670,23 @@ mod tests {
     }
 
     #[test]
-    fn attester_public_key_normalises_to_lowercase_0x_hex() {
-        let upper = hex::encode([0xABu8; 32]).to_ascii_uppercase();
-        let want = format!("0x{}", "ab".repeat(32));
-        assert_eq!(normalize_attester_public_key(&upper).unwrap(), want);
+    fn attester_account_parses_ss58_and_rejects_hex() {
+        const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+        const ALICE_HEX: &str = "d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d";
+
+        let want: [u8; 32] = hex::decode(ALICE_HEX).unwrap().try_into().unwrap();
+        assert_eq!(parse_attester_account(ALICE_SS58).unwrap(), want);
         assert_eq!(
-            normalize_attester_public_key(&format!("0x{upper}")).unwrap(),
+            parse_attester_account(&format!("  {ALICE_SS58}  ")).unwrap(),
             want
         );
 
-        let err = normalize_attester_public_key("zz").unwrap_err();
-        assert!(err.to_string().contains("expected hex"), "{err}");
-        let err = normalize_attester_public_key(&hex::encode([1u8; 20])).unwrap_err();
+        // Hex is the wire form, never the configured one.
+        let err = parse_attester_account(&format!("0x{ALICE_HEX}")).unwrap_err();
+        assert!(err.to_string().contains("ATTESTER_ACCOUNT"), "{err}");
+        let err = parse_attester_account("not-an-account").unwrap_err();
         assert!(
-            err.to_string().contains("expected 32 bytes, got 20"),
+            err.to_string().contains("expected an SS58 account"),
             "{err}"
         );
     }
@@ -838,7 +838,7 @@ mod tests {
         const VARS: &[&str] = &[
             "DATABASE_URL",
             "JWT_ED25519_SECRET",
-            "ATTESTER_PUBLIC_KEY",
+            "ATTESTER_ACCOUNT",
             "AUTH_ENABLED",
             "APPLE_APP_ATTEST_APP_IDS",
             "IOS_PACKAGE_NAMES",
@@ -864,8 +864,11 @@ mod tests {
         std::env::set_var("DATABASE_URL", "postgres://unused");
         missing("JWT_ED25519_SECRET");
         std::env::set_var("JWT_ED25519_SECRET", hex::encode([1u8; 32]));
-        missing("ATTESTER_PUBLIC_KEY");
-        std::env::set_var("ATTESTER_PUBLIC_KEY", hex::encode([2u8; 32]));
+        missing("ATTESTER_ACCOUNT");
+        std::env::set_var(
+            "ATTESTER_ACCOUNT",
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        );
 
         // Minimal environment: everything else defaults.
         let config = Config::from_env().expect("minimal env");
@@ -873,7 +876,12 @@ mod tests {
         assert_eq!(config.jwt_issuer, "polkadot-app");
         assert!(!config.auth_enabled);
         assert!(config.dotns_gateway_enabled);
-        assert_eq!(config.attester_public_key, format!("0x{}", "02".repeat(32)));
+        let alice: [u8; 32] =
+            hex::decode("d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        assert_eq!(config.attester_account, alice);
         assert!(config.payment.is_none());
         assert!(config.device_check.is_none());
 

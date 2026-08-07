@@ -50,12 +50,15 @@ Create `.env` (`chmod 600 .env`):
 BIND_ADDR=0.0.0.0:8080
 PEOPLE_RPC_URL=wss://paseo-people-next-system-rpc.polkadot.io
 JWT_ED25519_SECRET=0x<64-hex>            # openssl rand -hex 32
-ATTESTER_PUBLIC_KEY=0x<64-hex>           # served by GET /api/v1/attester
+ATTESTER_ACCOUNT=<SS58>                  # attester authority: published by GET
+                                         # /api/v1/attester AND attested as by
+                                         # the writer (one value, cannot drift)
 AUTH_ENABLED=false                       # test mode: attestation is a no-op
 ENFORCE_AUTH=false
 RUST_LOG=info
 CHAIN_WRITER_SIGNER_SURI=<secret>        # mnemonic, 0x+64-hex seed, or 0x+128-hex raw sr25519
-CHAIN_WRITER_PROXY_FOR=<attester SS58 or empty>
+                                         # its account == ATTESTER_ACCOUNT -> direct signing,
+                                         # otherwise the writer proxies for the authority
 # dim-tickets (see .env.example for tunables and dev defaults)
 DIM_TICKETS_POSTGRES_PASSWORD=<URL-safe random password>
 PEOPLE_NETWORK=<westend2|paseo|polkadot>
@@ -201,10 +204,11 @@ A second environment is another compose project on the same host with its own
 `.env`, plus a DNS record and a site block. It shares the machine, the image,
 and the edge; it shares no database, no signing key, and no chain.
 
-1. **Check the chain is usable.** For PreviewNet: the shared attester authority
-   `5F7H1LkZi8rnSH8PvUsp4LD2WkvcpnjkyQyvLPu1ntbhNr5T` must still list our writer
-   signer as an `Any`/delay-0 proxy, hold an attestation allowance, and hold
-   invites — see the post-wipe sequence in `docs/plans/active/previewnet-env.md`.
+1. **Check the chain is usable.** For PreviewNet: the environment's
+   `ATTESTER_ACCOUNT` authority `5GCF223UbXNZiH78V6DhsWeZ6hrQ6xRfGTfdn6MraprJKbWj`
+   must still list our writer signer as an `Any`/delay-0 proxy, hold an attestation
+   allowance, and hold invites — see the post-wipe sequence in
+   `docs/plans/active/previewnet-env.md`.
 2. **Second checkout + `.env`** (mode 600) — one checkout per environment, each
    holding exactly one `.env`, which is what CI's deploy loop expects. Deliberately
    not one checkout with per-environment env files: compose auto-loads `./.env`
@@ -216,7 +220,7 @@ and the edge; it shares no database, no signing key, and no chain.
    ENV_ID=previewnet                                    # network aliases
    PEOPLE_RPC_URL=wss://previewnet.substrate.dev/people
    JWT_ED25519_SECRET=0x<fresh 64-hex>                  # its own issuer
-   CHAIN_WRITER_PROXY_FOR=5F7H1LkZi8rnSH8PvUsp4LD2WkvcpnjkyQyvLPu1ntbhNr5T
+   ATTESTER_ACCOUNT=5GCF223UbXNZiH78V6DhsWeZ6hrQ6xRfGTfdn6MraprJKbWj
    QUEUE_ENABLED=false
    DOTNS_GATEWAY_ENABLED=false                          # dotns is not deployed there
    ```
@@ -290,8 +294,8 @@ declares `build: .`. The services each fail fast on missing configuration:
 
 | Service | Required |
 |---|---|
-| `identity-api` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `JWT_ED25519_SECRET`, `ATTESTER_PUBLIC_KEY` |
-| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI` |
+| `identity-api` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `JWT_ED25519_SECRET`, `ATTESTER_ACCOUNT` |
+| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI`, `ATTESTER_ACCOUNT` |
 | `username-indexer` | `DATABASE_URL`, `PEOPLE_RPC_URL` |
 
 `identity-api` and `username-indexer` need **separate databases**: each applies its own

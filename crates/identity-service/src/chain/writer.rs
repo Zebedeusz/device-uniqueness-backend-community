@@ -16,10 +16,12 @@ use std::str::FromStr as _;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use chain_types::{PeopleConfig, PeopleExtrinsicParamsBuilder};
+use chain_types::people::runtime_types::sp_runtime::DispatchError;
+use chain_types::{people, PeopleConfig, PeopleExtrinsicParamsBuilder};
 use secrecy::{ExposeSecret as _, SecretString};
 use sqlx::PgPool;
 use subxt::dynamic::{self, Value};
+use subxt::extrinsics::ExtrinsicEvents;
 use subxt::tx::{DynamicPayload, TransactionStatus};
 use subxt::utils::AccountId32;
 use time::OffsetDateTime;
@@ -40,9 +42,9 @@ pub struct WriterConfig {
     pub people_rpc_url: String,
     /// SURI of the hot signing key (the proxy key, or the primary in dev).
     pub signer_suri: SecretString,
-    /// Optional cold attester authority: when set, calls are wrapped in
-    /// `Proxy.proxy(real = this account, …)` and the SURI signs as its proxy.
-    pub proxy_for: Option<[u8; 32]>,
+    /// Attester authority (`ATTESTER_ACCOUNT`), the account identity-api also
+    /// publishes. Proxying is derived from it — see [`proxy_target`].
+    pub attester: [u8; 32],
     /// This writer instance's lease holder id.
     pub holder_id: String,
     /// Lease row name (all writers of one account share it).
@@ -90,10 +92,7 @@ impl WriterConfig {
             .unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".to_string());
         let signer_suri = std::env::var("CHAIN_WRITER_SIGNER_SURI")
             .context("CHAIN_WRITER_SIGNER_SURI is required")?;
-        let proxy_for = match std::env::var("CHAIN_WRITER_PROXY_FOR") {
-            Ok(v) if !v.trim().is_empty() => Some(parse_account(v.trim())?),
-            _ => None,
-        };
+        let attester = crate::config::attester_account_from_env()?;
         // The default must be unique per boot: in a container the PID is
         // always 1, and identical holder ids let overlapping instances steal
         // each other's live lease through the "already ours" arm.
@@ -110,7 +109,7 @@ impl WriterConfig {
             database_url: SecretString::from(database_url),
             people_rpc_url,
             signer_suri: SecretString::from(signer_suri),
-            proxy_for,
+            attester,
             holder_id,
             lease_name: std::env::var("CHAIN_WRITER_LEASE_NAME")
                 .unwrap_or_else(|_| "people-chain-writer".to_string()),
@@ -150,7 +149,7 @@ impl WriterConfig {
 pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     tracing::info!(
         people_rpc = %config.people_rpc_url,
-        proxy = config.proxy_for.is_some(),
+        attester = %hex_account(&config.attester),
         holder = %config.holder_id,
         "starting identity-chain-writer"
     );
@@ -158,7 +157,13 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     let chain = ChainClient::connect(&config.people_rpc_url).await?;
     let signer = WriterSigner::from_secret(config.signer_suri.expose_secret())?;
     let signer_account = AccountId32(signer.public_bytes());
-    tracing::info!(signer = %hex_account(&signer_account.0), "identity-chain-writer connected");
+    let proxy_for = proxy_target(config.attester, signer_account.0);
+    tracing::info!(
+        signer = %hex_account(&signer_account.0),
+        attester = %hex_account(&config.attester),
+        mode = if proxy_for.is_some() { "proxy" } else { "direct" },
+        "identity-chain-writer connected"
+    );
     // No HTTP surface here, so this is the only readiness signal it has.
     http_common::metrics::spawn_readiness_probe(
         "identity-chain-writer",
@@ -171,6 +176,7 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
         chain,
         signer,
         signer_account,
+        proxy_for,
         config,
         next_nonce: None,
     };
@@ -182,6 +188,8 @@ struct Writer {
     chain: ChainClient,
     signer: WriterSigner,
     signer_account: AccountId32,
+    /// Derived once at connect time by [`proxy_target`].
+    proxy_for: Option<[u8; 32]>,
     config: WriterConfig,
     /// Locally-tracked nonce; reset to a chain re-fetch on any error.
     next_nonce: Option<u64>,
@@ -373,7 +381,7 @@ impl Writer {
             }
         }
 
-        let payload = build_registration_tx(r, &candidate, self.config.proxy_for.as_ref());
+        let payload = build_registration_tx(r, &candidate, self.proxy_for.as_ref());
         let nonce = match self.nonce().await {
             Ok(n) => n,
             Err(e) => return self.retry(guard, r, &format!("nonce fetch: {e}")).await,
@@ -446,6 +454,7 @@ impl Writer {
         }
         tracing::info!(id = r.id, username = %r.full_username, nonce, tx = %tx_hash, "submitting registration");
 
+        let metadata = chain_types::metadata();
         let progress = signed.submit_and_watch().await?;
         let wait = async {
             let mut progress = progress;
@@ -453,7 +462,8 @@ impl Writer {
                 match progress.next().await {
                     Some(status) => match status? {
                         TransactionStatus::InFinalizedBlock(in_block) => {
-                            in_block.wait_for_success().await?;
+                            let events = in_block.wait_for_success().await?;
+                            check_proxied_call(&events, metadata)?;
                             return anyhow::Ok(());
                         }
                         TransactionStatus::Error { message } => {
@@ -535,10 +545,10 @@ impl Writer {
     /// Under proxy signing the two resources sit on different accounts: the
     /// allowance on the primary, the transaction fee on the signer.
     async fn log_attester_resources(&self) -> anyhow::Result<()> {
-        let allowance_account = self.config.proxy_for.unwrap_or(self.signer_account.0);
+        let allowance_account = self.config.attester;
         let allowance = self.chain.attestation_allowance(allowance_account).await?;
         let signer_balance = self.chain.free_balance(self.signer_account.0).await?;
-        let primary_balance = match self.config.proxy_for {
+        let primary_balance = match self.proxy_for {
             Some(primary) => Some(self.chain.free_balance(primary).await?),
             None => None,
         };
@@ -623,6 +633,46 @@ async fn record_outbox_gauges(pool: &PgPool) -> Result<(), sqlx::Error> {
             .set(depth.oldest_age_secs.unwrap_or(0.0));
     }
     Ok(())
+}
+
+/// The account to proxy for, or `None` when the signer *is* the attester.
+///
+/// Derived rather than configured, so a deployment cannot claim to attest as
+/// one account while signing as another.
+fn proxy_target(attester: [u8; 32], signer: [u8; 32]) -> Option<[u8; 32]> {
+    (attester != signer).then_some(attester)
+}
+
+/// Fail a submit whose proxied call was rejected inside a successful
+/// `Proxy.proxy` extrinsic.
+///
+/// A rejected inner call still emits `ExtrinsicSuccess`, so without this check
+/// `wait_for_success` reports a registration that never landed as `ASSIGNED`.
+fn check_proxied_call(
+    events: &ExtrinsicEvents<PeopleConfig>,
+    metadata: &subxt::Metadata,
+) -> anyhow::Result<()> {
+    for event in events.find::<people::proxy::events::ProxyExecuted>() {
+        if let Err(error) = event.context("decoding ProxyExecuted")?.result {
+            anyhow::bail!("proxied call failed: {}", describe(&error, metadata));
+        }
+    }
+    Ok(())
+}
+
+/// Render a module `DispatchError` as `Pallet::Variant` via the vendored
+/// metadata. [`classify_submit_failure`] matches on those names, so the
+/// rendering is behaviour, not just logging.
+fn describe(error: &DispatchError, metadata: &subxt::Metadata) -> String {
+    let DispatchError::Module(module) = error else {
+        return format!("{error:?}");
+    };
+    let pallet = metadata.pallet_by_error_index(module.index);
+    let name = pallet.map_or("Unknown", |pallet| pallet.name());
+    let variant = pallet
+        .and_then(|pallet| pallet.error_variant_by_index(module.error[0]))
+        .map_or_else(|| format!("Error{}", module.error[0]), |v| v.name.clone());
+    format!("{name}::{variant}")
 }
 
 /// Build the registration extrinsic: `PeopleLite.attest`, optionally wrapped in
@@ -710,6 +760,7 @@ fn env_u64(key: &str, default: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chain_types::people::runtime_types::sp_runtime::ModuleError;
 
     fn reservation() -> Reservation {
         Reservation {
@@ -791,7 +842,7 @@ mod tests {
         "DATABASE_URL",
         "PEOPLE_RPC_URL",
         "CHAIN_WRITER_SIGNER_SURI",
-        "CHAIN_WRITER_PROXY_FOR",
+        "ATTESTER_ACCOUNT",
         "CHAIN_WRITER_HOLDER_ID",
         "CHAIN_WRITER_LEASE_NAME",
         "CHAIN_WRITER_LEASE_TTL_SECS",
@@ -807,10 +858,11 @@ mod tests {
         "ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK",
     ];
 
-    /// The two vars `from_env` refuses to default.
+    /// The vars `from_env` refuses to default.
     const REQUIRED_ENV: &[(&str, &str)] = &[
         ("DATABASE_URL", "postgres://writer:pw@localhost/identity"),
         ("CHAIN_WRITER_SIGNER_SURI", "//Writer"),
+        ("ATTESTER_ACCOUNT", ALICE_SS58),
     ];
 
     /// Alice's well-known dev account: the SS58 form and the sr25519 public
@@ -849,7 +901,7 @@ mod tests {
             ("DATABASE_URL", "postgres://writer:pw@localhost/identity"),
             ("PEOPLE_RPC_URL", "wss://people.example"),
             ("CHAIN_WRITER_SIGNER_SURI", "//Writer"),
-            ("CHAIN_WRITER_PROXY_FOR", ALICE_SS58),
+            ("ATTESTER_ACCOUNT", ALICE_SS58),
             ("CHAIN_WRITER_HOLDER_ID", "writer-test-1"),
             ("CHAIN_WRITER_LEASE_NAME", "custom-lease"),
             ("CHAIN_WRITER_LEASE_TTL_SECS", "45"),
@@ -872,7 +924,7 @@ mod tests {
         assert_eq!(config.people_rpc_url, "wss://people.example");
         assert_eq!(config.signer_suri.expose_secret(), "//Writer");
         let alice: [u8; 32] = hex::decode(ALICE_HEX).unwrap().try_into().unwrap();
-        assert_eq!(config.proxy_for, Some(alice));
+        assert_eq!(config.attester, alice);
         assert_eq!(config.holder_id, "writer-test-1");
         assert_eq!(config.lease_name, "custom-lease");
         assert_eq!(config.lease_ttl, Duration::from_secs(45));
@@ -893,7 +945,6 @@ mod tests {
             config.people_rpc_url,
             "wss://paseo-people-next-system-rpc.polkadot.io"
         );
-        assert_eq!(config.proxy_for, None);
         // The holder id must be unique per boot (pid + random suffix), never a
         // fixed literal that would let overlapping instances share a lease.
         assert!(
@@ -916,12 +967,10 @@ mod tests {
         assert_eq!(config.allowance_floor, 100);
         assert_eq!(config.signer_balance_floor_planck, 10_000_000_000);
 
-        // Whitespace-only PROXY_FOR / HOLDER_ID count as unset, not as values.
+        // Whitespace-only HOLDER_ID counts as unset, not as a value.
         let mut vars = REQUIRED_ENV.to_vec();
-        vars.push(("CHAIN_WRITER_PROXY_FOR", "   "));
         vars.push(("CHAIN_WRITER_HOLDER_ID", "   "));
         let config = from_env_with(&vars).unwrap();
-        assert_eq!(config.proxy_for, None);
         assert!(config.holder_id.starts_with("writer-"));
 
         // Missing required vars fail naming the var.
@@ -937,17 +986,15 @@ mod tests {
             "{err}"
         );
 
-        // An unparseable PROXY_FOR is a startup error, not a silent None.
-        // (The message names the offending value but NOT the env var — an
-        // operator has to know it came from CHAIN_WRITER_PROXY_FOR.)
-        let mut vars = REQUIRED_ENV.to_vec();
-        vars.push(("CHAIN_WRITER_PROXY_FOR", "not-an-account"));
+        // An unparseable ATTESTER_ACCOUNT is a startup error, and the message
+        // names the var so an operator knows which one to fix.
+        let mut vars = vec![
+            ("DATABASE_URL", "postgres://writer:pw@localhost/identity"),
+            ("CHAIN_WRITER_SIGNER_SURI", "//Writer"),
+        ];
+        vars.push(("ATTESTER_ACCOUNT", "not-an-account"));
         let err = from_env_with(&vars).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("invalid SS58 account not-an-account"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("ATTESTER_ACCOUNT"), "{err}");
 
         // QUEUE_ENABLED only accepts boolean tokens, and the error names it.
         let mut vars = REQUIRED_ENV.to_vec();
@@ -986,5 +1033,68 @@ mod tests {
         let config = from_env_with(&vars).unwrap();
         assert_eq!(config.lease_ttl, Duration::from_secs(30));
         assert_eq!(config.batch_size, 25);
+    }
+
+    /// Regression: the 2026-08-05 silent-failure incident.
+    #[test]
+    fn module_errors_resolve_to_pallet_and_variant_names() {
+        let invalid_signature = DispatchError::Module(ModuleError {
+            index: 62,
+            error: [1, 0, 0, 0],
+        });
+
+        assert_eq!(
+            describe(&invalid_signature, chain_types::metadata()),
+            "PeopleLite::InvalidAttestationSignature"
+        );
+        assert_eq!(
+            describe(
+                &DispatchError::Module(ModuleError {
+                    index: 62,
+                    error: [3, 0, 0, 0],
+                }),
+                chain_types::metadata()
+            ),
+            "PeopleLite::AlreadyRegistered"
+        );
+        assert_eq!(
+            describe(&DispatchError::BadOrigin, chain_types::metadata()),
+            "BadOrigin"
+        );
+    }
+
+    /// The rendered name must still hit the `AlreadyRegistered` branch.
+    #[test]
+    fn rendered_already_registered_still_assigns() {
+        assert_eq!(
+            classify_submit_failure(
+                "proxied call failed: PeopleLite::AlreadyRegistered",
+                None,
+                [7; 32],
+                1,
+                3
+            ),
+            SubmitFailureAction::Assign
+        );
+    }
+
+    #[test]
+    fn proxy_mode_is_derived_from_the_attester() {
+        let signer = [1; 32];
+        let authority = [2; 32];
+
+        assert_eq!(proxy_target(authority, signer), Some(authority));
+        assert_eq!(proxy_target(signer, signer), None);
+    }
+
+    /// The dev default (attester == signer == `//Alice`) depends on this.
+    #[test]
+    fn direct_mode_submits_attest_unwrapped() {
+        let reservation = reservation();
+        let candidate = [7; 32];
+        let payload = build_registration_tx(&reservation, &candidate, None);
+
+        assert_eq!(payload.pallet_name(), "PeopleLite");
+        assert_eq!(payload.call_name(), "attest");
     }
 }

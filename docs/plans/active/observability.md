@@ -20,7 +20,7 @@ stops and nothing says so.
       (`ATTESTER_RESOURCE_POLL_SECS`, first tick on lease acquisition)
 - [x] WARN below a configured floor (`ATTESTER_ALLOWANCE_FLOOR`,
       `ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK`)
-- [x] Note: with `CHAIN_WRITER_PROXY_FOR` set, allowance is on the **primary**, fees on the **signer**
+- [x] Note: when the writer proxies for `ATTESTER_ACCOUNT`, allowance is on the **authority**, fees on the **signer**
       — the pass reads the primary's allowance and both free balances
 
 ✅ **Demo passed** (local stack against Paseo Next v2, 2026-08-04):

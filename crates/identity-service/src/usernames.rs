@@ -193,7 +193,7 @@ pub struct AttesterResponse {
 )]
 pub async fn attester(State(state): State<AppState>) -> Json<AttesterResponse> {
     Json(AttesterResponse {
-        attester: state.config.attester_public_key.clone(),
+        attester: format!("0x{}", hex::encode(state.config.attester_account)),
     })
 }
 

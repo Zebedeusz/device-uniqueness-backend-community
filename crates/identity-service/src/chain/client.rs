@@ -96,7 +96,7 @@ impl ChainClient {
     ///
     /// `PeopleLite::AttestationAllowance` is what the attester spends per
     /// registration: at zero, every `attest` fails and registration stops. With
-    /// proxy signing the allowance belongs to the primary (`CHAIN_WRITER_PROXY_FOR`),
+    /// proxy signing the allowance belongs to the authority (`ATTESTER_ACCOUNT`),
     /// not the signing key.
     pub async fn attestation_allowance(&self, account: [u8; 32]) -> anyhow::Result<u32> {
         let at = self.client.at_current_block().await?;
