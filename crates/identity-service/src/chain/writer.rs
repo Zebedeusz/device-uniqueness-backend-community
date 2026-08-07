@@ -100,7 +100,7 @@ impl WriterConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL is required")?;
         let people_rpc_url = std::env::var("PEOPLE_RPC_URL")
-            .unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".to_string());
+            .unwrap_or_else(|_| "wss://previewnet.substrate.dev/people".to_string());
         let signer_suri = std::env::var("CHAIN_WRITER_SIGNER_SURI")
             .context("CHAIN_WRITER_SIGNER_SURI is required")?;
         let attester = crate::config::attester_account_from_env()?;
@@ -153,7 +153,9 @@ impl WriterConfig {
             )?),
             // Matches identity-api's intake gate (`config.rs`). Absent on one
             // side and set on the other is the accepted-but-never-submitted
-            // split; the same default on both is what stops it.
+            // split; the same default on both is what stops it. `.env.example`
+            // and `docker-compose.yml` ship the lane **on** — see the rationale
+            // on `Config::from_env`'s `dotns_gateway_enabled`.
             dotns_gateway_enabled: crate::config::env_bool("DOTNS_GATEWAY_ENABLED", false)?,
             asset_hub_rpc_url: match std::env::var("ASSET_HUB_RPC_URL") {
                 Ok(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
@@ -1747,7 +1749,7 @@ mod tests {
         let config = from_env_with(REQUIRED_ENV).unwrap();
         assert_eq!(
             config.people_rpc_url,
-            "wss://paseo-people-next-system-rpc.polkadot.io"
+            "wss://previewnet.substrate.dev/people"
         );
         // The holder id must be unique per boot (pid + random suffix), never a
         // fixed literal that would let overlapping instances share a lease.

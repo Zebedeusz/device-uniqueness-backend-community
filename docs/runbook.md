@@ -62,11 +62,14 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
 A second, independent state machine on the same row. `status` is the People
 registration. `dotns_status` is the Asset Hub reservation. **A dotNS failure never
 changes `status`.** `ASSIGNED` + `DOTNS_FAILED_TERMINAL` means the username works
-and the dotNS name does not. **Opt-in** (`DOTNS_GATEWAY_ENABLED`, default off);
-only `previewnet` turns it on, because `ASSET_HUB_RPC_URL` must name the Asset
-Hub of the same network as `PEOPLE_RPC_URL` and PreviewNet's is the only one
-running the `signed_at` `reserve_name`. `paseo-next-v2` leaves it alone pending
-its Asset Hub runtime upgrade.
+and the dotNS name does not. **On by default** (`DOTNS_GATEWAY_ENABLED`), because
+the `PEOPLE_RPC_URL` and `ASSET_HUB_RPC_URL` defaults are a matched PreviewNet
+pair and PreviewNet's Asset Hub is the only one running the `signed_at`
+`reserve_name`. The two URLs must always name the same network — a split pair
+claims labels on the wrong chain, unrecoverably. `paseo-next-v2` therefore
+carries an explicit `DOTNS_GATEWAY_ENABLED=false`, pending its Asset Hub runtime
+upgrade; if that line is ever missing from its `.env`, the lane is live there and
+the fix is to add it and redeploy.
 
 ```bash
 sudo docker compose exec -T postgres psql -U identity -d identity \

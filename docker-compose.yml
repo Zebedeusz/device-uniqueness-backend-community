@@ -1,7 +1,8 @@
 name: identity-backend-v2
 
 # Local/dev topology: Postgres + the identity binaries, plus the username-indexer
-# The People Chain RPC is external (a public Paseo endpoint by default), so
+# The People Chain RPC is external (a public PreviewNet endpoint by default,
+# paired with PreviewNet's Asset Hub so the dotNS lane can run), so
 # `docker compose up` needs outbound internet to reach it.
 #
 # Secrets below use dev-only defaults so `docker compose up` works out of the
@@ -39,7 +40,7 @@ services:
     environment:
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       # Dev-only 32-byte Ed25519 seed (0x + 64 hex). Replace in prod.
       JWT_ED25519_SECRET: ${JWT_ED25519_SECRET:-0x0101010101010101010101010101010101010101010101010101010101010101}
       # Dev default = //Alice, matching the writer SURI below (signer ==
@@ -54,15 +55,17 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       ENFORCE_AUTH: ${ENFORCE_AUTH:-false}
       QUEUE_ENABLED: ${QUEUE_ENABLED:-false}
-      # Off by default: turn it on only where ASSET_HUB_RPC_URL names the Asset
-      # Hub of the SAME network as PEOPLE_RPC_URL. Today that is PreviewNet
-      # alone — the only Asset Hub running the signed_at reserve_name shape —
-      # while PEOPLE_RPC_URL defaults to Paseo next. On, the writer would claim
-      # LiteLabelOwner on one network for usernames attested on another: a
-      # global claim, and unrecoverable, because only the client can re-sign.
+      # On by default: the PEOPLE_RPC_URL and ASSET_HUB_RPC_URL defaults both
+      # name PreviewNet, the only Asset Hub running the signed_at reserve_name
+      # shape this backend encodes. That pairing IS the safety property. Split
+      # across two networks, the writer would claim LiteLabelOwner on one for
+      # usernames attested on another: a global claim, and unrecoverable,
+      # because only the client can re-sign. An environment that overrides
+      # PEOPLE_RPC_URL to another network MUST set DOTNS_GATEWAY_ENABLED=false
+      # in the same .env — omission no longer means off (paseo-next-v2 sets it).
       # Both halves move together; intake accepting blocks the writer never
       # submits is the other gap this pair closes.
-      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-false}
+      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-true}
       DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: ${DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS:-600}
       # Matches the gateway pallet's MaxFutureSkewSeconds; see .env.example.
       DOTNS_MAX_FUTURE_SKEW_SECS: ${DOTNS_MAX_FUTURE_SKEW_SECS:-30}
@@ -100,7 +103,7 @@ services:
     # also contains service-owned signing secrets.
     environment:
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       # Dev signer. In prod the least-privilege proxy key; the writer proxies
       # whenever ATTESTER_ACCOUNT is not this key.
       CHAIN_WRITER_SIGNER_SURI: ${CHAIN_WRITER_SIGNER_SURI:-//Alice}
@@ -113,7 +116,7 @@ services:
       CHAIN_WRITER_BATCH_SIZE: ${CHAIN_WRITER_BATCH_SIZE:-25}
       CHAIN_WRITER_FINALIZE_SECS: ${CHAIN_WRITER_FINALIZE_SECS:-120}
       CHAIN_WRITER_MAX_ATTEMPTS: ${CHAIN_WRITER_MAX_ATTEMPTS:-8}
-      # dotNS gateway lane (Asset Hub). Off by default, and must match
+      # dotNS gateway lane (Asset Hub). On by default, and must match
       # identity-api's DOTNS_GATEWAY_ENABLED. That side gates intake, this side
       # submits. A split value means blocks are accepted that nothing ever
       # writes. On + no ASSET_HUB_RPC_URL = startup abort, by design; every
@@ -122,10 +125,11 @@ services:
       # ATTESTER_ACCOUNT above covers both chains: proxying is derived from it,
       # so the account clients bind their signatures to is this writer's
       # signing origin by construction.
-      # The URL below is a convenience default, NOT an instruction to enable
-      # the lane: it must name the Asset Hub of the same network PEOPLE_RPC_URL
-      # points at, or the writer claims labels on the wrong chain.
-      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-false}
+      # The URL below must name the Asset Hub of the same network PEOPLE_RPC_URL
+      # points at, or the writer claims labels on the wrong chain. Both default
+      # to PreviewNet; an environment that moves one moves the other, or turns
+      # the lane off explicitly.
+      DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-true}
       ASSET_HUB_RPC_URL: ${ASSET_HUB_RPC_URL:-wss://previewnet.substrate.dev/asset-hub}
       # Must match identity-api's QUEUE_ENABLED: on = QUEUED rows are never
       # drained here (stranded-queue warning only); off = janitor drain.
@@ -164,7 +168,7 @@ services:
     # balances and flips queue rows in the identity DB.
     environment:
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       QUEUE_ADVANCE_INTERVAL_SECS: ${QUEUE_ADVANCE_INTERVAL_SECS:-6}
       QUEUE_LEASE_TTL_SECS: ${QUEUE_LEASE_TTL_SECS:-30}
       # Prometheus exporter, scraped on the private metrics network only.
@@ -211,7 +215,7 @@ services:
     environment:
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://username_indexer:username_indexer@username-indexer-postgres:5432/username_indexer
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       STORAGE_PAGE_SIZE: ${STORAGE_PAGE_SIZE:-1000}
       SYNC_INTERVAL_SECS: ${SYNC_INTERVAL_SECS:-30}
       SEARCH_RATE_LIMIT: ${SEARCH_RATE_LIMIT:-60}
@@ -278,7 +282,7 @@ services:
     environment:
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
       # Dev default = the public key of identity-api's dev JWT_ED25519_SECRET,
@@ -322,7 +326,7 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
       # Dev signer. In prod this is the hot inviter key (or its proxy); set
@@ -421,7 +425,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://paseo-people-next-system-rpc.polkadot.io}
+      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       # Dev signer (unfunded: batches finalize with ItemFailed and no tickets
       # insert). In prod: the hot invite-inviter key, or a proxy delegate with

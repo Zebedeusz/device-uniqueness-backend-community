@@ -49,6 +49,10 @@ Create `.env` (`chmod 600 .env`):
 ```bash
 BIND_ADDR=0.0.0.0:8080
 PEOPLE_RPC_URL=wss://paseo-people-next-system-rpc.polkadot.io
+DOTNS_GATEWAY_ENABLED=false              # REQUIRED here, see below: the compose
+                                         # default is `true` and pairs with
+                                         # PreviewNet, not with the Paseo People
+                                         # endpoint on the line above
 JWT_ED25519_SECRET=0x<64-hex>            # openssl rand -hex 32
 ATTESTER_ACCOUNT=<SS58>                  # attester authority: published by GET
                                          # /api/v1/attester AND attested as by
@@ -93,6 +97,17 @@ APNS_TOPIC=<app bundle id>                # VoIP topic derives as <topic>.voip
 APNS_ENVIRONMENT=<development|production>
 FCM_SERVICE_ACCOUNT_JSON=<json or empty>  # Android; unset -> Android pushes report provider failure
 ```
+
+**`DOTNS_GATEWAY_ENABLED=false` is load-bearing in the block above, not decoration.**
+The compose defaults are a matched PreviewNet pair — `PEOPLE_RPC_URL` at PreviewNet's
+People chain and `ASSET_HUB_RPC_URL` at PreviewNet's Asset Hub — with the lane on.
+This environment overrides only the first of those two, so leaving the flag out would
+run the writer against Paseo's People chain while claiming `LiteLabelOwner` on
+PreviewNet's Asset Hub. `reserve_name` writes a **global** claim on the label, and
+**it cannot be undone** — only the client holds the key that could re-sign. Omission
+used to mean off; it now means on. Any environment that repoints `PEOPLE_RPC_URL`
+away from PreviewNet without repointing `ASSET_HUB_RPC_URL` to the same network must
+set this flag to `false` in the same edit.
 
 The signer (or its proxy target) must be a registered attester authority with funds; the proxy relationship must already exist on-chain. Likewise each inviter (or the primary its `…PROXY_FOR` points at) must hold `AvailableInvites` on the `Game` / `ProofOfInk` pallets and funds for fees. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
 
@@ -224,12 +239,14 @@ and the edge; it shares no database, no signing key, and no chain.
    QUEUE_ENABLED=false
    ```
 
-   **The dotNS gateway lane is opt-in, and PreviewNet is the environment that opts
-   in.** `DOTNS_GATEWAY_ENABLED` defaults to `false`, so add it to this `.env`
-   alongside the matching Asset Hub:
+   **The dotNS gateway lane needs nothing here.** `DOTNS_GATEWAY_ENABLED` defaults
+   to `true` and `ASSET_HUB_RPC_URL` defaults to
+   `wss://previewnet.substrate.dev/asset-hub`, which is this environment's own Asset
+   Hub. PreviewNet is the network the defaults are cut for, so it inherits them.
+   Setting them explicitly does no harm and documents the intent:
 
    ```bash
-   DOTNS_GATEWAY_ENABLED=true
+   DOTNS_GATEWAY_ENABLED=true                                    # compose default
    ASSET_HUB_RPC_URL=wss://previewnet.substrate.dev/asset-hub    # compose default
    ```
 
@@ -241,12 +258,16 @@ and the edge; it shares no database, no signing key, and no chain.
    `LiteLabelOwner`, a global claim on the label, so a writer attesting usernames
    on one network's People while claiming their labels on another's Asset Hub
    produces a claim on the wrong chain that **cannot be undone** — only the client
-   holds the key that could re-sign. That is the pairing the old default made easy
-   and the `false` default now prevents: `paseo-next-v2` simply leaves the variable
-   alone, because Paseo next's Asset Hub still runs the older `reserve_name`
-   (`ring_vrf_key` + `proof_of_ownership`, no `signed_at`). Should it ever be
-   enabled there by mistake, the writer's shape assertion catches it and parks the
+   holds the key that could re-sign. The defaults are a matched PreviewNet pair, so
+   the mismatch can only come from overriding one without the other. That is now
+   `paseo-next-v2`'s job rather than PreviewNet's: it overrides `PEOPLE_RPC_URL` to
+   Paseo next, so it **must** carry `DOTNS_GATEWAY_ENABLED=false`, because Paseo
+   next's Asset Hub still runs the older `reserve_name` (`ring_vrf_key` +
+   `proof_of_ownership`, no `signed_at`). Should it ever be enabled there against
+   Paseo's own Asset Hub, the writer's shape assertion catches it and parks the
    dotNS lane with both argument lists named — People registration keeps running.
+   Against PreviewNet's Asset Hub the shape assertion **passes** and the wrong-chain
+   claim goes through, which is why the flag, not the assertion, is the guard.
    Enable it there once that runtime is upgraded.
 
 3. **Start only the services that environment needs**, as its own project:
@@ -319,7 +340,7 @@ declares `build: .`. The services each fail fast on missing configuration:
 | Service | Required |
 |---|---|
 | `identity-api` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `JWT_ED25519_SECRET`, `ATTESTER_ACCOUNT` |
-| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI`, `ATTESTER_ACCOUNT`, and `ASSET_HUB_RPC_URL` only where `DOTNS_GATEWAY_ENABLED` has been turned on (it defaults to off) |
+| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI`, `ATTESTER_ACCOUNT`, and `ASSET_HUB_RPC_URL` wherever `DOTNS_GATEWAY_ENABLED` is on — which is the compose default, so it is required unless the environment turns the lane off |
 | `username-indexer` | `DATABASE_URL`, `PEOPLE_RPC_URL` |
 
 `identity-api` and `username-indexer` need **separate databases**: each applies its own

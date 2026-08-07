@@ -213,7 +213,7 @@ impl Config {
             jwt_secret: SecretBox::new(Box::new(jwt_secret)),
             jwt_issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "polkadot-app".to_string()),
             people_rpc_url: std::env::var("PEOPLE_RPC_URL")
-                .unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".to_string()),
+                .unwrap_or_else(|_| "wss://previewnet.substrate.dev/people".to_string()),
             attester_account: attester_account_from_env()?,
             access_ttl: Duration::from_secs(parse_var("ACCESS_TOKEN_TTL_SECS", "86400")?),
             refresh_ttl: Duration::from_secs(parse_var("REFRESH_TOKEN_TTL_SECS", "2592000")?),
@@ -224,11 +224,15 @@ impl Config {
             enforce_auth: env_bool("ENFORCE_AUTH", false)?,
             queue_enabled: env_bool("QUEUE_ENABLED", false)?,
             registration_vouchers_enabled: env_bool("REGISTRATION_VOUCHERS_ENABLED", false)?,
-            // Defaults **off**. On means identity-api accepts dotns blocks and
-            // identity-chain-writer claims labels on Asset Hub — a global,
-            // unrecoverable claim. Turning that on is a per-environment decision
-            // that has to name a matching ASSET_HUB_RPC_URL, not something a
-            // copied .env should inherit. Must match the writer's default.
+            // Defaults **off** *in code*, while `.env.example` and
+            // `docker-compose.yml` both ship it **on** — their PEOPLE_RPC_URL and
+            // ASSET_HUB_RPC_URL defaults name the same network (PreviewNet), so
+            // the pairing that makes the lane safe is established there. A bare
+            // process has no such pairing: it would be enabling a global,
+            // unrecoverable label claim against whatever chain happened to be
+            // configured. So the fallback stays the conservative one, and every
+            // real deployment path passes the value explicitly. Must match the
+            // writer's default.
             dotns_gateway_enabled: env_bool("DOTNS_GATEWAY_ENABLED", false)?,
             dotns_intake_freshness_max_age_secs: parse_var(
                 "DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS",
