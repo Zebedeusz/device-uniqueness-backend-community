@@ -191,8 +191,8 @@ Legacy sources: `apps/identity-backend/src/routes/v1/invitation-ticket.{routes,s
         Key decisions too.
   - [x] (2026-07-22) Fail-fast config (`MaintainerConfig::from_env`): required
         `DATABASE_URL`/`PEOPLE_RPC_URL`/`PEOPLE_NETWORK`/`INVITER_ADDRESS`/`INVITER_SIGNER_SURI`,
-        optional `INVITER_PROXY_FOR` + `POOL_DIMS`, bounded tunables; validates the effective
-        signer (proxy real or signer account) equals `INVITER_ADDRESS`; redacting `Debug`.
+        optional `POOL_DIMS`, bounded tunables; redacting `Debug`. (Proxy signing was configured by
+        `INVITER_PROXY_FOR` and validated against `INVITER_ADDRESS` until #46 made it derived.)
   - [x] (2026-07-22) Structured logs: pool size per tick, per-batch submitted/registered/failed
         with block hash, throttle transitions. (Proper metrics/alerts remain hardening-slice
         scope; the runbook documents the log-based alert threshold.)

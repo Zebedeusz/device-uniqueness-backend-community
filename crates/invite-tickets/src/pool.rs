@@ -92,12 +92,11 @@ pub fn item_accepted(items: &[bool], index: usize) -> bool {
 pub struct InviterIdentity {
     /// Transaction signer (the inviter itself, or its proxy delegate).
     pub signer: WriterSigner,
-    /// The inviter account whose quota funds tickets — stamped into rows.
+    /// The inviter account whose quota funds tickets — stamped into rows, and
+    /// the account the chain must see as the caller.
     pub inviter: AccountId32,
     /// The inviter SS58 string as configured (stamped into rows verbatim).
     pub inviter_ss58: String,
-    /// When set, submissions wrap in `Proxy.proxy(real = inviter)`.
-    pub proxy: bool,
 }
 
 /// One maintenance pass over one pool. Returns the number of tickets added.
@@ -140,10 +139,10 @@ pub async fn tick_pool(
         .map(|(keypair, _)| AccountId32(keypair.public_bytes()))
         .collect();
 
-    let proxy_for = identity.proxy.then_some(&identity.inviter);
+    let proxy_for = identity.signer.proxy_for(identity.inviter);
     let finalized = tokio::time::timeout(
         tuning.finalize_timeout,
-        chain.submit_ticket_batch(&accounts, dim, &identity.signer, proxy_for),
+        chain.submit_ticket_batch(&accounts, dim, &identity.signer, proxy_for.as_ref()),
     )
     .await
     .context("batch finalization timed out")??;
@@ -301,11 +300,10 @@ pub struct MaintainerConfig {
     pub network: Network,
     /// Inviter whose quota funds tickets; stamped into rows.
     pub inviter_address: String,
-    /// Secret of the hot inviter signing key (SURI or raw 64-byte hex).
+    /// Secret of the hot inviter signing key (SURI or raw 64-byte hex). A key
+    /// whose account is not `inviter_address` proxies for it — see
+    /// [`chain_client::WriterSigner::proxy_for`].
     pub signer_secret: String,
-    /// Optional cold inviter primary: when set, batches are wrapped in
-    /// `Proxy.proxy(real = this account, force_proxy_type = Any, …)`.
-    pub proxy_for: Option<AccountId32>,
     /// Which DIM pools to stock.
     pub dims: Vec<Dim>,
     /// Loop tunables.
@@ -323,7 +321,6 @@ impl std::fmt::Debug for MaintainerConfig {
             .field("network", &self.network)
             .field("inviter_address", &self.inviter_address)
             .field("signer_secret", &"<redacted>")
-            .field("proxy_for", &self.proxy_for)
             .field("dims", &self.dims)
             .field("tuning", &self.tuning)
             .finish()
@@ -348,13 +345,6 @@ impl MaintainerConfig {
         AccountId32::from_str(&inviter_address)
             .map_err(|e| anyhow::anyhow!("INVITER_ADDRESS is not valid SS58: {e}"))?;
         let signer_secret = required_env("INVITER_SIGNER_SURI")?;
-        let proxy_for = match std::env::var("INVITER_PROXY_FOR") {
-            Ok(raw) if !raw.trim().is_empty() => Some(
-                AccountId32::from_str(raw.trim())
-                    .map_err(|e| anyhow::anyhow!("INVITER_PROXY_FOR is not valid SS58: {e}"))?,
-            ),
-            _ => None,
-        };
 
         let dims_raw = std::env::var("POOL_DIMS").unwrap_or_else(|_| "Game,ProofOfInk".to_string());
         let dims = parse_pool_dims(&dims_raw)?;
@@ -370,7 +360,6 @@ impl MaintainerConfig {
             network,
             inviter_address,
             signer_secret,
-            proxy_for,
             dims,
             tuning: PoolTuning {
                 interval: Duration::from_secs(interval_secs),
@@ -404,14 +393,11 @@ pub async fn run(config: MaintainerConfig) -> anyhow::Result<()> {
     let signer = WriterSigner::from_secret(&config.signer_secret)?;
     let configured_inviter = AccountId32::from_str(&config.inviter_address)
         .context("parsing validated INVITER_ADDRESS")?;
-    let signer_account = AccountId32(signer.public_bytes());
-    let effective_inviter = config.proxy_for.as_ref().unwrap_or(&signer_account);
-    if effective_inviter != &configured_inviter {
-        anyhow::bail!(
-            "effective signer account does not match INVITER_ADDRESS \
-             (effective {effective_inviter}, configured {configured_inviter})"
-        );
-    }
+    let mode = if signer.proxy_for(configured_inviter).is_some() {
+        "proxy"
+    } else {
+        "direct"
+    };
 
     let pool = crate::db::connect(&config.database_url).await?;
     let chain = ChainClient::connect(&config.people_rpc_url).await?;
@@ -420,7 +406,7 @@ pub async fn run(config: MaintainerConfig) -> anyhow::Result<()> {
         network = config.network.as_str(),
         inviter = %config.inviter_address,
         signer = %hex::encode(signer.public_bytes()),
-        proxy = config.proxy_for.is_some(),
+        mode,
         dims = ?config.dims,
         target = config.tuning.target,
         "invite-tickets-pool starting"
@@ -435,7 +421,6 @@ pub async fn run(config: MaintainerConfig) -> anyhow::Result<()> {
         signer,
         inviter: configured_inviter,
         inviter_ss58: config.inviter_address.clone(),
-        proxy: config.proxy_for.is_some(),
     };
     run_loop(
         pool,
@@ -595,7 +580,6 @@ mod tests {
             network: crate::tickets::Network::Paseo,
             inviter_address: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
             signer_secret: "s3cret-inviter-suri".to_string(),
-            proxy_for: None,
             dims: vec![Dim::Game],
             tuning: super::PoolTuning::default(),
         };

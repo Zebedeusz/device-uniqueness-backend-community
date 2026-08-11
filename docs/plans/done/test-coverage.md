@@ -171,9 +171,11 @@ land in the mid-70s; the number is a diagnostic, not the goal).
         dim-tickets): one sequential env `#[test]` each (identity's under
         `ENV_MUTEX`), covering happy path, defaults, whitespace-as-unset,
         per-var missing/invalid errors, bounded-u64 messages, and
-        dim's cross-var retry_base/retry_max bound. **Findings**: identity's
-        `CHAIN_WRITER_PROXY_FOR` error doesn't name the env var (dim's
-        does), and its plain `env_u64` knobs silently default on garbage
+        dim's cross-var retry_base/retry_max bound. **Findings** (as of
+        2026-08-05): identity's then-existing `CHAIN_WRITER_PROXY_FOR` error
+        didn't name the env var (dim's did) — both vars have since been
+        removed in favour of derived proxying (#32, #46) — and its plain
+        `env_u64` knobs silently default on garbage
         while the queue/payment knobs in the same function are strict.
 - **✅ Demo**: all suites green (`cargo test -p identity-service -p
   chain-types -p dim-tickets`), clippy -D warnings clean.

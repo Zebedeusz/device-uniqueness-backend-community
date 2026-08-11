@@ -48,7 +48,8 @@ pub struct WriterConfig {
     /// SURI of the hot signing key (the proxy key, or the primary in dev).
     pub signer_suri: SecretString,
     /// Attester authority (`ATTESTER_ACCOUNT`), the account identity-api also
-    /// publishes. Proxying is derived from it — see [`proxy_target`].
+    /// publishes. Proxying is derived from it — see
+    /// [`WriterSigner::proxy_for`].
     pub attester: [u8; 32],
     /// This writer instance's lease holder id.
     pub holder_id: String,
@@ -178,7 +179,9 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     let chain = ChainClient::connect(&config.people_rpc_url).await?;
     let signer = WriterSigner::from_secret(config.signer_suri.expose_secret())?;
     let signer_account = AccountId32(signer.public_bytes());
-    let proxy_for = proxy_target(config.attester, signer_account.0);
+    let proxy_for = signer
+        .proxy_for(AccountId32(config.attester))
+        .map(|primary| primary.0);
 
     let dotns_lane = match (config.dotns_gateway_enabled, &config.asset_hub_rpc_url) {
         (true, Some(url)) => {
@@ -240,7 +243,7 @@ struct Writer {
     dotns_lane: DotnsLane,
     signer: WriterSigner,
     signer_account: AccountId32,
-    /// Derived once at connect time by [`proxy_target`].
+    /// Derived once at connect time by [`WriterSigner::proxy_for`].
     proxy_for: Option<[u8; 32]>,
     config: WriterConfig,
     /// Locally-tracked People nonce; reset to a chain re-fetch on any error.
@@ -1386,14 +1389,6 @@ async fn record_outbox_gauges(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// The account to proxy for, or `None` when the signer *is* the attester.
-///
-/// Derived rather than configured, so a deployment cannot claim to attest as
-/// one account while signing as another.
-fn proxy_target(attester: [u8; 32], signer: [u8; 32]) -> Option<[u8; 32]> {
-    (attester != signer).then_some(attester)
-}
-
 /// Fail a submit whose proxied call was rejected inside a successful
 /// `Proxy.proxy` extrinsic.
 ///
@@ -1882,15 +1877,6 @@ mod tests {
             ),
             SubmitFailureAction::Assign
         );
-    }
-
-    #[test]
-    fn proxy_mode_is_derived_from_the_attester() {
-        let signer = [1; 32];
-        let authority = [2; 32];
-
-        assert_eq!(proxy_target(authority, signer), Some(authority));
-        assert_eq!(proxy_target(signer, signer), None);
     }
 
     /// The dev default (attester == signer == `//Alice`) depends on this.

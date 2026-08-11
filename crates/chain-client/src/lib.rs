@@ -9,6 +9,8 @@
 //! - [`WriterSigner`]: the sr25519 signing key a single-instance chain writer
 //!   submits with. It signs for either chain, both being Polkadot-shaped.
 //!   Nonces are per chain. One account can therefore hold a lane on each.
+//!   [`WriterSigner::proxy_for`] derives whether that key must sign through
+//!   `Proxy.proxy`, shared by every writer here.
 //!
 //! Product logic — which storage to read, which calls to build — stays in each
 //! service; generated chain types stay in `chain-types`.
@@ -98,6 +100,17 @@ impl WriterSigner {
             Self::Uri(k) => k.public_key().0,
             Self::Raw(k) => k.public.to_bytes(),
         }
+    }
+
+    /// The account this key must proxy for, or `None` when it *is* that
+    /// account.
+    ///
+    /// `primary` is the account the chain must see as the caller — the attester
+    /// authority, or the inviter holding `AvailableInvites`. Derived rather than
+    /// configured, so a deployment cannot claim to act as one account while
+    /// signing as another.
+    pub fn proxy_for(&self, primary: AccountId32) -> Option<AccountId32> {
+        (primary.0 != self.public_bytes()).then_some(primary)
     }
 
     /// Sign with the substrate signing context, matching `subxt-signer` and sp-core.
@@ -265,6 +278,18 @@ mod tests {
         assert!(public
             .verify_simple(b"substrate", message, &signature)
             .is_ok());
+    }
+
+    /// Proxying is a comparison, not a setting: a key that *is* the primary
+    /// signs directly, anything else must go through `Proxy.proxy`.
+    #[test]
+    fn proxy_mode_is_derived_from_the_primary() {
+        let signer = WriterSigner::from_secret("//Alice").expect("valid dev uri");
+        let own = AccountId32(signer.public_bytes());
+        let other = AccountId32([2; 32]);
+
+        assert_eq!(signer.proxy_for(other), Some(other));
+        assert_eq!(signer.proxy_for(own), None);
     }
 
     /// Positional item mapping: only `Utility.ItemCompleted`/`ItemFailed`

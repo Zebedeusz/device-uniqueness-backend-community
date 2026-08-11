@@ -51,7 +51,7 @@ create now. See "How the workspace grows" below.
 | Concept | Name | Where it lives |
 |---|---|---|
 | generated People Chain (subxt) typed surface | `chain-types` | crate; consumed by identity-service, username-indexer, dim-tickets, invite-tickets |
-| chain connection / RPC transport + writer signing key | `chain-client` | crate (reconnecting connect + `WriterSigner`) |
+| chain connection / RPC transport + writer signing key | `chain-client` | crate (reconnecting connect + `WriterSigner` + `proxy_target`) |
 | Postgres connection + bootstrap | `postgres` | still a module inside identity-service / username-indexer |
 | config loading + fail-fast validation | `config` | still a module per service |
 | telemetry (logs / metrics / tracing) | `telemetry` | not extracted |
@@ -265,7 +265,10 @@ Operational invariants an agent must respect when touching the code.
   RPC and the inviter secret belong only to the single-instance `invite-tickets-pool` bin.
   **`invite-tickets-pool` and `dim-tickets-writer` must not sign as the same account** — two
   independent submitters on one account race nonces; give each its own inviter (e.g. separate
-  proxy delegates of one cold primary) before deploying both.
+  proxy delegates of one cold primary) before deploying both. As for the attester, proxying is
+  **derived, not configured**: `INVITER_ADDRESS` names the account holding the invites, and a
+  signing key whose own account differs from it wraps the batch in
+  `Proxy.proxy(real = INVITER_ADDRESS, force_proxy_type = Any)`.
 - **DIM tickets are a per-row state machine, not an outbox copy.** `POST /api/v1/dim-ticket`
   quota-checks the inviter's on-chain `AvailableInvites` synchronously, then inserts a `PENDING`
   row (200); `dim-tickets-writer` batches due rows into one `Utility.force_batch` of

@@ -27,6 +27,14 @@ they summarise each release rather than list every change.
 
 ### Changed
 
+- **Breaking:** `INVITER_PROXY_FOR` and `INVITE_INVITER_PROXY_FOR` are removed.
+  `dim-tickets-writer` and `invite-tickets-pool` now derive proxy signing the way
+  the chain writer already did in [#32]: the signing key's own account is
+  compared with `INVITER_ADDRESS`, and the batch is wrapped in
+  `Proxy.proxy(real = INVITER_ADDRESS)` when they differ. Delete the variables
+  from deployment env files — they are no longer read, and a value that used to
+  disagree with `INVITER_ADDRESS` (previously a startup abort) now silently
+  proxies for `INVITER_ADDRESS` instead ([#46]).
 - **Breaking:** the attester account is named once by `ATTESTER_ACCOUNT`,
   replacing the per-service variables ([#32]).
 - The registration queue is now the default behaviour rather than opt-in
@@ -92,3 +100,4 @@ First release published as a multi-arch (amd64 + arm64) image.
 [#31]: https://github.com/paritytech/identity-backend-rust/pull/31
 [#32]: https://github.com/paritytech/identity-backend-rust/pull/32
 [#33]: https://github.com/paritytech/identity-backend-rust/pull/33
+[#46]: https://github.com/paritytech/identity-backend-rust/pull/46

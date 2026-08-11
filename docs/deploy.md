@@ -69,11 +69,11 @@ PEOPLE_NETWORK=<westend2|paseo|polkadot>
 INVITER_ADDRESS=<dim inviter SS58>        # its on-chain AvailableInvites funds dim tickets
 JWT_ED25519_PUBLIC_KEY=0x<64-hex>         # PUBLIC half of JWT_ED25519_SECRET (or set JWT_JWKS_JSON)
 INVITER_SIGNER_SURI=<secret>              # same accepted formats as the chain writer
-INVITER_PROXY_FOR=<inviter primary SS58 or empty>
+                                          # its account == INVITER_ADDRESS -> direct signing,
+                                          # otherwise it proxies for the inviter
 # invite-tickets (distinct account from the dim inviter — see Nonce lanes above)
 INVITE_INVITER_ADDRESS=<invite inviter SS58>   # funds set_invite_ticket; stamped into ticket rows
-INVITE_INVITER_SIGNER_SURI=<secret>            # hot invite inviter key (or its proxy delegate)
-INVITE_INVITER_PROXY_FOR=<inviter primary SS58 or empty>
+INVITE_INVITER_SIGNER_SURI=<secret>            # hot invite inviter key, or a delegate proxying for it
 
 # turn-api (stateless credential issuer; the secret is shared with the coturn relay)
 TURN_SECRET=<base64 of the relay's coturn static-auth-secret>   # base64 the RAW secret string; do not hex-decode it first
@@ -109,7 +109,7 @@ used to mean off; it now means on. Any environment that repoints `PEOPLE_RPC_URL
 away from PreviewNet without repointing `ASSET_HUB_RPC_URL` to the same network must
 set this flag to `false` in the same edit.
 
-The signer (or its proxy target) must be a registered attester authority with funds; the proxy relationship must already exist on-chain. Likewise each inviter (or the primary its `…PROXY_FOR` points at) must hold `AvailableInvites` on the `Game` / `ProofOfInk` pallets and funds for fees. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
+Each primary must already hold its on-chain privilege: `ATTESTER_ACCOUNT` a registered attester authority with an attestation allowance, and each inviter (`INVITER_ADDRESS` / `INVITE_INVITER_ADDRESS`) `AvailableInvites` on the `Game` / `ProofOfInk` pallets. Each signing key must hold funds for fees. Proxying is never configured: whenever a signing key's own account differs from the primary it is named against, the call is wrapped in `Proxy.proxy(real = primary)` — so that delegation must already exist on-chain. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
 
 The `notify-relay` provider secrets are optional: with none set the relay still boots and reports per-request provider failure for the unconfigured platform. `JWT_ED25519_PUBLIC_KEY` must be the public half of `identity-api`'s `JWT_ED25519_SECRET`.
 

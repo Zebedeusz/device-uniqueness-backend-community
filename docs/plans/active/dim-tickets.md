@@ -199,10 +199,11 @@ the apps use the synchronous claim flow instead.)
         signing, nonce lookup, submission, finalization, and finalized-header lookup; structured
         logs per tick (registered/failed counts, block number, warnings). Metrics/counters are
         the production-hardening slice, as for the other services.
-  - [x] Optional proxy signing (`INVITER_PROXY_FOR`): batch wrapped in
+  - [x] Proxy signing derived from `INVITER_ADDRESS` vs the signer's own account (`INVITER_PROXY_FOR`
+        removed in #46): batch wrapped in
         `Proxy.proxy(real, force_proxy_type: Some(Any))` — legacy signed with `Any`, unlike
         identity-chain-writer's `None`.
-  - [x] Extracted `crates/chain-client` (reconnecting connect + `WriterSigner`) — dim-tickets was
+  - [x] Extracted `crates/chain-client` (reconnecting connect + `WriterSigner` + `proxy_target`) — dim-tickets was
         the second consumer; identity-service now consumes it too (its local copies deleted).
 - **✅ Demo (partial, 2026-07-16)**: against local Postgres + live Paseo Next v2 with `//Alice` as
   inviter: a seeded `PENDING` ticket was batched, signed, submitted, and finalized on-chain five

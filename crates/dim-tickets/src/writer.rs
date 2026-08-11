@@ -47,11 +47,10 @@ pub struct WriterConfig {
     pub network: Network,
     /// Inviter partition this writer is allowed to process.
     pub inviter_address: String,
-    /// Secret of the hot inviter signing key (SURI or raw 64-byte hex).
+    /// Secret of the hot inviter signing key (SURI or raw 64-byte hex). A key
+    /// whose account is not `inviter_address` proxies for it — see
+    /// [`chain_client::WriterSigner::proxy_for`].
     pub signer_secret: String,
-    /// Optional cold inviter primary: when set, batches are wrapped in
-    /// `Proxy.proxy(real = this account, force_proxy_type = Any, …)`.
-    pub proxy_for: Option<AccountId32>,
     /// This writer instance's lease holder id.
     pub holder_id: String,
     /// Lease row name (all writers of one inviter share it).
@@ -85,7 +84,6 @@ impl std::fmt::Debug for WriterConfig {
             .field("network", &self.network)
             .field("inviter_address", &self.inviter_address)
             .field("signer_secret", &"<redacted>")
-            .field("proxy_for", &self.proxy_for)
             .field("holder_id", &self.holder_id)
             .field("lease_name", &self.lease_name)
             .field("lease_ttl", &self.lease_ttl)
@@ -118,13 +116,6 @@ impl WriterConfig {
         AccountId32::from_str(&inviter_address)
             .map_err(|e| anyhow::anyhow!("INVITER_ADDRESS is not valid SS58: {e}"))?;
         let signer_secret = required_env("INVITER_SIGNER_SURI")?;
-        let proxy_for = match std::env::var("INVITER_PROXY_FOR") {
-            Ok(v) if !v.trim().is_empty() => Some(
-                AccountId32::from_str(v.trim())
-                    .map_err(|e| anyhow::anyhow!("INVITER_PROXY_FOR is not valid SS58: {e}"))?,
-            ),
-            _ => None,
-        };
 
         let lease_ttl_secs = env_bounded_u64("WRITER_LEASE_TTL_SECS", 30, 3, MAX_INTERVAL_SECS)?;
         let poll_secs = env_bounded_u64("WRITER_POLL_SECS", 6, 1, MAX_INTERVAL_SECS)?;
@@ -147,7 +138,6 @@ impl WriterConfig {
             network,
             inviter_address,
             signer_secret,
-            proxy_for,
             holder_id: std::env::var("WRITER_HOLDER_ID")
                 .unwrap_or_else(|_| format!("dim-tickets-writer-{}", std::process::id())),
             lease_name: std::env::var("WRITER_LEASE_NAME")
@@ -171,13 +161,7 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
     let signer = WriterSigner::from_secret(&config.signer_secret)?;
     let configured_inviter = AccountId32::from_str(&config.inviter_address)
         .context("parsing validated INVITER_ADDRESS")?;
-    let signer_account = AccountId32(signer.public_bytes());
-    let effective_inviter = config.proxy_for.as_ref().unwrap_or(&signer_account);
-    if effective_inviter != &configured_inviter {
-        anyhow::bail!(
-            "effective signer account does not match INVITER_ADDRESS (effective {effective_inviter}, configured {configured_inviter})"
-        );
-    }
+    let proxy_for = signer.proxy_for(configured_inviter);
 
     let pool = crate::db::connect(&config.database_url).await?;
     let chain = ChainClient::connect(&config.people_rpc_url).await?;
@@ -186,7 +170,7 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
         network = %config.network.as_str(),
         inviter = %config.inviter_address,
         signer = %hex::encode(signer.public_bytes()),
-        proxy = config.proxy_for.is_some(),
+        mode = if proxy_for.is_some() { "proxy" } else { "direct" },
         holder = %config.holder_id,
         "dim-tickets-writer connected"
     );
@@ -200,6 +184,7 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
         pool,
         chain,
         signer,
+        proxy_for,
         config,
     };
     writer.run_forever().await
@@ -209,6 +194,8 @@ struct Writer {
     pool: PgPool,
     chain: ChainClient,
     signer: WriterSigner,
+    /// Derived once at connect time by [`chain_client::WriterSigner::proxy_for`].
+    proxy_for: Option<AccountId32>,
     config: WriterConfig,
 }
 
@@ -362,7 +349,7 @@ impl Writer {
         let submit = tokio::time::timeout(
             self.config.finalize_timeout,
             self.chain
-                .submit_invite_batch(&calls, &self.signer, self.config.proxy_for.as_ref()),
+                .submit_invite_batch(&calls, &self.signer, self.proxy_for.as_ref()),
         );
         // Renew the lease while awaiting finalization — it can outlast the TTL.
         let finalized = {
@@ -567,7 +554,6 @@ mod tests {
             network: Network::Paseo,
             inviter_address: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
             signer_secret: "s3cret-inviter-suri".to_string(),
-            proxy_for: None,
             holder_id: "test".to_string(),
             lease_name: "test".to_string(),
             lease_ttl: Duration::from_secs(30),
@@ -594,7 +580,6 @@ mod tests {
         "PEOPLE_NETWORK",
         "INVITER_ADDRESS",
         "INVITER_SIGNER_SURI",
-        "INVITER_PROXY_FOR",
         "WRITER_HOLDER_ID",
         "WRITER_LEASE_NAME",
         "WRITER_LEASE_TTL_SECS",
@@ -618,12 +603,6 @@ mod tests {
         ),
         ("INVITER_SIGNER_SURI", "//Inviter"),
     ];
-
-    /// Bob's well-known dev account: the SS58 form and the sr25519 public key
-    /// bytes it encodes, so the proxy parse is asserted against an independent
-    /// constant rather than round-tripped through the same parser.
-    const BOB_SS58: &str = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty";
-    const BOB_HEX: &str = "8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
 
     /// Clear the writer's vars, set `vars`, run `from_env`, then clear again —
     /// success and error paths alike leave the process environment clean.
@@ -659,7 +638,6 @@ mod tests {
                 "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
             ),
             ("INVITER_SIGNER_SURI", "//Inviter"),
-            ("INVITER_PROXY_FOR", BOB_SS58),
             ("WRITER_HOLDER_ID", "writer-test-1"),
             ("WRITER_LEASE_NAME", "custom-lease"),
             ("WRITER_LEASE_TTL_SECS", "45"),
@@ -680,8 +658,6 @@ mod tests {
             "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
         );
         assert_eq!(config.signer_secret, "//Inviter");
-        let bob: [u8; 32] = hex::decode(BOB_HEX).unwrap().try_into().unwrap();
-        assert_eq!(config.proxy_for, Some(AccountId32(bob)));
         assert_eq!(config.holder_id, "writer-test-1");
         assert_eq!(config.lease_name, "custom-lease");
         assert_eq!(config.lease_ttl, Duration::from_secs(45));
@@ -693,13 +669,10 @@ mod tests {
         assert_eq!(config.retry_max_exponent, 8);
         assert_eq!(config.finalize_timeout, Duration::from_secs(90));
 
-        // Required-only: every optional var falls back to its legacy default,
-        // and a whitespace-only proxy counts as unset.
-        let mut vars = REQUIRED_ENV.to_vec();
-        vars.push(("INVITER_PROXY_FOR", "   "));
+        // Required-only: every optional var falls back to its legacy default.
+        let vars = REQUIRED_ENV.to_vec();
         let config = from_env_with(&vars).unwrap();
         assert_eq!(config.network, Network::Paseo);
-        assert_eq!(config.proxy_for, None);
         assert_eq!(
             config.holder_id,
             format!("dim-tickets-writer-{}", std::process::id())
@@ -754,21 +727,13 @@ mod tests {
             "{err}"
         );
 
-        // Inviter and proxy addresses must be valid SS58, naming the var.
+        // The inviter address must be valid SS58, naming the var.
         let mut vars = REQUIRED_ENV.to_vec();
         vars.push(("INVITER_ADDRESS", "not-an-address"));
         let err = from_env_with(&vars).unwrap_err();
         assert!(
             err.to_string()
                 .contains("INVITER_ADDRESS is not valid SS58"),
-            "{err}"
-        );
-        let mut vars = REQUIRED_ENV.to_vec();
-        vars.push(("INVITER_PROXY_FOR", "not-an-address"));
-        let err = from_env_with(&vars).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("INVITER_PROXY_FOR is not valid SS58"),
             "{err}"
         );
 

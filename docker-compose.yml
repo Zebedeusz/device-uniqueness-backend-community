@@ -329,10 +329,9 @@ services:
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
-      # Dev signer. In prod this is the hot inviter key (or its proxy); set
-      # INVITER_PROXY_FOR to the cold inviter primary it signs for.
+      # Dev signer. In prod this is the hot inviter key, or a delegate that
+      # proxies for INVITER_ADDRESS — the wrap is derived from the two.
       INVITER_SIGNER_SURI: ${INVITER_SIGNER_SURI:-//Alice}
-      INVITER_PROXY_FOR: ${INVITER_PROXY_FOR:-}
       WRITER_LEASE_NAME: ${WRITER_LEASE_NAME:-dim-tickets-writer}
       WRITER_LEASE_TTL_SECS: ${WRITER_LEASE_TTL_SECS:-30}
       WRITER_POLL_SECS: ${WRITER_POLL_SECS:-6}
@@ -428,14 +427,13 @@ services:
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       # Dev signer (unfunded: batches finalize with ItemFailed and no tickets
-      # insert). In prod: the hot invite-inviter key, or a proxy delegate with
-      # …PROXY_FOR set to the cold inviter primary (= …ADDRESS).
+      # insert). In prod: the hot invite-inviter key, or a delegate that
+      # proxies for …ADDRESS (the wrap is derived from the two).
       # Interpolated from INVITE_INVITER_* so the invite pool can never share
       # the dim writer's signing account by default (nonce lanes — deploy.md).
       # Dev default = //Bob (dim's writer defaults to //Alice).
       INVITER_ADDRESS: ${INVITE_INVITER_ADDRESS:-5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty}
       INVITER_SIGNER_SURI: ${INVITE_INVITER_SIGNER_SURI:-//Bob}
-      INVITER_PROXY_FOR: ${INVITE_INVITER_PROXY_FOR:-}
       POOL_DIMS: ${POOL_DIMS:-Game,ProofOfInk}
       POOL_TARGET_SIZE: ${POOL_TARGET_SIZE:-10000}
       POOL_BATCH_MAX: ${POOL_BATCH_MAX:-100}
