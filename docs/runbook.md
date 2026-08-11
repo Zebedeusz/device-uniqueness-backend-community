@@ -10,14 +10,24 @@ Two compose projects share the host: the environment (the project name declared 
 
 Push to `main` → CI tests, builds `ghcr.io/paritytech/identity-backend-rust:<sha>`, and the server pulls + restarts (health-gated). Watch with `gh run watch`.
 
-Manual fallback (builds on the server):
+Manual restart, on the image CI already built for this checkout:
 
 ```bash
-cd ~/identity-backend-v2 && git pull && sudo docker compose up -d --build
+cd ~/identity-backend-v2 && git pull
+sudo IDENTITY_IMAGE=ghcr.io/paritytech/identity-backend-rust:$(git rev-parse HEAD) \
+  docker compose up -d --no-build
+# Image not cached locally? The server holds no ghcr credentials:
+#   echo <PAT with read:packages> | sudo docker login ghcr.io -u <user> --password-stdin
+# Last resort, builds on the server (several minutes):
+#   sudo docker compose up -d --build
 # only when the Caddyfile changed — a reload, not a restart (see Caddy / TLS / docs)
 sudo docker compose -f gateway/docker-compose.yml -p edge \
   exec -T caddy caddy reload --config /etc/caddy/Caddyfile
 ```
+
+Recreate the **whole project**, never a single service — `up -d <service>` on its own
+leaves the rest on the previous image, and a stack split across two builds fails in
+ways neither build does (an old writer reading config the new compose no longer passes).
 
 Migrations run automatically on boot — never by hand. Never overwrite the server's `.env`.
 
@@ -134,7 +144,9 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
   `0` = parked, absent = lane disabled. The parking `warn!` names the cause and
   is logged once per distinct cause, not once per pass — check the first
   occurrence, not the latest.
-- Restart alone: `sudo docker compose restart identity-chain-writer`.
+- Restart alone: `sudo docker compose restart identity-chain-writer`. `restart` reuses the
+  existing container, so it never changes the image; a version change is a project-wide
+  `up -d` (see [Deploys](#deploys)).
 
 ## Config / secrets
 
@@ -234,6 +246,8 @@ it only with a measurement from the slowest expected client.
 | Writer logs `queue advancer is down with claims queued; holding the throttle` | The registration queue is enabled but the `registration-queue` service is dead (lease stale/absent), so free-lane claims are parking as `QUEUED` and nothing is draining — this is deliberate: the queue is the free lane's throughput control and a dead queue never falls back to unthrottled direct registration. Restart it (`sudo docker compose restart registration-queue`); the queue resumes fair draining on its own. To retire the queue instead, set `QUEUE_ENABLED=false` for **both** identity-api and identity-chain-writer (writer last) — the writer then drains the leftovers after `QUEUE_FALLBACK_AFTER_SECS`. Treat a warning that persists past one restart as a page. |
 | Queue behaving oddly: `QUEUED` rows draining with the advancer down, or a stranded-queue warning while intake goes direct | `QUEUE_ENABLED` is split between identity-api and identity-chain-writer (writer off + api on = the janitor silently drains a queue the api is still filling — the throttle is gone; writer on + api off = warnings about leftovers no new claim joins). The values must match; `scripts/verify_compose_boundaries.sh` pins both wires. |
 | Rows stuck in `RETRY_AFTER` with wasm-trap errors | Invalid payload for `PeopleLite.attest`, or attester/proxy authorization missing on-chain. |
+| Any lane logging `The extrinsic payload is not compatible with the live chain` | The runtime changed shapes under the vendored metadata (a wipe or upgrade). Refresh `crates/chain-types/metadata/people.scale` with the `subxt metadata` command in the `chain-types` crate docs, `subxt diff` the old and new blobs to see what moved, then rebuild and deploy. |
+| Every extrinsic failing with `Transaction has a bad signature`, nonce back at 0 | The chain was reset: the process still holds the old genesis hash, captured when its client connected. Restart the service — reconnecting alone does not re-read it. Then re-check funding, proxy delegation and attestation allowance, which the reset also cleared. |
 | Writer exits at boot | Bad `CHAIN_WRITER_SIGNER_SURI` or DB unreachable. |
 | Username search fails while identity routes work | Check the indexer's logs and its Caddy route; for a direct `readyz`, layer the debug overlay and curl `127.0.0.1:8081`. |
 | TURN 201s minted but relay rejects the credentials | `TURN_SECRET`/`TURN_AUTH_ALGORITHM` drifted from the relay's coturn config — they must match exactly; rotate both together. `turn-api` itself is stateless (readyz never gates on anything). |

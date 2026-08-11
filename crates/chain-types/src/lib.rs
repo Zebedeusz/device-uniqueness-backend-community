@@ -17,7 +17,7 @@
 //! # Vendored metadata provenance
 //!
 //! - Source: Paseo Next v2 People Chain — `wss://paseo-people-next-system-rpc.polkadot.io`
-//! - Runtime: `next-people-paseo`, specVersion `1000029`, transactionVersion `3`
+//! - Runtime: `next-people-paseo`, specVersion `1000030`, transactionVersion `4`
 //! - Format: metadata V16, trimmed to pallets `System`, `Balances`, `Utility`,
 //!   `Proxy`, `People`, `PeopleLite`, `Resources`, `Game`, `ProofOfInk`
 //! - File: [`metadata/people.scale`](../metadata/people.scale)
@@ -371,11 +371,10 @@ macro_rules! noop_name {
     };
 }
 
-// Slot 0 of the People extension pipeline is named differently per runtime:
-// `next-people-paseo` 1000029 (Paseo Next v2) calls it `AuthorizeValueTransfer`
-// with an `Option<[u8; 64]>` value (encoded `None`), while 1000030 (PreviewNet)
-// calls it `UnitTransactionExtension` with a `()` value. Both names live in the
-// tuple; only the one the connected runtime declares is ever encoded.
+// Slot 0 differs per build, not per spec version: Paseo Next v2 declares
+// `AuthorizeValueTransfer` (`Option<[u8; 64]>`, encoded `None`), PreviewNet
+// declares `UnitTransactionExtension` (`()`). Both names live in the tuple;
+// only the one the connected runtime declares is encoded.
 noop_name!(UnitTransactionExtension, "UnitTransactionExtension");
 noop_name!(AuthorizeValueTransfer, "AuthorizeValueTransfer", &[0]);
 noop_name!(AsPerson, "AsPerson", &[0]);
@@ -478,13 +477,13 @@ mod tests {
     }
 
     /// The runtimes this workspace is verified against. Two People builds
-    /// captured 2026-08-01, two Asset Hub builds captured 2026-08-06. Not
+    /// captured 2026-08-11, two Asset Hub builds captured 2026-08-06. Not
     /// exhaustive. Within each family they differ in slot 0 only.
     const KNOWN_RUNTIMES: &[KnownRuntime] = &[
         KnownRuntime {
             env: "paseo-next-v2",
             spec_name: "next-people-paseo",
-            spec_version: 1_000_029,
+            spec_version: 1_000_030,
             tuple: TUPLE_EXTENSIONS,
             extensions: &[
                 "AuthorizeValueTransfer",
@@ -514,7 +513,7 @@ mod tests {
         KnownRuntime {
             env: "previewnet",
             spec_name: "next-people-paseo",
-            spec_version: 1_000_030,
+            spec_version: 1_000_032,
             tuple: TUPLE_EXTENSIONS,
             extensions: &[
                 "UnitTransactionExtension",
@@ -705,8 +704,8 @@ mod tests {
     fn offline_client_state() -> subxt::config::ClientState<super::PeopleConfig> {
         subxt::config::ClientState {
             genesis_hash: subxt::utils::H256::zero(),
-            spec_version: 1_000_029,
-            transaction_version: 3,
+            spec_version: 1_000_030,
+            transaction_version: 4,
             metadata: people_metadata(),
         }
     }
@@ -833,19 +832,19 @@ mod tests {
             config.spec_and_transaction_version_for_block_number(0),
             None
         );
-        assert!(config.metadata_for_spec_version(1_000_029).is_none());
+        assert!(config.metadata_for_spec_version(1_000_030).is_none());
 
         let metadata = people_metadata();
-        config.set_metadata_for_spec_version(1_000_029, metadata.clone());
+        config.set_metadata_for_spec_version(1_000_030, metadata.clone());
         let cached = config
-            .metadata_for_spec_version(1_000_029)
+            .metadata_for_spec_version(1_000_030)
             .expect("registered metadata is readable back");
         assert!(
             std::sync::Arc::ptr_eq(&cached, &metadata),
             "delegation must return the registered Arc"
         );
         assert!(
-            config.metadata_for_spec_version(1_000_030).is_none(),
+            config.metadata_for_spec_version(1_000_031).is_none(),
             "registration must not leak to other spec versions"
         );
     }

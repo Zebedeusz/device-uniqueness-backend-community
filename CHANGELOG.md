@@ -36,6 +36,9 @@ they summarise each release rather than list every change.
 
 ### Fixed
 
+- `invite-tickets-pool` submits ticket batches again after the Paseo Next v2
+  wipe: the vendored People metadata is recaptured at spec `1000030`, whose
+  `Game` calls and `Utility.force_batch` shape subxt validates payloads against.
 - Deploy creates the `ibv2-metrics` network before starting services, instead of
   failing on a host that never had it ([#29]).
 - `username-indexer` fails fast when the proof-of-compute gate is enabled with no
