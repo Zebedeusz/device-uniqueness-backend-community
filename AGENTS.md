@@ -56,7 +56,7 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 
 ## Commands
 
-- `just check` — the fast offline gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace`.
+- `just check` — the fast offline gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace` + `verify-config` (the deployment invariants below). Mirrors `check.yml`'s offline job exactly.
 - `just test-live-db` (also `just test-live`) — the deterministic Postgres gate: 12 suites / 33 ignored tests against a per-run isolated Compose project. CI runs it after `just check`; run both before declaring done.
 - `just test-live-chain` — optional Postgres + live People Chain suites; external RPC availability keeps it outside the merge/release gate.
 - `just test-live-providers` — optional credentialed APNs/FCM smokes; runs only the providers configured in the environment and fails if neither is configured.
@@ -65,6 +65,19 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 - Single test: `cargo test -p identity-service <name>` (or `-p chain-types`, `-p username-indexer`).
 - `just deny` — `cargo-deny` audit; **not** in `just check`, needs `cargo install cargo-deny`.
 - `just openapi` — regenerate the committed API reference (`docs/api-reference/openapi.json` + `index.html`) from the `#[utoipa::path]` annotations. Run after any change to a route, request/response type, status code, or example.
+- Images: **one per service, one binary each** (`docker-bake.hcl`). `docker buildx bake all`
+  builds all ten off a single `cargo build` — the Dockerfile's `builder` stage is shared and each
+  service stage copies just its own binary. Never add a stage that bundles several. All ten carry
+  one tag (`$IMAGE_REGISTRY/<service>:$IMAGE_TAG`); `scripts/verify_image_split.sh` (in `check.yml`)
+  fails if a service's stage, compose `build.target`, image repo, or tag drifts out of line, or if
+  a compose `command:` reappears to override an image's `CMD`.
+- Deployment gates, all in `check.yml` and reachable as `just verify-config` /
+  `just verify-routes`: `verify_compose_boundaries.sh` (compose secret allowlists),
+  `verify_image_split.sh` (one service/image/binary/tag + the release exporter shape),
+  `verify_helm_render.sh` (the same boundaries on the rendered chart, env-key parity with
+  compose, probe budgets), `verify_route_parity_live.sh` (real Caddy vs real Traefik).
+  **Kubernetes deployment** — chart in `helm/`, status and sequencing in
+  `docs/deploy.md` and `docs/plans/active/kubernetes-helm-deploy.md`.
 - Local stack: `docker network create ibv2-edge` once, then `docker compose up`
   (Postgres + `identity-api` + `identity-chain-writer` + `username-indexer` + its own Postgres).
   All env vars in `.env.example`. Nothing publishes a host port: add

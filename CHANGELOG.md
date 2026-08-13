@@ -1,7 +1,7 @@
 # Changelog
 
-Notable changes to the published `ghcr.io/paritytech/identity-backend-rust`
-image. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+Notable changes to the published images — `docker.io/paritytech/ibv2-<service>` publicly,
+`ghcr.io/paritytech/identity-backend-rust/<service>` for our own deploys. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0, a breaking change bumps the **minor**. External consumers should pin an
@@ -12,6 +12,34 @@ Entries at or before 0.1.2 predate this file and are reconstructed from history:
 they summarise each release rather than list every change.
 
 ## [Unreleased]
+
+### Changed
+
+- **BREAKING (consumers): one image per service.** The single multi-binary image
+  `ghcr.io/paritytech/identity-backend-rust:<tag>` is no longer published. Each of the ten
+  binaries now ships as its own image, `ghcr.io/paritytech/identity-backend-rust/<service>:<tag>`,
+  holding exactly that binary — smaller images, per-service vulnerability scanning, and an
+  independent rollback per service. **All ten always carry the same tag**; a per-service pin is
+  not supported. Anyone pinning the old path must move to the per-service repos and drop any
+  `command:` override, since each image's `CMD` is now its own binary. The compose bundle attached
+  to each release resolves the new paths from `IMAGE_REGISTRY`/`IMAGE_TAG`.
+
+### Added
+
+- Released images are mirrored to **public Docker Hub** — `docker pull
+  paritytech/ibv2-identity-api:stable` needs no account. `vX.Y.Z` and `stable` are on both
+  registries; `latest` stays ghcr-only, since it tracks unreleased `main`. Docker Hub
+  namespaces are one level, so the mirror is `paritytech/ibv2-<service>`, not a nested path
+  ([#50]).
+- Every release attaches per-platform binaries (`ibv2-<version>-<target>.tar.gz` for
+  x86_64 / aarch64 Linux and Apple Silicon), exported from the same builder layer the images
+  are built from, so the tarballs and the images hold the same bytes ([#50]).
+- The released `ibv2-compose-*.tar.gz` bundle now starts without a source tree: its
+  `docker-compose.yml` drops every `build:` stanza and pins all ten images to that release,
+  so `docker compose up -d` needs neither `--no-build` nor a manually set tag ([#50]).
+- Kubernetes deployment: a Helm chart under `helm/` rendering the ten workloads, per-workload
+  secrets, and the route table as a Traefik `IngressRoute`. See
+  [`docs/deploy.md`](docs/deploy.md#kubernetes-helm).
 
 ### Added
 
@@ -119,3 +147,4 @@ First release published as a multi-arch (amd64 + arm64) image.
 [#32]: https://github.com/paritytech/identity-backend-rust/pull/32
 [#33]: https://github.com/paritytech/identity-backend-rust/pull/33
 [#46]: https://github.com/paritytech/identity-backend-rust/pull/46
+[#50]: https://github.com/paritytech/identity-backend-rust/pull/50

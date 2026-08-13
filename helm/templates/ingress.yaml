@@ -1,0 +1,124 @@
+{{- $root := . -}}
+{{- $g := .Values.global -}}
+{{/*
+Traefik IngressRoute rather than a plain Ingress: the route table needs to match
+on METHOD and to negate a path (`GET /api/v1/usernames*` is the indexer's,
+except `/payment-status` and except non-GET), and `Ingress` path rules can
+express neither. Getting this wrong is the dangerous kind of wrong — the request
+still returns 200, just from the wrong service.
+*/}}
+{{- range $r := .Values.routes }}
+{{- if $r.stripPrefix }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-{{ $r.name }}
+  labels:
+    {{- include "ibv2.labels" (dict "name" (printf "strip-%s" $r.name) "root" $root) | nindent 4 }}
+spec:
+  stripPrefix:
+    prefixes: [{{ $r.stripPrefix | quote }}]
+---
+{{- end }}
+{{- end }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: identity-backend-v2
+  labels:
+    {{- include "ibv2.labels" (dict "name" "identity-backend-v2" "root" $root) | nindent 4 }}
+  annotations:
+    # external-dns publishes the record; the legacy chart points it at the
+    # cluster's Traefik. TODO with SRE: the legacy staging ingress also carries
+    # traefik-mtls-options@kubernetescrd — confirm whether this edge expects
+    # client certificates before assuming a plain public route.
+    {{- if $g.ingress.externalDnsTarget }}
+    external-dns.alpha.kubernetes.io/target: {{ $g.ingress.externalDnsTarget | quote }}
+    {{- end }}
+    {{- with $g.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  entryPoints:
+    {{- toYaml $g.ingress.entryPoints | nindent 4 }}
+  routes:
+    {{- range $r := $root.Values.routes }}
+    {{/* A route may target a workload or the static docs server. Anything else
+         is a typo, and a typo here routes real traffic to nothing. */}}
+    {{- $enabled := false }}
+    {{- if eq $r.service "api-docs" }}
+    {{- $enabled = $root.Values.docs.enabled }}
+    {{- else }}
+    {{- $svc := index $root.Values.workloads $r.service }}
+    {{- if not $svc }}{{ fail (printf "route %s names unknown service %s" $r.name $r.service) }}{{ end }}
+    {{/* A route to a SHARED service stays live even though this environment does
+         not deploy it — turn-api and notify-relay exist once and serve every
+         environment (gateway/Caddyfile does the same with an upstream that
+         names the other environment's instance). Disabling the workload and
+         dropping the route are different things: conflating them 404s a route
+         that works today. */}}
+    {{- $shared := and $r.shared $root.Values.global.sharedServiceNamespace }}
+    {{- $enabled = or $svc.enabled $shared }}
+    {{- if and $shared (not $svc.enabled) }}
+    {{- $_ := set $r "namespace" $root.Values.global.sharedServiceNamespace }}
+    {{- end }}
+    {{- end }}
+    {{- if $enabled }}
+    - kind: Rule
+      # {{ $r.name }}
+      match: Host(`{{ $g.ingress.host }}`) && ({{ $r.match }})
+      priority: {{ $r.priority }}
+      services:
+        - name: {{ $r.service }}
+          port: 80
+          {{- if $r.namespace }}
+          namespace: {{ $r.namespace }}
+          {{- end }}
+      {{- if $r.stripPrefix }}
+      middlewares:
+        - name: strip-{{ $r.name }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
+  tls:
+    secretName: {{ $g.ingress.tlsSecretName | default $g.ingress.host }}
+{{- if $g.ingress.redirectToHttps }}
+---
+{{/*
+Plain HTTP. The route table above is bound to the TLS entrypoint, so without
+this an http:// request matches no router and gets a 404 — where Caddy answers a
+308 to https. One catch-all rule with a redirect middleware restores that.
+
+Set `redirectToHttps: false` if the cluster edge already redirects at the
+entrypoint (an SRE question: the legacy stg ingress also carries
+traefik-mtls-options@kubernetescrd, which suggests this edge has opinions).
+*/}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-to-https
+  labels:
+    {{- include "ibv2.labels" (dict "name" "redirect-to-https" "root" $root) | nindent 4 }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: identity-backend-v2-redirect
+  labels:
+    {{- include "ibv2.labels" (dict "name" "identity-backend-v2-redirect" "root" $root) | nindent 4 }}
+spec:
+  entryPoints: [web]
+  routes:
+    - kind: Rule
+      match: Host(`{{ $g.ingress.host }}`)
+      # A service is required even though the middleware short-circuits.
+      services:
+        - name: identity-api
+          port: 80
+      middlewares:
+        - name: redirect-to-https
+{{- end }}

@@ -1,7 +1,22 @@
 default: check
 
-# Fast offline gate. CI also runs the deterministic `test-live-db` gate below.
-check: fmt-check lint test
+# Fast offline gate — the same set check.yml's `offline` job runs, so a green
+# `just check` means the same thing locally as in CI. (It drifted once: the
+# deployment gates were added to CI only, and nothing here noticed.)
+check: fmt-check lint test verify-config
+
+# The deployment invariants: compose secret boundaries, one-service-one-image,
+# and the chart's rendered output (boundaries, compose parity, probe budgets).
+# All offline. `verify-routes` needs docker and runs separately.
+verify-config:
+    scripts/verify_compose_boundaries.sh
+    scripts/verify_image_split.sh
+    scripts/verify_helm_render.sh
+
+# Route parity: real Caddy vs real Traefik over stub upstreams. Needs docker, so
+# it is its own CI job rather than part of `check`.
+verify-routes:
+    for f in helm/values-*.yaml; do scripts/verify_route_parity_live.sh "$f"; done
 
 fmt:
     cargo fmt --all

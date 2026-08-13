@@ -1,0 +1,67 @@
+# PreviewNet — a deliberate SUBSET, matching what the host deploy already runs:
+# identity-api, identity-chain-writer, username-indexer and their databases.
+#
+# Not deployed here, and why:
+#   - dim-tickets-*, invite-tickets-*  — their writers would share a nonce lane
+#     with the primary environment's inviter accounts
+#   - turn-api, notify-relay           — one instance of each serves every
+#                                        environment
+#   - registration-queue               — QUEUE_ENABLED is off here
+#
+# PreviewNet is the only network whose Asset Hub runs the reserve_name shape
+# this backend encodes, so it is the one environment where the dotNS lane is ON
+# — and both RPC URLs below must stay on PreviewNet for that to be safe.
+
+global:
+  envId: previewnet
+  sharedServiceNamespace: TODO-paseo-next-v2-namespace
+  ingress:
+    host: TODO.parity.io          # TODO: hostname from SRE
+  env:
+    PEOPLE_RPC_URL: wss://previewnet.substrate.dev/people
+    ASSET_HUB_RPC_URL: wss://previewnet.substrate.dev/asset-hub
+    DOTNS_GATEWAY_ENABLED: "true"
+    PEOPLE_NETWORK: paseo
+    QUEUE_ENABLED: "false"
+    ATTESTER_ACCOUNT: TODO
+    JWT_ED25519_PUBLIC_KEY: TODO
+  inviters:
+    dim: ""
+    invite: ""
+
+# turn-api and notify-relay are NOT deployed here — one instance of each serves
+# every environment — but their routes must still reach those shared instances,
+# exactly as gateway/Caddyfile points this environment's TURN_UPSTREAM and
+# NOTIFY_UPSTREAM at the paseo-next-v2 containers. Naming the namespace keeps
+# those routes live while the workloads stay disabled.
+#
+# (A `routes:` list here would REPLACE the base table, not extend it — Helm does
+# not merge lists. Hence a scalar.)
+#
+# TODO(SRE): cross-namespace service references require Traefik's provider to
+# allow them (`allowCrossNamespace`). If it is off, replace with an ExternalName
+# Service in this namespace pointing at
+# <service>.<paseo-namespace>.svc.cluster.local. Either way the shared instances
+# need a NetworkPolicy admitting this namespace.
+
+workloads:
+  identity-api:
+    env:
+      AUTH_ENABLED: "false"
+  registration-queue: { enabled: false }
+  dim-tickets-api: { enabled: false }
+  dim-tickets-writer: { enabled: false }
+  invite-tickets-api: { enabled: false }
+  invite-tickets-pool: { enabled: false }
+  turn-api: { enabled: false }
+  notify-relay: { enabled: false }
+
+secrets:
+  identity-api:
+    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/previewnet#IDENTITY_DATABASE_URL
+    JWT_ED25519_SECRET: ref+vault://kv/TODO/identity-backend-v2/previewnet#JWT_ED25519_SECRET
+  identity-chain-writer:
+    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/previewnet#IDENTITY_DATABASE_URL
+    CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/previewnet#CHAIN_WRITER_SIGNER_SURI
+  username-indexer:
+    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/previewnet#INDEXER_DATABASE_URL

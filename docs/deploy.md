@@ -118,8 +118,13 @@ The `turn-api` variables have compose dev defaults (placeholder secret, `example
 ## 3. Run
 
 ```bash
-# the environment (first build takes several minutes; migrations run on boot)
-sudo docker compose up -d --build
+# the ten service images — one cargo build, ten thin runtimes (several minutes
+# the first time). `bake` is the only builder: compose's per-service `build.target`
+# keys exist so `docker compose build` works too, but bake shares the compile.
+sudo docker buildx bake all
+
+# the environment (migrations run on boot, advisory-locked)
+sudo docker compose up -d --no-build
 
 # the public edge — acquires its certificate on first start
 sudo docker compose -f gateway/docker-compose.yml -p edge up -d
@@ -330,13 +335,57 @@ and the edge; it shares no database, no signing key, and no chain.
    that the original hostname is unchanged; and that a token from one
    environment is rejected by the other.
 
+## Kubernetes (Helm)
+
+**Status: not deployed anywhere yet.** The chart renders and is gated in CI; no cluster has
+been provisioned. Provisioning is SRE's — see [`sre-deployment-request.md`](sre-deployment-request.md)
+— and the sequencing lives in [`plans/active/kubernetes-helm-deploy.md`](plans/active/kubernetes-helm-deploy.md).
+Everything above (the single host, compose, the Caddy edge) is what actually serves traffic today.
+
+The chart is [`helm/`](../helm): one loop over ten workloads, plus a static server for the API
+reference. One values file per environment.
+
+```bash
+helm template ibv2 helm -f helm/values-paseo-next-v2.yaml --set global.imageTag=<sha>
+```
+
+It refuses to render rather than deploy something nobody chose. It will fail if: `imageTag` or
+the ingress host is unset; a single-instance worker has `replicas != 1`; the two inviters share a
+signing account; a secret is missing, plaintext, or handed to a workload that does not declare it;
+`JWT_ED25519_PUBLIC_KEY` or `ATTESTER_ACCOUNT` is still the committed dev value; the dotNS lane is
+on without an Asset Hub; the queue is on without its advancer; or metrics are off while the
+workers are probed on `:9090`.
+
+Compose and the chart are **two renderings of one config contract**, and CI keeps them in step:
+
+| Gate | What it holds | Where |
+|---|---|---|
+| `verify_compose_boundaries.sh` | no service reads another's secret (compose) | offline |
+| `verify_image_split.sh` | one service, one image, one binary, one tag; release exporter shape | offline (+ `RUNTIME_CHECK=1` against published images) |
+| `verify_helm_render.sh` | same, on the rendered chart; env-key parity with compose; probe budgets cover compose's | offline |
+| `verify_route_parity_live.sh` | real Caddy and real Traefik answer every route class identically | its own job (needs docker) |
+
+Run the offline three with `just verify-config`, the last with `just verify-routes`.
+
+Differences from the compose topology, and why:
+
+- **Migrations are unchanged** — each service applies its own schema on boot under an advisory
+  lock. There is deliberately no migration Job: one would let a workload migrate a database it
+  otherwise never touches.
+- **`/docs`** is a ConfigMap behind a static server, with a `stripPrefix` middleware standing in
+  for Caddy's `handle_path`.
+- **turn-api and notify-relay are shared**: an environment that does not deploy them still routes
+  to the instances that do, via `global.sharedServiceNamespace`.
+- **The APNs key** is a Secret volume at mode `0440` with `fsGroup: 10001`, not a host path.
+
 ## Release images
 
 Pushing a `v*` tag runs [`release.yml`](../.github/workflows/release.yml), publishing a
-multi-arch (`linux/amd64` + `linux/arm64`) image to
-`ghcr.io/paritytech/identity-backend-rust` tagged `1.2.3` and `v1.2.3`. Each architecture
-builds on its own native runner and the two are joined into one manifest list, so a single
-tag serves both. Releases are independent of the `main` deploy above: tagging never
+**ten** multi-arch (`linux/amd64` + `linux/arm64`) images —
+`ghcr.io/paritytech/identity-backend-rust/<service>` — each tagged `1.2.3`, `v1.2.3` and
+(for a non-pre-release) `stable`. Each architecture builds on its own native runner, pushing
+by digest; the digests are then joined into one manifest list per service, so a single tag
+serves both architectures and all ten services move together. Releases are independent of the `main` deploy above: tagging never
 restarts production, and `latest` keeps tracking `main`. Tag a commit that already passed
 CI on `main` — the release workflow builds and publishes without re-running the test gate.
 
@@ -344,13 +393,38 @@ CI on `main` — the release workflow builds and publishes without re-running th
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-The package inherits the repo's private visibility, so external consumers need a GitHub
+The same digests are published to two registries:
+
+| Registry | Tags | Who it is for |
+|---|---|---|
+| `ghcr.io/paritytech/identity-backend-rust/<service>` | `vX.Y.Z`, `X.Y.Z`, `stable`, `latest` | our own deploys — inherits the repo's **private** visibility |
+| `docker.io/paritytech/ibv2-<service>` | `vX.Y.Z`, `X.Y.Z`, `stable` | **public**, unauthenticated `docker pull` for external consumers |
+
+Docker Hub namespaces are one level (`org/name`), so the mirror flattens the ghcr path into an
+`ibv2-` prefix: **ten repositories**, `paritytech/ibv2-identity-api` … `paritytech/ibv2-notify-relay`,
+not one. Override the prefix with the `DOCKERHUB_PREFIX` repository variable; the credentials are
+the `DOCKERHUB_USER` / `DOCKERHUB_PASSWORD` secrets.
+
+Each of the ten must exist **and be public**. A push can auto-create a repository, but the org's
+default visibility decides what it is created as — so pushing may well produce ten *private* repos,
+which succeeds at push time and defeats the entire point of the mirror. `latest` is deliberately ghcr-only: it tracks `main`, and unreleased work
+should not be what an outside consumer picks up by default. The mirror is skipped with a
+warning (not a failure) when `DOCKERHUB_USER` is unset — ghcr is the lane our deploys pull
+from and must not be held hostage by a Docker Hub token. Release-time checks assert each
+mirrored repository is **anonymously pullable**, asked with no credentials at all, so a
+private Docker Hub repository fails the release rather than someone else's `docker pull`.
+
+The ghcr packages inherit the repo's private visibility, so external consumers need a GitHub
 token with `read:packages` (SSO-authorized for `paritytech`) to pull. Make the package
 public only as a deliberate decision — it publishes binaries of a private repo.
 
-To run a release image rather than build one, set `IDENTITY_IMAGE` to the tag and pass
-`--no-build`; otherwise compose rebuilds from source, because every application service
-declares `build: .`. The services each fail fast on missing configuration:
+To run released images rather than build them, set `IMAGE_REGISTRY` and `IMAGE_TAG` and pass
+`--no-build` (`IMAGE_REGISTRY=ghcr.io/paritytech/identity-backend-rust IMAGE_TAG=v0.2.0
+docker compose pull`). Each service resolves to its own repo —
+`$IMAGE_REGISTRY/<service>:$IMAGE_TAG` — and **all ten always carry the same tag**: a
+per-service pin makes "which build is this environment on?" unanswerable, and
+`scripts/verify_image_split.sh` fails the build if the compose file drifts that way. The
+services each fail fast on missing configuration:
 
 | Service | Required |
 |---|---|

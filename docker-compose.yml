@@ -28,10 +28,11 @@ services:
   # N-replica HTTP API. Stateless; scale with `--scale identity-api=N`.
   # Applies embedded migrations on boot (advisory-locked, safe across replicas).
   identity-api:
-    build: .
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: identity-api
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/identity-api:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["identity-api"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,12 +92,14 @@ services:
       start_period: 40s
 
   # Single-instance worker: drains the reservation outbox onto People Chain.
-  # Reuses the image built by identity-api. MUST stay at exactly one replica —
+  # Owns the `identity-chain-writer` image (one binary). MUST stay at exactly one replica —
   # one signer = one nonce lane. Do not `--scale` this service.
   identity-chain-writer:
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: identity-chain-writer
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/identity-chain-writer:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["identity-chain-writer"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -162,9 +165,11 @@ services:
   # instead drains leftovers). The lease also guards single-instance
   # promotion; keep it at one replica.
   registration-queue:
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: registration-queue
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/registration-queue:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["registration-queue"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -206,12 +211,12 @@ services:
 
   # Independent public username-read service. Bootstraps a finalized projection
   # from People Chain, then serves rate-limited prefix search.
-  # Reuses the image built by identity-api.
   username-indexer:
-    build: .
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: username-indexer
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/username-indexer:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["username-indexer"]
     depends_on:
       username-indexer-postgres:
         condition: service_healthy
@@ -278,10 +283,11 @@ services:
   # N-replica HTTP API for the frozen /api/v1/dim-ticket surface. Verify-only:
   # holds the identity JWT PUBLIC key only, never a signing secret. Runs on
   dim-tickets-api:
-    build: .
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: dim-tickets-api
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/dim-tickets-api:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["dim-tickets-api"]
     depends_on:
       dim-tickets-postgres:
         condition: service_healthy
@@ -318,14 +324,16 @@ services:
       start_period: 40s
 
   # Single-instance worker: registers pending DIM tickets on People Chain.
-  # Reuses the image built above. MUST stay at exactly one replica — one
+  # Owns the `dim-tickets-writer` image (one binary). MUST stay at exactly one replica — one
   # inviter key = one nonce lane. Do not `--scale` this service. The inviter
   # signing secret lives ONLY here: not in dim-tickets-api, not in any
   # identity service.
   dim-tickets-writer:
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: dim-tickets-writer
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/dim-tickets-writer:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["dim-tickets-writer"]
     depends_on:
       dim-tickets-postgres:
         condition: service_healthy
@@ -381,10 +389,11 @@ services:
   # DB-only (never touches the People Chain) and holds no signing secret —
   # explicit environment, no .env pass-through.
   invite-tickets-api:
-    build: .
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: invite-tickets-api
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/invite-tickets-api:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["invite-tickets-api"]
     depends_on:
       invite-tickets-postgres:
         condition: service_healthy
@@ -425,9 +434,11 @@ services:
   # same signing account as dim-tickets-writer (nonce lane conflict — see
   # docs/deploy.md). Do not `--scale` this.
   invite-tickets-pool:
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: invite-tickets-pool
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/invite-tickets-pool:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["invite-tickets-pool"]
     depends_on:
       invite-tickets-postgres:
         condition: service_healthy
@@ -465,10 +476,11 @@ services:
   # must be configured with the SAME secret and algorithm, or minted
   # credentials will not authenticate). Safe to scale.
   turn-api:
-    build: .
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: turn-api
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/turn-api:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["turn-api"]
     environment:
       BIND_ADDR: 0.0.0.0:8080
       # Dev secret (base64 of 32×0x42 — the golden-capture secret). In prod
@@ -509,10 +521,11 @@ services:
   # Push secrets are service-owned (from the server's chmod-600 .env); absent
   # providers report per-request failure without affecting readiness.
   notify-relay:
-    build: .
-    image: ${IDENTITY_IMAGE:-identity-backend-v2:local}
+    build:
+      context: .
+      target: notify-relay
+    image: ${IMAGE_REGISTRY:-identity-backend-v2}/notify-relay:${IMAGE_TAG:-local}
     restart: unless-stopped
-    command: ["notify-relay"]
     environment:
       BIND_ADDR: 0.0.0.0:8080
       # Verifies identity-service JWTs. Dev default = the public half of

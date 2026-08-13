@@ -10,6 +10,21 @@ jobs:
       - uses: actions/checkout@v7
       - name: compose configuration boundaries
         run: scripts/verify_compose_boundaries.sh
+      # One service, one image, one binary. Static (bake --print + compose
+      # config), so it belongs in the offline job next to the boundary checks.
+      - name: image split
+        run: scripts/verify_image_split.sh
+      - uses: azure/setup-helm@v4
+      # Renders every environment and checks two things against the ARTIFACT:
+      # secret boundaries (the Kubernetes form of the compose allowlists) and
+      # env-key parity with docker-compose.yml. No cluster involved.
+      - name: helm lint
+        run: |
+          for f in helm/values-*.yaml; do
+            helm lint helm -f "$f" --set global.imageTag=lint-only
+          done
+      - name: helm render boundaries and compose parity
+        run: scripts/verify_helm_render.sh
       - uses: Swatinem/rust-cache@v2
       - name: rustfmt
         run: cargo fmt --all -- --check
@@ -17,6 +32,23 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: tests
         run: cargo test --workspace
+
+  # Route parity runs REAL Caddy and REAL Traefik against stub upstreams, so it
+  # needs docker and cannot live in the offline job. It replaced a static check
+  # that re-implemented both proxies' matching and consequently missed a
+  # stripped-prefix bug and every Caddyfile-side edit.
+  routes:
+    needs: offline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v4
+      - name: route parity — every environment
+        run: |
+          for f in helm/values-*.yaml; do
+            echo "=== $f"
+            scripts/verify_route_parity_live.sh "$f"
+          done
 
   database:
     needs: offline

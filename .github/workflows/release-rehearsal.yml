@@ -1,0 +1,63 @@
+name: Release rehearsal
+
+# The release lane publishes ten images by digest and joins ten manifest lists,
+# and none of that runs until someone pushes a `v*` tag. That is how it came to
+# be broken for every release without anyone noticing: `--print` looked right,
+# and nothing ever pushed.
+#
+# This rehearses the whole lane against a throwaway local registry. It is NOT on
+# every PR — it recompiles the workspace, and `scripts/verify_image_split.sh`
+# already asserts the exporter *shape* offline on every push. This catches what
+# a shape check cannot: the registry refusing what we actually send it.
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, so a break is found within days rather than at the next release.
+    - cron: "0 6 * * 1"
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports: ["5000:5000"]
+    env:
+      IMAGE_REGISTRY: localhost:5000/rehearsal
+      IMAGE_TAG: 0.0.0-rehearsal
+    steps:
+      - uses: actions/checkout@v7
+      # push-by-digest is unimplemented on the default docker driver; the
+      # container driver is what CI's setup-buildx-action provides, and what a
+      # laptop reproducing this needs to create by hand.
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker-container
+          driver-opts: network=host
+
+      - name: Build and push all ten by digest
+        env:
+          PUSH_BY_DIGEST: "true"
+        run: docker buildx bake all --metadata-file metadata.json
+
+      - name: Join each service's digest into a tagged manifest list
+        run: |
+          count=0
+          for svc in $(docker buildx bake --print all | jq -r '.group.all.targets[]'); do
+            digest="$(jq -r --arg s "$svc" '.[$s]["containerimage.digest"]' metadata.json)"
+            [ -n "$digest" ] && [ "$digest" != "null" ] ||
+              { echo "::error::$svc produced no digest"; exit 1; }
+            docker buildx imagetools create \
+              -t "$IMAGE_REGISTRY/$svc:$IMAGE_TAG" -t "$IMAGE_REGISTRY/$svc:stable" \
+              "$IMAGE_REGISTRY/$svc@$digest"
+            count=$((count + 1))
+          done
+          [ "$count" -eq 10 ] || { echo "::error::expected 10 services, joined $count"; exit 1; }
+
+      - name: The registry serves every tag
+        run: |
+          for svc in $(docker buildx bake --print all | jq -r '.group.all.targets[]'); do
+            docker buildx imagetools inspect "$IMAGE_REGISTRY/$svc:$IMAGE_TAG" >/dev/null
+            docker buildx imagetools inspect "$IMAGE_REGISTRY/$svc:stable" >/dev/null
+          done
+          echo "ten images, twenty tags, all resolvable"

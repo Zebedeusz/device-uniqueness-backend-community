@@ -1,0 +1,353 @@
+# Chart values — see docs/plans/active/kubernetes-helm-deploy.md, Phase 2.
+#
+# GENERATED SHAPE, HAND-MAINTAINED: the per-workload `env` keys were lifted from
+# docker-compose.yml so the two cannot disagree by transcription error, and
+# scripts/verify_helm_render.sh fails CI if they drift apart afterwards.
+
+global:
+  # Names the environment. One values file per environment overrides this.
+  envId: paseo-next-v2
+
+  # Namespace holding the SHARED services (turn-api, notify-relay) for
+  # environments that do not deploy their own. Empty = this environment runs
+  # them itself.
+  sharedServiceNamespace: ""
+
+  # ONE registry, ONE tag, all ten images. The per-service repo name is the
+  # workload key below — never a per-service tag (see the plan's Contracts).
+  imageRegistry: ghcr.io/paritytech/identity-backend-rust
+  imageTag: ""
+  imagePullPolicy: IfNotPresent
+
+  ingress:
+    host: ""
+    # The route table is TLS-terminated, so it binds to websecure only; `web`
+    # gets a redirect router instead (see redirectToHttps). Binding the table to
+    # both would leave plain HTTP matching nothing at all.
+    entryPoints: [websecure]
+    redirectToHttps: true
+    # Defaults to the hostname, matching the legacy chart's per-host TLS secret.
+    tlsSecretName: ""
+    externalDnsTarget: ""
+    annotations: {}
+
+  # Default resource requests. ESTIMATES — there has been no load test, and the
+  # plan says so. Requests only, plus a memory limit: a CPU limit would throttle
+  # the chain writers' burst on batch submission for no benefit on a node they
+  # do not otherwise saturate. Override per workload below.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+  # Config inherited verbatim by every workload that lists the key in its
+  # `globalEnv`. The paired flags live HERE and only here: DOTNS_GATEWAY_ENABLED
+  # and QUEUE_ENABLED are each read by two processes, and a split value is
+  # silently destructive (see the plan's Contracts).
+  env:
+    BIND_ADDR: "0.0.0.0:8080"
+    PEOPLE_RPC_URL: "wss://previewnet.substrate.dev/people"
+    ASSET_HUB_RPC_URL: "wss://previewnet.substrate.dev/asset-hub"
+    PEOPLE_NETWORK: "paseo"
+    DOTNS_GATEWAY_ENABLED: "true"
+    QUEUE_ENABLED: "false"
+    ATTESTER_ACCOUNT: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+    JWT_ED25519_PUBLIC_KEY: "0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+    JWT_JWKS_JSON: ""
+    METRICS_ENABLED: "true"
+    METRICS_ADDR: "0.0.0.0:9090"
+    RUST_LOG: "info"
+    # One JSON object per event, which is what makes the aggregated logs
+    # queryable by field. The service/environment/container are NOT in the body —
+    # the log shipper labels them from the platform's metadata, so nothing here
+    # needs to name the environment.
+    LOG_FORMAT: "json"
+
+  # The two inviters MUST be different accounts — one account is one nonce
+  # lane, and two submitters on it race. Asserted at template time.
+  inviters:
+    dim: ""
+    invite: ""
+
+# Secret VALUES never appear here: each entry is a vault reference resolved at
+# apply time. Templates reject anything not starting with `ref+vault://`, so a
+# plaintext secret cannot reach a values file (the legacy chart's mistake —
+# see the plan's Contracts). Keys are declared per workload in `secretKeys`.
+secrets: {}
+
+workloads:
+  dim-tickets-api:
+    enabled: true
+    kind: http
+    replicas: 2
+    inviter: dim   # which global.inviters entry funds this workload
+    # Startup grace. NOT `start_period` alone — that is the window before
+    # failures COUNT; compose then allows retries x interval on top. Using only
+    # start_period gave turn-api (which has none) a budget of 10s, which the
+    # template rounded to failureThreshold: 1 — one refused connection at boot
+    # and the kubelet kills the container. Total = start_period + retries x interval.
+    startupSeconds: 90
+    globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, PEOPLE_NETWORK, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL]
+    env:
+      QUOTA_TIMEOUT_SECS: "15"
+      RATE_LIMIT: "30"
+      RATE_LIMIT_WINDOW_SECS: "60"
+
+  dim-tickets-writer:
+    enabled: true
+    kind: worker
+    # Single-instance: one signer/advancer = one lane. Never scale.
+    singleton: true
+    replicas: 1
+    inviter: dim   # which global.inviters entry funds this workload
+    globalEnv: [PEOPLE_RPC_URL, PEOPLE_NETWORK, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL, INVITER_SIGNER_SURI]
+    env:
+      WRITER_BATCH_SIZE: "10"
+      WRITER_FINALIZE_SECS: "120"
+      WRITER_LEASE_NAME: "dim-tickets-writer"
+      WRITER_LEASE_TTL_SECS: "30"
+      WRITER_MAX_RETRIES: "5"
+      WRITER_POLL_SECS: "6"
+      WRITER_RETRY_BASE_MS: "1000"
+      WRITER_RETRY_MAX_EXPONENT: "10"
+      WRITER_RETRY_MAX_MS: "60000"
+
+  identity-api:
+    enabled: true
+    kind: http
+    replicas: 2
+    # Startup grace, from the compose healthcheck's start_period.
+    startupSeconds: 90
+    globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL, JWT_ED25519_SECRET]
+    env:
+      ACCESS_TOKEN_TTL_SECS: "86400"
+      AUTH_ENABLED: "false"
+      AUTH_RATE_LIMIT: "30"
+      AUTH_RATE_WINDOW_SECS: "60"
+      CHALLENGE_TTL_SECS: "300"
+      DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: "600"
+      DOTNS_MAX_FUTURE_SKEW_SECS: "30"
+      ENFORCE_AUTH: "false"
+      JWT_ISSUER: "polkadot-app"
+      REFRESH_TOKEN_TTL_SECS: "2592000"
+
+  identity-chain-writer:
+    enabled: true
+    kind: worker
+    # Single-instance: one signer/advancer = one lane. Never scale.
+    singleton: true
+    replicas: 1
+    globalEnv: [PEOPLE_RPC_URL, ASSET_HUB_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL, CHAIN_WRITER_SIGNER_SURI]
+    env:
+      ATTESTER_ALLOWANCE_FLOOR: "100"
+      ATTESTER_RESOURCE_POLL_SECS: "60"
+      ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK: "10000000000"
+      CHAIN_WRITER_BATCH_SIZE: "25"
+      CHAIN_WRITER_FINALIZE_SECS: "120"
+      CHAIN_WRITER_HOLDER_ID: ""
+      CHAIN_WRITER_LEASE_NAME: "people-chain-writer"
+      CHAIN_WRITER_LEASE_TTL_SECS: "30"
+      CHAIN_WRITER_MAX_ATTEMPTS: "8"
+      CHAIN_WRITER_POLL_SECS: "2"
+      QUEUE_FALLBACK_AFTER_SECS: "60"
+
+  invite-tickets-api:
+    enabled: true
+    kind: http
+    replicas: 2
+    # Startup grace, from the compose healthcheck's start_period.
+    startupSeconds: 70
+    globalEnv: [BIND_ADDR, PEOPLE_NETWORK, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL]
+    env:
+      RATE_LIMIT: "30"
+      RATE_LIMIT_WINDOW_SECS: "60"
+
+  invite-tickets-pool:
+    enabled: true
+    kind: worker
+    # Single-instance: one signer/advancer = one lane. Never scale.
+    singleton: true
+    replicas: 1
+    inviter: invite   # which global.inviters entry funds this workload
+    globalEnv: [PEOPLE_RPC_URL, PEOPLE_NETWORK, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL, INVITER_SIGNER_SURI]
+    env:
+      POOL_BATCH_MAX: "100"
+      POOL_DIMS: "Game,ProofOfInk"
+      POOL_FINALIZE_SECS: "60"
+      POOL_INTERVAL_SECS: "6"
+      POOL_TARGET_SIZE: "10000"
+
+  notify-relay:
+    enabled: true
+    kind: http
+    replicas: 2
+    # Startup grace, from the compose healthcheck's start_period.
+    startupSeconds: 55
+    globalEnv: [BIND_ADDR, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    # Absent = the unconfigured stub provider, a legitimate state, so this is
+    # optional rather than required. notify-relay has no database.
+    optionalSecretKeys: [FCM_SERVICE_ACCOUNT_JSON]
+    # The APNs signing key is a FILE, not an env value: APNS_PRIVATE_KEY_FILE
+    # above is the path the service reads. Compose bind-mounts it from the host;
+    # in the cluster it comes from a Secret, mounted read-only. Set
+    # `secret: <name>` to the Secret holding an `apns.p8` key. Unset = no mount,
+    # and iOS pushes report provider failure rather than the pod failing to
+    # start — the same degradation compose has.
+    keyFile:
+      secret: ""
+      path: /run/secrets/notify
+      # 0440 with fsGroup 10001: owner root, group appuser, group-readable.
+      # 0400 would be root-only and the service could not open it.
+      mode: 0440
+    env:
+      APNS_ENVIRONMENT: ""
+      APNS_KEY_ID: ""
+      APNS_PRIVATE_KEY_FILE: "/run/secrets/notify/apns.p8"
+      APNS_TEAM_ID: ""
+      APNS_TOPIC: ""
+      NOTIFY_RATE_LIMIT: "60"
+      NOTIFY_RATE_LIMIT_WINDOW_SECS: "60"
+
+  registration-queue:
+    enabled: true
+    kind: worker
+    # Single-instance: one signer/advancer = one lane. Never scale.
+    singleton: true
+    replicas: 1
+    globalEnv: [PEOPLE_RPC_URL, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL]
+    env:
+      QUEUE_ADVANCE_INTERVAL_SECS: "6"
+      QUEUE_LEASE_TTL_SECS: "30"
+
+  turn-api:
+    enabled: true
+    kind: http
+    replicas: 2
+    # Startup grace, from the compose healthcheck's start_period.
+    startupSeconds: 50
+    globalEnv: [BIND_ADDR, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [TURN_SECRET]
+    env:
+      ICE_SERVERS: "stun:stun.example.com:3478,turn:turn.example.com:3478?transport=udp"
+      RATE_LIMIT: "30"
+      RATE_LIMIT_WINDOW_SECS: "60"
+      TURN_AUTH_ALGORITHM: "SHA1"
+      TURN_REALM: "example.org"
+      TURN_TTL_SECS: "1800"
+
+  username-indexer:
+    enabled: true
+    kind: http
+    # The only service with a meaningful working set: it holds a projection of
+    # finalized chain state and rebuilds it on first boot.
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    replicas: 2
+    # Startup grace, from the compose healthcheck's start_period.
+    startupSeconds: 350
+    globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    secretKeys: [DATABASE_URL]
+    # Required only when POC_ENABLED is true; the service refuses to boot then.
+    optionalSecretKeys: [POC_HMAC_SECRET]
+    env:
+      POC_DIFFICULTY_BITS: "16"
+      POC_ENABLED: "false"
+      SEARCH_RATE_LIMIT: "60"
+      SEARCH_RATE_LIMIT_WINDOW_SECS: "60"
+      STORAGE_PAGE_SIZE: "1000"
+      SYNC_INTERVAL_SECS: "30"
+
+# The committed API reference, served at /docs. `helm/files` is a SYMLINK to
+# docs/api-reference — the generated artifact, never a copy, so the two cannot
+# drift (`just openapi` regenerates it and a test forbids hand-edits).
+# scripts/verify_route_parity.sh checks the link still resolves.
+docs:
+  enabled: true
+  # Static content only; no application image is involved.
+  image: nginxinc/nginx-unprivileged:1.27-alpine
+  replicas: 2
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+# The route table: one public origin, six services behind it. This is the
+# committed ownership map from gateway/Caddyfile, translated. Order is explicit
+# (`priority`, highest first) rather than inherited from rule length, because
+# the carve-outs below depend on it.
+#
+# A route whose service is disabled in this environment is skipped, so the
+# previewnet subset renders a smaller table rather than dangling references.
+#
+# NOTE: `/docs*` is not here yet — Caddy serves it from a file_server, and the
+# Kubernetes equivalent (the committed API reference as a ConfigMap) lands with
+# the route-parity work in Phase 5.
+routes:
+  # GET username reads belong to the indexer — EXCEPT the payment-status poll,
+  # which is identity-api's, and except every non-GET method (the write and
+  # availability surface, and the collection-root CORS preflight). Plain
+  # path-prefix Ingress cannot express either carve-out; this is why the chart
+  # renders a Traefik IngressRoute.
+  # The committed API reference. Caddy serves this from a file_server; the
+  # cluster serves it from a ConfigMap behind a static server, so the ownership
+  # map stays complete.
+  - name: docs
+    match: PathPrefix(`/docs`)
+    service: api-docs
+    priority: 110
+    # Caddy uses `handle_path /docs*`, which STRIPS the prefix before the file
+    # server sees it. Without the same strip here the static server is handed
+    # /docs/openapi.json, looks for it under its document root, and 404s — while
+    # its readiness probe (/index.html) stays green. Ownership parity is not
+    # path parity.
+    stripPrefix: /docs
+  - name: username-reads
+    match: Method(`GET`) && PathPrefix(`/api/v1/usernames`) && !Path(`/api/v1/usernames/payment-status`)
+    service: username-indexer
+    priority: 100
+  - name: dim-tickets
+    match: PathPrefix(`/api/v1/dim-ticket`)
+    service: dim-tickets-api
+    priority: 90
+  - name: invite-tickets
+    match: PathPrefix(`/api/v1/invitation-ticket/`)
+    service: invite-tickets-api
+    priority: 90
+  # shared: one instance serves every environment. Where the workload is
+  # disabled, the route still resolves — to global.sharedServiceNamespace.
+  - name: turn
+    match: PathPrefix(`/api/v1/turn/`)
+    service: turn-api
+    shared: true
+    priority: 90
+  - name: notify
+    match: PathPrefix(`/api/v1/notify`)
+    service: notify-relay
+    shared: true
+    priority: 90
+  # Proof-of-compute gates the indexer's own public search, so it is the
+  # indexer's route. Off by default, in which case the service answers 404.
+  - name: proof-of-compute
+    match: PathPrefix(`/api/v1/poc`)
+    service: username-indexer
+    priority: 90
+  # Everything else: auth, attester, username writes, JWKS, health.
+  - name: default
+    match: PathPrefix(`/`)
+    service: identity-api
+    priority: 1

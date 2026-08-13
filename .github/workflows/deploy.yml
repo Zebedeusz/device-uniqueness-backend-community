@@ -29,8 +29,11 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'Dockerfile'
+              - 'docker-bake.hcl'
               - '.dockerignore'
               - 'docker-compose.yml'
+              - 'helm/**'
+              - 'scripts/**'
               - '.env.example'
               - 'justfile'
               - 'rust-toolchain.toml'
@@ -54,15 +57,41 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # One bake, ten images: the targets share the Dockerfile's `builder`
+      # stage, so the workspace is compiled once. A build matrix would compile
+      # it ten times.
+      #
+      # Registry-backed cache rather than type=gha: bake runs here as a plain
+      # command, and the GitHub cache backend needs runtime credentials that
+      # are only exported to actions, not to `run:` steps.
+      - name: Build and push all ten images
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+          CACHE_FROM: ghcr.io/${{ github.repository }}/buildcache:main
+          CACHE_TO: ghcr.io/${{ github.repository }}/buildcache:main
+        run: docker buildx bake --push all
+      # What was actually published, not what the Dockerfile says: the static
+      # check reads source, this pulls each pushed image and looks inside.
+      - name: Verify each published image holds exactly one binary
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+          RUNTIME_CHECK: "1"
+        run: scripts/verify_image_split.sh
+
+      # `latest` tracks main for the compose/self-host lane, as it did when this
+      # was one image. Retagged from the pushed digests — no second build.
+      - name: Tag latest
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          for svc in $(docker buildx bake --print all | jq -r '.group.all.targets[]'); do
+            docker buildx imagetools create \
+              --tag "$IMAGE_REGISTRY/$svc:latest" \
+              "$IMAGE_REGISTRY/$svc:$SHA"
+          done
 
   # needs build, so a docs-only push (build skipped) skips deploy too, while a
   # real deploy still waits for `check` to pass first.
@@ -86,16 +115,16 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy (pull image + restart every environment, then the edge)
+      - name: Deploy (pull images + restart every environment, then the edge)
         env:
           HOST: ${{ secrets.IBV2_HOST }}
-          IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
           SHA: ${{ github.sha }}
         run: |
           ssh ubuntu@"$HOST" \
-            "IMAGE='$IMAGE' SHA='$SHA' TOKEN='$TOKEN' ACTOR='$ACTOR' bash -euo pipefail -s" \
+            "IMAGE_REGISTRY='$IMAGE_REGISTRY' SHA='$SHA' TOKEN='$TOKEN' ACTOR='$ACTOR' bash -euo pipefail -s" \
             <<'REMOTE'
           # Shared external networks, owned by no project: the edge meets every
           # environment on one, Prometheus scrapes them over the other. Created
@@ -108,10 +137,24 @@ jobs:
 
           trap 'sudo docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
           echo "$TOKEN" | sudo docker login ghcr.io -u "$ACTOR" --password-stdin
-          sudo docker pull "$IMAGE"
 
           primary="$HOME/identity-backend-v2"
           preview="$HOME/identity-backend-previewnet"
+
+          # Ten images now, all at the same tag. `compose pull` reads the
+          # service list out of the compose file, so the set stays right when a
+          # service is added — and it pulls the subset PreviewNet actually runs
+          # rather than all ten. The images share every layer below the binary,
+          # so this is roughly the old single-image transfer plus nine copies of
+          # one small layer.
+          compose_primary() {
+            sudo IMAGE_REGISTRY="$IMAGE_REGISTRY" IMAGE_TAG="$SHA" \
+              docker compose -p identity-backend-v2 "$@"
+          }
+          compose_preview() {
+            sudo IMAGE_REGISTRY="$IMAGE_REGISTRY" IMAGE_TAG="$SHA" \
+              docker compose -p identity-previewnet "$@"
+          }
 
           # Paseo Next v2 first, so a broken newer environment can neither block
           # nor revert it. `identity-backend-v2` is the project name the running
@@ -123,8 +166,8 @@ jobs:
           cd "$primary"
           git fetch --no-tags origin main
           git reset --hard "$SHA"
-          sudo IDENTITY_IMAGE="$IMAGE" docker compose -p identity-backend-v2 \
-            up -d --wait --wait-timeout 420 --no-build
+          compose_primary pull --quiet
+          compose_primary up -d --wait --wait-timeout 420 --no-build
 
           # PreviewNet runs a deliberate subset: no dim/invite tickets (they
           # would share the chain-writer's nonce lane on one account and chain)
@@ -134,10 +177,12 @@ jobs:
             cd "$preview"
             git fetch --no-tags "$primary" HEAD
             git reset --hard "$SHA"
-            sudo IDENTITY_IMAGE="$IMAGE" docker compose -p identity-previewnet \
-              up -d --wait --wait-timeout 420 --no-build \
-              postgres identity-api identity-chain-writer \
-              username-indexer-postgres username-indexer
+            preview_services="postgres identity-api identity-chain-writer
+              username-indexer-postgres username-indexer"
+            # shellcheck disable=SC2086
+            compose_preview pull --quiet $preview_services
+            # shellcheck disable=SC2086
+            compose_preview up -d --wait --wait-timeout 420 --no-build $preview_services
           else
             echo "skip identity-previewnet — no checkout at $preview"
           fi

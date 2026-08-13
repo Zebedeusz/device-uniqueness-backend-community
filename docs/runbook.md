@@ -8,18 +8,22 @@ Two compose projects share the host: the environment (the project name declared 
 
 ## Deploys
 
-Push to `main` → CI tests, builds `ghcr.io/paritytech/identity-backend-rust:<sha>`, and the server pulls + restarts (health-gated). Watch with `gh run watch`.
+Push to `main` → CI tests, builds the ten service images
+(`ghcr.io/paritytech/identity-backend-rust/<service>:<sha>` — one per binary, all at the same
+tag), and the server pulls + restarts (health-gated). Watch with `gh run watch`.
 
-Manual restart, on the image CI already built for this checkout:
+Manual restart, on the images CI already built for this checkout:
 
 ```bash
 cd ~/identity-backend-v2 && git pull
-sudo IDENTITY_IMAGE=ghcr.io/paritytech/identity-backend-rust:$(git rev-parse HEAD) \
-  docker compose up -d --no-build
+export IMAGE_REGISTRY=ghcr.io/paritytech/identity-backend-rust
+export IMAGE_TAG=$(git rev-parse HEAD)
+sudo -E docker compose pull
+sudo -E docker compose up -d --no-build
 # Image not cached locally? The server holds no ghcr credentials:
 #   echo <PAT with read:packages> | sudo docker login ghcr.io -u <user> --password-stdin
-# Last resort, builds on the server (several minutes):
-#   sudo docker compose up -d --build
+# Last resort, builds on the server (several minutes; one compile, ten images):
+#   sudo docker buildx bake all && sudo docker compose up -d --no-build
 # only when the Caddyfile changed — a reload, not a restart (see Caddy / TLS / docs)
 sudo docker compose -f gateway/docker-compose.yml -p edge \
   exec -T caddy caddy reload --config /etc/caddy/Caddyfile

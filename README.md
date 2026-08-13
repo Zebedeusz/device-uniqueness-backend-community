@@ -50,7 +50,25 @@ Push to `main`. CI tests, builds the image, and updates the test server
 
 ## Releases
 
-Images are published to `ghcr.io/paritytech/identity-backend-rust`, multi-arch
+Released images are mirrored to public Docker Hub — no account, no token:
+
+```bash
+docker pull paritytech/ibv2-identity-api:stable
+```
+
+Docker Hub namespaces are one level deep, so the ten services are
+`paritytech/ibv2-<service>` there, and `ghcr.io/paritytech/identity-backend-rust/<service>`
+on ghcr. `vX.Y.Z` and `stable` exist on both; **`latest` is ghcr-only**, because it tracks
+`main` and unreleased work is not what an outside consumer should pick up by default. The
+ghcr packages inherit this repo's private visibility, so pulling those needs a token.
+
+Each release also attaches `ibv2-<version>-<target>.tar.gz` — every service binary for
+x86_64/aarch64 Linux and Apple Silicon — and an `ibv2-compose-*.tar.gz` bundle whose
+compose file needs no source tree: the `build:` stanzas are gone and all ten images are
+pinned to that release, so `docker compose up -d` starts the stack as-is.
+
+Images are published as `ghcr.io/paritytech/identity-backend-rust/<service>` — one per
+service, all sharing a tag — multi-arch
 (amd64 + arm64). Three kinds of tag, and the difference matters:
 
 | Tag | Points at | Use it for |
@@ -59,7 +77,9 @@ Images are published to `ghcr.io/paritytech/identity-backend-rust`, multi-arch
 | `stable` | the newest release | "track releases, not `main`" |
 | `latest` | tip of `main` | our own test server; **contains unreleased work** |
 
-Every service runs from the same image, wired together by `docker-compose.yml`;
+Every service has its own image holding exactly its own binary (one `cargo build`, ten
+thin runtime stages — see [`docker-bake.hcl`](docker-bake.hcl)), wired together by
+`docker-compose.yml`;
 each release attaches an `ibv2-compose-*.tar.gz` with that file, `.env.example`
 and the gateway config, so a standalone stack has something to start from.
 
