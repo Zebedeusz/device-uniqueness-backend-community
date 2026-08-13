@@ -22,6 +22,8 @@
 //!   trace → 30s timeout).
 //! - [`metrics`]: the Prometheus recorder + `/metrics` listener on its own
 //!   port, shared by the HTTP services and the headless workers alike.
+//! - [`telemetry`]: the log subscriber every process installs, text locally
+//!   and JSON (`LOG_FORMAT=json`) where the logs are aggregated.
 //! - [`config`]: fail-fast environment parsing helpers + JWT verifier
 //!   loading.
 
@@ -32,6 +34,7 @@ pub mod layers;
 pub mod metrics;
 pub mod problem;
 pub mod rate_limit;
+pub mod telemetry;
 pub mod zod;
 
 pub use auth::{AuthSubject, HasJwtVerifier};

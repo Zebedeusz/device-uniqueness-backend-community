@@ -88,28 +88,51 @@ where
 /// The probes short-circuit in report order, so a failure proves the failed
 /// component down and everything probed before it up — both are recorded, so a
 /// component that recovered while a later one broke does not stay stuck at 0.
-/// Components after the failure are genuinely unknown and keep their last
-/// value (`ibv2_readyz_ok` 0 already marks the verdict incomplete).
+/// Components *after* the failure were never checked, and are published as
+/// `NaN`: the gauge would otherwise keep its last value, which reads as "up"
+/// and is the difference between "the database is fine" and "nobody looked".
 /// `probe_order` is the order from the most recent healthy probe.
 fn record_readiness(
     readiness: crate::health::Readiness,
     probe_order: &'static [&'static str],
 ) -> &'static [&'static str] {
+    for (component, value) in readiness_plan(readiness, probe_order) {
+        metrics::gauge!("ibv2_dependency_up", "component" => component).set(value);
+    }
     match readiness {
         Ok(components) => {
             metrics::gauge!("ibv2_readyz_ok").set(1.0);
-            for component in components {
-                metrics::gauge!("ibv2_dependency_up", "component" => *component).set(1.0);
-            }
             components
         }
-        Err(failed) => {
+        Err(_) => {
             metrics::gauge!("ibv2_readyz_ok").set(0.0);
-            for component in probe_order.iter().take_while(|c| **c != failed) {
-                metrics::gauge!("ibv2_dependency_up", "component" => *component).set(1.0);
-            }
-            metrics::gauge!("ibv2_dependency_up", "component" => failed).set(0.0);
             probe_order
+        }
+    }
+}
+
+/// The pure half of [`record_readiness`]: which `ibv2_dependency_up` series to
+/// set, and to what — `1.0` up, `0.0` down, `NaN` not checked.
+fn readiness_plan(
+    readiness: crate::health::Readiness,
+    probe_order: &'static [&'static str],
+) -> Vec<(&'static str, f64)> {
+    match readiness {
+        Ok(components) => components.iter().map(|c| (*c, 1.0)).collect(),
+        Err(failed) => {
+            let mut plan = Vec::with_capacity(probe_order.len() + 1);
+            let mut after_failure = false;
+            for component in probe_order {
+                if *component == failed {
+                    after_failure = true;
+                    continue;
+                }
+                plan.push((*component, if after_failure { f64::NAN } else { 1.0 }));
+            }
+            // Last, and unconditional: the failed component may not be in
+            // `probe_order` at all before the first healthy probe.
+            plan.push((failed, 0.0));
+            plan
         }
     }
 }
@@ -161,6 +184,36 @@ fn metrics_addr() -> Result<SocketAddr, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_healthy_probe_marks_every_component_up() {
+        const ORDER: &[&str] = &["db", "chain"];
+        assert_eq!(
+            readiness_plan(Ok(ORDER), &[]),
+            vec![("db", 1.0), ("chain", 1.0)]
+        );
+    }
+
+    #[test]
+    fn components_after_the_failure_are_not_claimed_up() {
+        const ORDER: &[&str] = &["db", "chain", "rpc"];
+        let plan = readiness_plan(Err("chain"), ORDER);
+
+        assert_eq!(plan[0], ("db", 1.0), "probed before the failure: proven up");
+        assert_eq!(plan[1].0, "rpc");
+        assert!(
+            plan[1].1.is_nan(),
+            "never checked, so it must not report 1.0: {:?}",
+            plan[1]
+        );
+        assert_eq!(plan[2], ("chain", 0.0), "the failure itself");
+        assert_eq!(plan.len(), 3);
+    }
+
+    #[test]
+    fn a_failure_before_any_healthy_probe_still_reports_the_component() {
+        assert_eq!(readiness_plan(Err("db"), &[]), vec![("db", 0.0)]);
+    }
 
     #[test]
     fn default_addr_is_the_metrics_port() {

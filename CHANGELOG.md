@@ -15,6 +15,19 @@ they summarise each release rather than list every change.
 
 ### Added
 
+- Prometheus metrics for the invite-tickets pool: unclaimed tickets per DIM
+  (`ibv2_invite_pool_depth`), the inviter's on-chain quota
+  (`ibv2_inviter_available_invites`), its fee balance on the shared
+  `ibv2_account_free_balance_planck` family, and its registration outcomes on
+  `ibv2_chain_submit_total{lane="invite"}`.
+- Prometheus counters and gauges for the chain writer's submissions
+  (`ibv2_chain_submit_total` by lane and outcome, zero-initialised at startup),
+  the connected runtimes (`ibv2_chain_spec_version`,
+  `ibv2_chain_transaction_version`), and the deployment's own identity
+  (`ibv2_writer_info`: signer, attester, dotNS lane).
+- Metrics and logs are scoped per environment: Prometheus scrapes a job per
+  environment labelled `env_id`, log streams carry the same label, and the
+  overview dashboard selects one environment across both datasources.
 - dotNS write lane through the gateway, enabled by default ([#31], [#33]).
 - Prometheus metrics for the attester's on-chain resources, exported from the
   existing `/metrics` route ([#26]).
@@ -44,6 +57,11 @@ they summarise each release rather than list every change.
 
 ### Fixed
 
+- The outbox "oldest age" gauges measure time in the current status rather than
+  the age of the row, so a retried or newly promoted claim no longer reports as
+  hours old and the terminal statuses no longer grow without bound.
+- `ibv2_dependency_up` no longer reports components as up when the readiness
+  probe short-circuited before checking them; they are published as `NaN`.
 - `invite-tickets-pool` submits ticket batches again after the Paseo Next v2
   wipe: the vendored People metadata is recaptured at spec `1000030`, whose
   `Game` calls and `Utility.force_batch` shape subxt validates payloads against.

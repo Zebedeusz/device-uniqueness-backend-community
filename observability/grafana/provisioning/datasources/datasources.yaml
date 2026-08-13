@@ -1,0 +1,21 @@
+# Provisioned, not clicked: a rebuilt Grafana comes back with the same two UIDs,
+# so the committed dashboard keeps working and shared links stay valid.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: ibv2-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Matches scrape_interval in prometheus.yml; Grafana picks step sizes from it.
+      timeInterval: 30s
+
+  - name: Loki
+    uid: ibv2-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100

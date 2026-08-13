@@ -1,0 +1,96 @@
+// Alloy: ship every container's stdout on this host into Loki.
+//
+// Discovery is the Docker daemon, so a new service in any compose project is
+// picked up within one refresh interval with no change here. That is why this
+// file is short, and why the services never configure logging beyond
+// `LOG_FORMAT=json`.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+// Labels come from Docker metadata rather than the log body, so the services do
+// not repeat their own name in every line. Each environment is its own compose
+// project, which is what `project` distinguishes — and what `env_id` names in
+// the ecosystem's own terms, matching the Prometheus label of the same name.
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+
+  // `env_id` is the label the dashboard filters on, and it must mean the same
+  // thing in Loki as it does in Prometheus — the ecosystem's network id, which
+  // the compose project carries in meaning but not in spelling. Containers
+  // outside the two environments (the edge, this project) get no `env_id` and
+  // stay queryable by `project`. Shared services — `turn-api`, `notify-relay` —
+  // run in the primary project and are labelled with it: a container log has no
+  // per-request environment to read.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "identity-backend-v2"
+    replacement   = "paseo-next-v2"
+    target_label  = "env_id"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "identity-previewnet"
+    replacement   = "previewnet"
+    target_label  = "env_id"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Docker reports the name with a leading slash; strip it to match `docker ps`.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  forward_to       = [loki.process.services.receiver]
+  refresh_interval = "15s"
+}
+
+loki.process "services" {
+  // Non-JSON lines (Postgres, Caddy, a service in text mode) extract nothing
+  // and pass through with their Docker labels intact.
+  stage.json {
+    expressions = {
+      level  = "level",
+      target = "target",
+    }
+  }
+
+  // `level` only. Every label combination is its own Loki stream, and `target`
+  // has one value per Rust module — it stays a queryable field instead.
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

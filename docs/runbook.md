@@ -33,6 +33,45 @@ Migrations run automatically on boot — never by hand. Never overwrite the serv
 
 ## Health and logs
 
+**Start at Grafana.** It fronts both datasources — Prometheus for the gauges, Loki for the
+logs — so "is everything ready, is the writer moving, what is it complaining about" is one
+page with one time range. It is loopback-only, so tunnel first:
+
+```bash
+ssh -N -L 3000:127.0.0.1:3000 ibv2       # Grafana (Prometheus 9091 / Alloy 12345 likewise)
+open http://127.0.0.1:3000/d/ibv2-overview   # anonymous read-only; no login needed
+```
+
+The dashboard is committed (`observability/grafana/dashboards/ibv2-overview.json`) and
+provisioned read-only: edit the file in the repo and restart Grafana, don't click —
+and **increment its `version` once per change**, because Grafana skips re-importing a
+provisioned dashboard whose version has not risen, so an edit silently does nothing.
+**Check the `environment` selector before reading anything** — it defaults to
+`paseo-next-v2`, and every panel, metrics and logs alike, is scoped to it. Ad-hoc
+questions go to **Explore**, which anonymous viewers may use:
+
+```logql
+{env_id="paseo-next-v2"}                              # one environment, everything
+{service="identity-chain-writer"}                     # one service, both environments
+{level=~"WARN|ERROR"}                                 # every service, only trouble
+{service="identity-api"} | json | status>=500         # JSON fields are queryable
+{service="identity-api"} | json | span_request_id="<uuid>"   # one request end to end
+```
+
+Labels are `env_id` (the deployment this container belongs to, spelled as the
+ecosystem network id — the same label Prometheus carries, and what the dashboard's
+environment selector uses), `project` (the compose project it is derived from),
+`service`, `container`, and `level`. They come from Docker metadata plus the JSON
+`level` field, not from the log text. Two consequences: containers outside the two
+environments (the edge, the observability project) carry no `env_id`, and the
+**shared** services — `turn-api`, `notify-relay`, one instance serving both
+environments — are labelled with the primary deployment, because a container log
+has no per-request environment to read. Prometheus scrapes them the same way.
+Retention is **14 days** (`observability/loki-config.yaml`); older logs are gone.
+
+Docker's own logs still work, and remain the fallback when Loki or Alloy is the thing that
+is broken:
+
 ```bash
 curl -fsS https://identity.dotspark.app/readyz                    # gates on Postgres + People Chain RPC
 curl -fsS 'https://identity.dotspark.app/api/v1/usernames/search?prefix=a'   # the indexer, through the edge
@@ -42,6 +81,16 @@ sudo docker compose logs -f identity-chain-writer
 sudo docker compose logs -f username-indexer
 sudo docker compose -f gateway/docker-compose.yml -p edge logs -f caddy
 ```
+
+Those lines are JSON in containers (`LOG_FORMAT`, compose default `json`) — pipe through
+`jq -r '"\(.timestamp) \(.level) \(.message)"'` to read them by eye, or set
+`LOG_FORMAT=text` for a service you are actively watching.
+
+**Nothing in Loki?** In order: `docker compose -f observability/docker-compose.yml -p
+observability ps` (four containers), Alloy's UI at `127.0.0.1:12345` (did discovery find the
+containers, are writes failing), then `docker logs observability-alloy-1`. Alloy reads the
+Docker socket read-only, so a container that logs to a file instead of stdout is invisible to
+it by design.
 
 Per-service `readyz` from the host needs the debug overlay, which republishes the ports on
 loopback only. Layer it on, poke, then drop back:

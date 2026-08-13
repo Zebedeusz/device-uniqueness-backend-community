@@ -8,7 +8,6 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use tracing_subscriber::EnvFilter;
 
 use notifications::{
     routes, ApnsConfig, ApnsProvider, AppState, Config, FcmConfig, FcmProvider, PushProvider,
@@ -17,11 +16,7 @@ use notifications::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("notify-relay");
     http_common::metrics::spawn("notify-relay");
 
     let config = Config::from_env().context("invalid configuration")?;

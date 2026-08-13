@@ -7,18 +7,13 @@
 //! warning until it is restarted — see [`identity_service::queue`].
 
 use anyhow::Context as _;
-use tracing_subscriber::EnvFilter;
 
 use identity_service::queue::{self, AdvancerConfig};
 use identity_service::ChainClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("registration-queue");
     http_common::metrics::spawn("registration-queue");
 
     let config = AdvancerConfig::from_env().context("invalid registration-queue configuration")?;

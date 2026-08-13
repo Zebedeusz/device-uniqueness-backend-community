@@ -1,0 +1,15 @@
+# `allowUiUpdates: false` keeps the file the source of truth: edit it in the
+# repo and restart Grafana, rather than clicking and losing the change.
+
+apiVersion: 1
+
+providers:
+  - name: identity-backend-v2
+    orgId: 1
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -73,6 +73,9 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      # JSON so the log shipper can query by field; the binaries default to text
+      # for `just run`. Every service below carries the same pair.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       edge:
@@ -144,6 +147,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       metrics:
@@ -175,6 +179,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       metrics:
@@ -236,6 +241,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       edge:
@@ -296,6 +302,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       edge:
@@ -345,6 +352,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       metrics:
@@ -395,6 +403,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       edge:
@@ -443,6 +452,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       metrics:
@@ -480,6 +490,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     networks:
       default: {}
       edge:
@@ -521,6 +532,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
       RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     # APNs key, read-only from wherever the operator keeps it. Unset -> /dev/null
     # -> stub. Must exist before deploy, readable by uid 10001; see docs/deploy.md.
     volumes:

@@ -139,24 +139,33 @@ impl DotnsStatus {
     }
 }
 
-/// How many rows sit in one outbox status, and how long the oldest of them has
-/// been there.
+/// How many rows sit in one outbox status, and how long the one that has been
+/// there longest has been there.
 #[derive(Debug, Clone, Copy)]
 pub struct StatusDepth {
     /// Rows currently in this status.
     pub depth: i64,
-    /// Age of the oldest row in this status, in seconds. `None` when empty.
+    /// Seconds the longest-waiting row has been in this status. `None` when
+    /// empty.
     pub oldest_age_secs: Option<f64>,
 }
 
-/// Depth and oldest-row age per status, in one grouped scan.
+/// Depth and longest wait per status, in one grouped scan.
 ///
 /// Statuses with no rows come back zero-depth, so a gauge built from this never
 /// disappears mid-incident.
+///
+/// The age is `now() - min(updated_at)`, not `created_at`: the question is "how
+/// long has work been stuck *here*", and every status transition sets
+/// `updated_at`. Measuring from creation instead makes a row that was just
+/// re-queued read as hours old, and makes the terminal statuses grow without
+/// bound. Two known approximations: a `queue_group` re-prioritisation also
+/// bumps `updated_at` without a transition, and `updated_at` is shared with the
+/// dotNS lane (see [`dotns_depth_by_status`]).
 pub async fn depth_by_status(pool: &PgPool) -> Result<Vec<(Status, StatusDepth)>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT status, count(*) AS depth, \
-                extract(epoch from now() - min(created_at))::float8 AS oldest_age_secs \
+                extract(epoch from now() - min(updated_at))::float8 AS oldest_age_secs \
          FROM username_reservations GROUP BY status",
     )
     .fetch_all(pool)
@@ -439,16 +448,23 @@ pub async fn dotns_submitting(pool: &PgPool) -> Result<Vec<Reservation>, sqlx::E
     rows.iter().map(row_to_reservation).collect()
 }
 
-/// Depth and oldest-row age per dotNS status, in one grouped scan.
+/// Depth and longest wait per dotNS status, in one grouped scan.
 ///
 /// `NULL` rows are excluded. They are not in the lane. Counting them would
 /// swamp the gauge with every registration that never asked for a dotNS name.
+///
+/// The age measures time in `dotns_status`, via the same `updated_at` the
+/// People lane uses — the two lanes share the column, so a People transition
+/// resets it. In practice that is close enough: the People half reaches
+/// `ASSIGNED` before the dotNS half is claimable, so the reset lands at the
+/// moment this lane starts waiting. A dedicated `dotns_updated_at` is the exact
+/// answer if this ever needs to be alerted on tightly.
 pub async fn dotns_depth_by_status(
     pool: &PgPool,
 ) -> Result<Vec<(DotnsStatus, StatusDepth)>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT dotns_status, count(*) AS depth, \
-                extract(epoch from now() - min(created_at))::float8 AS oldest_age_secs \
+                extract(epoch from now() - min(updated_at))::float8 AS oldest_age_secs \
          FROM username_reservations WHERE dotns_status IS NOT NULL GROUP BY dotns_status",
     )
     .fetch_all(pool)

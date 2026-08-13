@@ -50,6 +50,45 @@ impl ChainClient {
         Ok(())
     }
 
+    /// The inviter's remaining `AvailableInvites` for `dim` (`0` when the key
+    /// is absent — an unfunded inviter has no invites). This is the budget
+    /// every minted ticket spends.
+    pub async fn available_invites(&self, dim: Dim, inviter: &AccountId32) -> anyhow::Result<u32> {
+        let at = self.client.at_current_block().await?;
+        let available = match dim {
+            Dim::Game => {
+                let address = people::storage().game().available_invites();
+                at.storage()
+                    .try_fetch(address, (*inviter,))
+                    .await?
+                    .map(|value| value.decode())
+                    .transpose()?
+            }
+            Dim::ProofOfInk => {
+                let address = people::storage().proof_of_ink().available_invites();
+                at.storage()
+                    .try_fetch(address, (*inviter,))
+                    .await?
+                    .map(|value| value.decode())
+                    .transpose()?
+            }
+        };
+        Ok(available.unwrap_or(0))
+    }
+
+    /// Free balance of `account` (`0` when the account does not exist). A
+    /// second, independent budget from the invite quota: the quota authorises
+    /// the ticket, the balance pays the fee.
+    pub async fn free_balance(&self, account: &AccountId32) -> anyhow::Result<u128> {
+        let at = self.client.at_current_block().await?;
+        let address = people::storage().system().account();
+        let info = at.storage().try_fetch(address, (*account,)).await?;
+        match info {
+            Some(value) => Ok(value.decode()?.data.free),
+            None => Ok(0),
+        }
+    }
+
     /// Sign and submit one `Utility.force_batch` of `set_invite_ticket` calls
     /// and wait for finalization, returning the ordered per-item outcomes.
     ///

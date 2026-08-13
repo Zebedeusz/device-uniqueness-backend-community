@@ -5,17 +5,12 @@
 //! `dim-tickets-writer` binary registers them on People Chain (Phase 2).
 
 use anyhow::Context as _;
-use tracing_subscriber::EnvFilter;
 
 use dim_tickets::{db, routes, AppState, ChainClient, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("dim-tickets-api");
     http_common::metrics::spawn("dim-tickets-api");
 
     let config = Config::from_env().context("invalid configuration")?;

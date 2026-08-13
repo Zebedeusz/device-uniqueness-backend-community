@@ -115,6 +115,18 @@ pub async fn tick_pool(
     let available = tickets::count_available(pool, dim, network)
         .await
         .context("counting available tickets")?;
+    metrics::gauge!("ibv2_invite_pool_depth", "dim" => dim.as_str()).set(available as f64);
+    // Read before the early return that skips a full pool: that is exactly when
+    // nobody is watching and the quota drains unnoticed.
+    match chain.available_invites(dim, &identity.inviter).await {
+        Ok(invites) => {
+            metrics::gauge!("ibv2_inviter_available_invites", "dim" => dim.as_str())
+                .set(invites as f64);
+        }
+        Err(error) => {
+            tracing::warn!(dim = dim.as_str(), %error, "reading available invites failed");
+        }
+    }
     tracing::debug!(
         dim = dim.as_str(),
         network = network.as_str(),
@@ -167,6 +179,10 @@ pub async fn tick_pool(
         inserted += 1;
     }
     let failed = size - inserted;
+    record_submit_outcome("ok", inserted);
+    // Per-item failures are terminal: `Utility.force_batch` already executed
+    // the batch, and the rejected items' keypairs are discarded unrecoverably.
+    record_submit_outcome("terminal", failed);
     tracing::info!(
         dim = dim.as_str(),
         network = network.as_str(),
@@ -215,6 +231,9 @@ pub async fn run_loop(
                         Ok((_, next_size)) => *batch_size = next_size,
                         Err(err) => {
                             let throttled = settle_batch_size(*batch_size, tuning.batch_max, false);
+                            // Nothing was registered and the next tick tries
+                            // again: a retry, not a terminal outcome.
+                            record_submit_outcome("retry", 1);
                             tracing::warn!(
                                 dim = dim.as_str(),
                                 error = ?err,
@@ -235,7 +254,51 @@ pub async fn run_loop(
                 tracing::warn!(error = ?err, "could not acquire pool lock; skipping tick");
             }
         }
+        record_inviter_balance(&chain, &identity).await;
         tokio::time::sleep(tuning.interval).await;
+    }
+}
+
+/// Outcomes [`record_submit_outcome`] can emit, for the zero-init below.
+const SUBMIT_OUTCOMES: [&str; 3] = ["ok", "retry", "terminal"];
+
+/// Count ticket-registration outcomes on the shared `ibv2_chain_submit_total`
+/// family, under this service's own lane. `count` is per item for a finalized
+/// batch and `1` for a failed tick.
+fn record_submit_outcome(outcome: &'static str, count: u32) {
+    if count == 0 {
+        return;
+    }
+    metrics::counter!("ibv2_chain_submit_total", "lane" => "invite", "outcome" => outcome)
+        .increment(u64::from(count));
+}
+
+/// Register the counters at zero, so a healthy pool reads as flat zeros rather
+/// than as an absent series indistinguishable from a dead process.
+fn zero_init_submit_outcomes() {
+    for outcome in SUBMIT_OUTCOMES {
+        metrics::counter!("ibv2_chain_submit_total", "lane" => "invite", "outcome" => outcome)
+            .absolute(0);
+    }
+}
+
+/// Sample the fee-paying account's balance once per tick, on the family the
+/// identity writer also reports to — `role` is what separates the budgets.
+/// Best-effort: a failed read must not stop the pool.
+async fn record_inviter_balance(chain: &ChainClient, identity: &InviterIdentity) {
+    let account = AccountId32(identity.signer.public_bytes());
+    match chain.free_balance(&account).await {
+        Ok(balance) => {
+            metrics::gauge!(
+                "ibv2_account_free_balance_planck",
+                "role" => "inviter",
+                "chain" => "people"
+            )
+            .set(balance as f64);
+        }
+        Err(error) => {
+            tracing::warn!(%error, "reading the inviter signer balance failed");
+        }
     }
 }
 
@@ -422,6 +485,7 @@ pub async fn run(config: MaintainerConfig) -> anyhow::Result<()> {
         inviter: configured_inviter,
         inviter_ss58: config.inviter_address.clone(),
     };
+    zero_init_submit_outcomes();
     run_loop(
         pool,
         chain,

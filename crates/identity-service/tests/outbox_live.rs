@@ -368,3 +368,39 @@ async fn depth_by_status_reports_every_status_even_when_empty() {
 
     cleanup(&pool, &base, "unused").await;
 }
+
+#[tokio::test]
+#[ignore = "requires Postgres; set IDENTITY_TEST_DATABASE_URL and run with --ignored"]
+async fn oldest_age_measures_time_in_status_not_row_age() {
+    let pool = test_pool().await;
+    let base = format!("outboxage{}", std::process::id());
+    let id = outbox::insert(&pool, &reservation(&base, "32"))
+        .await
+        .expect("insert");
+
+    // A row created two hours ago that entered its current status a moment ago.
+    // That is every retried or just-promoted claim: measured from `created_at`
+    // it reads as two hours stuck, which is what made this gauge unalertable.
+    sqlx::query(
+        "UPDATE username_reservations SET created_at = now() - interval '2 hours' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .expect("backdate");
+
+    let depths = outbox::depth_by_status(&pool).await.expect("depths");
+    let (_, reserved) = depths
+        .iter()
+        .find(|(s, _)| *s == Status::Reserved)
+        .expect("reserved entry");
+    let age = reserved
+        .oldest_age_secs
+        .expect("non-empty status has an age");
+    assert!(
+        age < 600.0,
+        "age must come from updated_at, not created_at; got {age}s"
+    );
+
+    cleanup(&pool, &base, "unused").await;
+}

@@ -215,6 +215,8 @@ pub async fn run(config: WriterConfig) -> anyhow::Result<()> {
         mode = if proxy_for.is_some() { "proxy" } else { "direct" },
         "identity-chain-writer connected"
     );
+    record_writer_info(&config, &signer_account);
+    zero_init_submit_outcomes();
     // No HTTP surface here, so this is the only readiness signal it has.
     http_common::metrics::spawn_readiness_probe(
         "identity-chain-writer",
@@ -1147,6 +1149,7 @@ impl Writer {
         if !outbox::mark_dotns_reserved(&self.pool, guard, r.id).await? {
             anyhow::bail!("lease lost while reserving dotns name");
         }
+        record_submit_outcome("dotns", "ok");
         tracing::info!(id = r.id, username = %r.full_username, "dotns reserved on-chain");
         Ok(())
     }
@@ -1155,6 +1158,7 @@ impl Writer {
         if !outbox::mark_dotns_failed(&self.pool, guard, r.id, reason).await? {
             anyhow::bail!("lease lost while failing dotns reservation");
         }
+        record_submit_outcome("dotns", "terminal");
         tracing::warn!(
             id = r.id,
             username = %r.full_username,
@@ -1173,6 +1177,7 @@ impl Writer {
         if !outbox::mark_dotns_expired(&self.pool, guard, r.id, reason).await? {
             anyhow::bail!("lease lost while expiring dotns reservation");
         }
+        record_submit_outcome("dotns", "terminal");
         tracing::warn!(
             id = r.id,
             username = %r.full_username,
@@ -1223,6 +1228,7 @@ impl Writer {
         if !outbox::mark_dotns_retry(&self.pool, guard, r.id, not_before, attempt, reason).await? {
             anyhow::bail!("lease lost while scheduling dotns retry");
         }
+        record_submit_outcome("dotns", "retry");
         tracing::warn!(
             id = r.id,
             attempt,
@@ -1255,6 +1261,7 @@ impl Writer {
             "attester_resources"
         );
         metrics::gauge!("ibv2_attester_allowance").set(allowance as f64);
+        record_spec_version("people", self.chain.online()).await;
         // `chain` is carried by every series in this family, People included.
         // Prometheus matchers are subset-based: without it, a selector written
         // as {role="signer"} would match the Asset Hub series too, so a
@@ -1306,6 +1313,7 @@ impl Writer {
                 "dotns_attester_resources"
             );
             metrics::gauge!("ibv2_dotns_attester_allowance").set(allowance as f64);
+            record_spec_version("asset-hub", asset_hub.online()).await;
             metrics::gauge!(
                 "ibv2_account_free_balance_planck",
                 "role" => "signer",
@@ -1338,6 +1346,7 @@ impl Writer {
         if !outbox::mark_assigned(&self.pool, guard, r.id).await? {
             anyhow::bail!("lease lost while assigning");
         }
+        record_submit_outcome("people", "ok");
         tracing::info!(id = r.id, username = %r.full_username, "registration assigned on-chain");
         Ok(())
     }
@@ -1346,6 +1355,7 @@ impl Writer {
         if !outbox::mark_failed(&self.pool, guard, r.id, reason).await? {
             anyhow::bail!("lease lost while failing");
         }
+        record_submit_outcome("people", "terminal");
         tracing::warn!(id = r.id, username = %r.full_username, reason, "registration failed terminally");
         Ok(())
     }
@@ -1357,6 +1367,7 @@ impl Writer {
         if !outbox::mark_retry(&self.pool, guard, r.id, not_before, attempt, reason).await? {
             anyhow::bail!("lease lost while scheduling retry");
         }
+        record_submit_outcome("people", "retry");
         tracing::warn!(
             id = r.id,
             attempt,
@@ -1368,9 +1379,81 @@ impl Writer {
     }
 }
 
-/// Record depth and oldest-row age per outbox status — where "the oldest queued
-/// claim" comes from. Read-only; the writer owns it as the always-on process
-/// next to the outbox.
+/// Publish which accounts this deployment signs as, on a constant-1 series.
+///
+/// The first question in an incident is which account, and the answer otherwise
+/// lives in one INFO line that ages out of Loki and in a `.env` on the server.
+///
+/// **Never add a credential, and never add a configured URL** — an RPC endpoint
+/// can carry an API key in its path or userinfo, and this surface is read
+/// anonymously.
+fn record_writer_info(config: &WriterConfig, signer: &AccountId32) {
+    metrics::gauge!(
+        "ibv2_writer_info",
+        "signer" => hex_account(&signer.0),
+        "attester" => hex_account(&config.attester),
+        "dotns_lane" => if config.dotns_gateway_enabled { "enabled" } else { "disabled" }
+    )
+    .set(1.0);
+}
+
+/// Publish the runtime version the client is currently signing against.
+///
+/// The value only matters when it *changes*: a runtime upgrade can turn a
+/// working submission path into a failing one with no deploy of ours. Read at
+/// the current finalized block, so it follows an upgrade rather than reporting
+/// what was true at boot. Best-effort — a failed read leaves the last value.
+async fn record_spec_version<C: subxt::Config>(
+    chain: &'static str,
+    client: &subxt::OnlineClient<C>,
+) {
+    match client.at_current_block().await {
+        Ok(at) => {
+            metrics::gauge!("ibv2_chain_spec_version", "chain" => chain)
+                .set(at.spec_version() as f64);
+            metrics::gauge!("ibv2_chain_transaction_version", "chain" => chain)
+                .set(at.transaction_version() as f64);
+        }
+        Err(error) => {
+            tracing::warn!(chain, %error, "reading the runtime version failed");
+        }
+    }
+}
+
+/// The lanes and outcomes [`record_submit_outcome`] can emit.
+const SUBMIT_LANES: [&str; 2] = ["people", "dotns"];
+const SUBMIT_OUTCOMES: [&str; 3] = ["ok", "retry", "terminal"];
+
+/// Register every submission counter at zero, before anything is submitted.
+///
+/// The exporter only renders what has been recorded, so an untouched counter is
+/// absent rather than zero — which a dashboard cannot tell from a broken query
+/// or a dead process.
+fn zero_init_submit_outcomes() {
+    for lane in SUBMIT_LANES {
+        for outcome in SUBMIT_OUTCOMES {
+            metrics::counter!("ibv2_chain_submit_total", "lane" => lane, "outcome" => outcome)
+                .absolute(0);
+        }
+    }
+}
+
+/// Count one terminal-for-now outcome of a chain submission.
+///
+/// The two lanes are counted separately because they fail for different reasons
+/// and one is allowed to be parked while the other works. `outcome` is bounded
+/// to three values; the reason stays in the logs, where it costs no cardinality.
+///
+/// Deferrals are not counted. Nothing failed — a future-dated `signed_at`
+/// becomes valid on its own, and counting it would fake a failure rate.
+fn record_submit_outcome(lane: &'static str, outcome: &'static str) {
+    metrics::counter!("ibv2_chain_submit_total", "lane" => lane, "outcome" => outcome).increment(1);
+}
+
+/// Record depth and longest wait per outbox status — where "the oldest queued
+/// claim" comes from. The age is time *in that status*, so it is comparable
+/// across statuses and does not grow forever on the terminal ones. Read-only;
+/// the writer owns it as the always-on process next to the outbox.
 async fn record_outbox_gauges(pool: &PgPool) -> Result<(), sqlx::Error> {
     for (status, depth) in outbox::depth_by_status(pool).await? {
         let status = status.as_str();

@@ -9,17 +9,12 @@
 //! Single-instance by design: one inviter key = one nonce lane. Never scale it.
 
 use anyhow::Context as _;
-use tracing_subscriber::EnvFilter;
 
 use dim_tickets::writer::{self, WriterConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("dim-tickets-writer");
     http_common::metrics::spawn("dim-tickets-writer");
 
     let config = WriterConfig::from_env().context("invalid configuration")?;

@@ -43,7 +43,7 @@ Ten crates today (plans may add more independently-deployable service crates):
 - `chain-types` — generated People Chain type surface (subxt codegen).
 - `chain-client` — reconnecting People Chain connection + the chain-writer signing key (`WriterSigner`); product-agnostic transport shared by the services.
 - `jwt-verify` — verify-only JWT validation (JWKS parsing, Ed25519 verification, claims); the cross-service auth contract consumed by every service that gates routes on identity-service tokens.
-- `http-common` — shared axum primitives for the frozen legacy wire dialects (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, fail-fast env helpers); consumed by dim-tickets and invite-tickets. The dialect bodies are golden-captured — change only with a fresh capture.
+- `http-common` — shared axum primitives for the frozen legacy wire dialects (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, fail-fast env helpers); consumed by dim-tickets and invite-tickets. The dialect bodies are golden-captured — change only with a fresh capture. Also holds the two things **every** process installs: the metrics exporter (`metrics::spawn`) and the log subscriber (`telemetry::init`).
 - `identity-service` — the identity service (lib + bins `identity-api`, `identity-chain-writer`, and the `registration-queue` advancer — with `QUEUE_ENABLED` on, its promotion is the only queue exit: down, claims park as `QUEUED` and the writer raises a stranded-queue warning).
 - `username-indexer` — username indexer + search service.
 - `dim-tickets` — game/personhood invitation-credential service (lib + bins `dim-tickets-api` and `dim-tickets-writer`).
@@ -72,10 +72,15 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 - Edge: its own project, so environment restarts never touch it. Locally:
   `GATEWAY_ADDRESS=http://identity.dotspark.app EDGE_HTTP_PORT=8000 EDGE_HTTPS_PORT=8443 docker compose -f gateway/docker-compose.yml -p edge up -d`,
   then curl `127.0.0.1:8000` with a `Host:` header.
-- Metrics: also its own project. `docker network create ibv2-metrics` once, then
+- Metrics and logs: their own compose project. `docker network create ibv2-metrics` once, then
   `docker compose -f observability/docker-compose.yml -p observability up -d`
-  (Prometheus UI on `127.0.0.1:9091`). Every process exports on 9090 over that
-  network only; scrape targets live in `observability/prometheus.yml`.
+  (Prometheus + Loki + Alloy + Grafana). **Grafana on `127.0.0.1:3000` is the
+  entry point** (dashboard `ibv2-overview`, anonymous read-only); Prometheus UI
+  on `127.0.0.1:9091`, Alloy's on `127.0.0.1:12345`. Every process exports
+  metrics on 9090 over that network only; scrape targets live in
+  `observability/prometheus.yml`. Logs need no per-service wiring: Alloy
+  discovers containers through a read-only Docker socket and labels them from
+  Docker metadata, so a service only has to emit `LOG_FORMAT=json`.
 
 ## Conventions (beyond rustfmt/clippy defaults)
 
@@ -85,13 +90,15 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 - **Migrations auto-run** via `sqlx::migrate!("./migrations")` in `db::connect` on every boot (advisory-locked, safe across replicas). Don't run them by hand; add schema as new `crates/<service>/migrations/*.sql`.
 - **Config is fail-fast** (`Config::from_env`): required vars (e.g. `DATABASE_URL`, `JWT_ED25519_SECRET`, `ATTESTER_ACCOUNT`) have no defaults and abort startup if missing/malformed. Don't add fallbacks for them.
 - Module layout: `foo.rs` + optional `foo/` children (no new `foo/mod.rs`); short `lib.rs` (docs + lints + `pub mod` + curated re-exports); doc every `pub` item.
+- **Every deployed bin starts the same two lines**: `http_common::telemetry::init("<service>")` then `http_common::metrics::spawn("<service>")`. Don't build a subscriber in a bin. Logs are aggregated, so prefer structured fields (`tracing::warn!(reservation_id, %error, "…")`) over interpolated message text — the field is queryable, the sentence is not. Don't add the service/environment name as a field: the log shipper labels those.
 
 ## Configuration
 
 All vars + dev defaults are in `.env.example` (compose auto-loads `.env`).
 Non-obvious: `AUTH_ENABLED=false` is the current **M0 mode** — platform attestation is a **no-op**
 (a JWT is still issued and the sr25519 account proof still verified); `ENFORCE_AUTH` toggles soft
-(log-only) vs hard rejection.
+(log-only) vs hard rejection. `LOG_FORMAT` defaults to `text` in the binaries and `json` in
+compose — containers ship to Loki, `just run` is read by a human.
 
 ## Gotchas / forbidden
 
@@ -104,5 +111,9 @@ Non-obvious: `AUTH_ENABLED=false` is the current **M0 mode** — platform attest
 - **Don't add `ports:` to `docker-compose.yml`** — the edge container is the only thing that
   publishes on the host (enforced by `scripts/verify_compose_boundaries.sh`). Local port access
   goes in `docker-compose.debug.yml`, loopback-only.
+- **Don't widen the observability project's ports past `127.0.0.1`, and don't edit the Grafana
+  dashboard in the UI** — Grafana/Prometheus/Alloy are tunnel-only (same script enforces it), and
+  the dashboard is provisioned read-only from
+  `observability/grafana/dashboards/ibv2-overview.json`. Change the file, restart Grafana.
 - **Don't push or deploy without explicit consent.** Full deploy steps live in `docs/deploy.md`.
 - **`identity-api` blocks on the People Chain RPC at startup** — no reachable RPC, no boot.

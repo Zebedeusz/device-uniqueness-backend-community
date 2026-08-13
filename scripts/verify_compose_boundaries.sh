@@ -6,6 +6,10 @@ rendered="$(docker compose config)"
 # gateway/docker-compose.yml) checks the committed defaults, not its own ports.
 rendered_gateway="$(EDGE_HTTP_PORT= EDGE_HTTPS_PORT= docker compose -f gateway/docker-compose.yml config)"
 rendered_debug="$(docker compose -f docker-compose.yml -f docker-compose.debug.yml config)"
+# Same treatment as the gateway: cleared so a shell that republished a UI port
+# for itself is checked against the committed loopback defaults.
+rendered_observability="$(PROMETHEUS_PORT= GRAFANA_PORT= ALLOY_PORT= \
+  docker compose -f observability/docker-compose.yml config)"
 
 service_block() {
   local service="$1"
@@ -238,5 +242,29 @@ if [ "$edge_published" != "$expected_published" ]; then
   echo "$edge_published" >&2
   exit 1
 fi
+
+# Monitoring is for operators behind an SSH tunnel, never for the internet: the
+# three UIs (Grafana, Prometheus, Alloy) may publish only on loopback, and Loki
+# not at all — Alloy writes to it and Grafana reads it over the metrics network.
+observability_published="$(port_mappings <<<"$rendered_observability")"
+expected_observability="$(printf '127.0.0.1|12345->12345/tcp\n127.0.0.1|3000->3000/tcp\n127.0.0.1|9091->9090/tcp\n' | sort)"
+if [ "$observability_published" != "$expected_observability" ]; then
+  echo "the observability project must publish only Grafana/Prometheus/Alloy on 127.0.0.1, got:" >&2
+  echo "$observability_published" >&2
+  exit 1
+fi
+
+# It reads logs and metrics; it must never be handed anything it could sign or
+# decrypt with. The Grafana admin password is its own and stays out of this set.
+(
+  rendered="$rendered_observability"
+  for service in prometheus loki alloy grafana; do
+    for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
+               INVITE_INVITER_SIGNER_SURI TURN_SECRET POC_HMAC_SECRET DATABASE_URL \
+               APNS_PRIVATE_KEY FCM_SERVICE_ACCOUNT_JSON; do
+      forbid_key "$service" "$key"
+    done
+  done
+)
 
 echo "compose configuration boundaries: ok"

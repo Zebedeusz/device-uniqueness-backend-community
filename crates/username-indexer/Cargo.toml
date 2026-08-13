@@ -26,7 +26,6 @@ tokio.workspace = true
 axum.workspace = true
 tower-http = { version = "0.6", features = ["trace", "timeout", "request-id"] }
 tracing.workspace = true
-tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

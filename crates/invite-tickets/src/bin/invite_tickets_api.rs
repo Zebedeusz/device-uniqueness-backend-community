@@ -7,17 +7,12 @@
 //! the pool stocked (Phase 2) — this process never touches the People Chain.
 
 use anyhow::Context as _;
-use tracing_subscriber::EnvFilter;
 
 use invite_tickets::{db, routes, AppState, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("invite-tickets-api");
     http_common::metrics::spawn("invite-tickets-api");
 
     let config = Config::from_env().context("invalid configuration")?;

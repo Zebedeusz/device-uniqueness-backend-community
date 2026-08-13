@@ -1,9 +1,16 @@
-# Scrape targets for one environment. Every process exposes /metrics on 9090
-# and is reachable on the metrics network under its `<service>-<ENV_ID>` alias,
-# so a second environment is added by copying this job with the other suffix.
+# Scrape targets per environment. Every process exposes /metrics on 9090 and is
+# reachable on the metrics network under its `<service>-<ENV_ID>` alias, so an
+# environment is one job whose targets carry that suffix and whose `env_id`
+# label names it. `env_id` is what the dashboard filters on: a job without it
+# would silently merge two environments into one line.
 #
 # Targets are static: this host runs a fixed set of containers, and Docker
 # service discovery would need the daemon socket mounted into Prometheus.
+#
+# `dim-tickets` is deliberately absent: it has no client consumer (the shipping
+# apps claim through `invite-tickets`) and is not being released, so scraping it
+# would only add tiles that say nothing. Restore its two targets here if it is
+# ever deployed for real.
 
 global:
   scrape_interval: 30s
@@ -20,14 +27,28 @@ scrape_configs:
           - identity-chain-writer-paseo-next-v2:9090
           - registration-queue-paseo-next-v2:9090
           - username-indexer-paseo-next-v2:9090
-          - dim-tickets-api-paseo-next-v2:9090
-          - dim-tickets-writer-paseo-next-v2:9090
           - invite-tickets-api-paseo-next-v2:9090
           - invite-tickets-pool-paseo-next-v2:9090
           - turn-api-paseo-next-v2:9090
           - notify-relay-paseo-next-v2:9090
         labels:
           env_id: paseo-next-v2
+
+  # PreviewNet runs a deliberate subset — the five services listed in
+  # docs/deploy.md ("Start only the services that environment needs"), of which
+  # three export metrics. `registration-queue` is absent (QUEUE_ENABLED=false),
+  # the ticket services are not deployed there, and `turn-api` / `notify-relay`
+  # are shared: one instance for all environments, scraped under the job above.
+  # Listing an undeployed target here would only produce a permanent `down`.
+  - job_name: previewnet
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - identity-api-previewnet:9090
+          - identity-chain-writer-previewnet:9090
+          - username-indexer-previewnet:9090
+        labels:
+          env_id: previewnet
 
   - job_name: prometheus
     static_configs:

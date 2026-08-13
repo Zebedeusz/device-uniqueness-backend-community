@@ -7,17 +7,12 @@
 
 use anyhow::Context as _;
 use secrecy::ExposeSecret as _;
-use tracing_subscriber::EnvFilter;
 
 use identity_service::{db, routes, AppState, ChainClient, Config, Jwt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("identity-api");
     http_common::metrics::spawn("identity-api");
 
     let config = Config::from_env().context("invalid configuration")?;

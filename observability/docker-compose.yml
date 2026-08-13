@@ -1,4 +1,5 @@
-# Observability project: Prometheus, scraping the services over the private
+# Observability project: Prometheus (metrics), Loki + Alloy (logs), and Grafana
+# (the one UI over both), scraping the services over the private
 # `ibv2-metrics` network.
 #
 # Its own compose project (`-p observability`) for the same reason the edge is:
@@ -10,8 +11,8 @@
 #   docker network create ibv2-metrics   # once, out of band
 #   docker compose -f observability/docker-compose.yml -p observability up -d
 #
-# The UI is loopback-only by default (127.0.0.1:9091); tunnel to it with SSH
-# rather than publishing it.
+# The UIs are loopback-only by default (Grafana 127.0.0.1:3000, Prometheus
+# 9091, Alloy 12345); tunnel to them with SSH rather than publishing them.
 
 name: observability
 
@@ -36,6 +37,75 @@ services:
       metrics:
         aliases: ["prometheus"]
 
+  # Log store. Nothing publishes it: only Alloy writes and only Grafana reads,
+  # both over the metrics network. Retention lives in `loki-config.yaml`.
+  loki:
+    image: grafana/loki:3.5.10
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    networks:
+      metrics:
+        aliases: ["loki"]
+
+  # Log shipper. The Docker socket is the one privileged mount in this project:
+  # read-only, and Alloy only lists containers and reads their logs, but that
+  # metadata alone is why this project stays loopback-only.
+  alloy:
+    image: grafana/alloy:v1.13.0
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    depends_on:
+      - loki
+    volumes:
+      - ./alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    ports:
+      # Alloy's own UI: where to look when Grafana shows no logs — it reports
+      # what discovery found and whether writes to Loki are failing.
+      - "127.0.0.1:${ALLOY_PORT:-12345}:12345"
+    networks:
+      metrics:
+        aliases: ["alloy"]
+
+  # The UI over both datasources, provisioned from disk so a recreated Grafana
+  # comes back identical and the dashboard stays reviewable in git.
+  grafana:
+    image: grafana/grafana:12.2.1
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+    environment:
+      # Read-only anonymous access: reaching this at all already needs an SSH
+      # tunnel to loopback. Viewers may run ad-hoc Explore queries; the admin
+      # login covers what they cannot do.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # No phoning home from a Parity box.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    networks:
+      metrics:
+        aliases: ["grafana"]
+
 networks:
   metrics:
     external: true
@@ -43,3 +113,6 @@ networks:
 
 volumes:
   prometheus_data:
+  loki_data:
+  alloy_data:
+  grafana_data:

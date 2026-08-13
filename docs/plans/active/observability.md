@@ -7,8 +7,10 @@
 
 # Non-goals
 - Metrics for everything. Start with the two things that silently break registration.
-- Grafana, dashboards, OpenTelemetry, Sentry. Later, if we miss them.
+- OpenTelemetry, Sentry, tracing spans across services. Later, if we miss them.
 - Instrumenting services that aren't on fire.
+- ~~Grafana, dashboards~~ — reversed in Phase 4: reading logs was the actual daily
+  pain, and a log UI that cannot also show the gauges is half a tool.
 
 # Phase 1 — Read the allowance (half a day) — done
 
@@ -72,8 +74,42 @@ Phase 3 rule to add from this: alert on `ibv2_readyz_ok == 0` for 5m, distinct f
 (process gone) — and note `dim-tickets-writer` went `up 0` instead, because it crash-loops on a
 dead database rather than staying up degraded.
 
+# Phase 4 — Read the logs (a day) — done
+
+Ten processes across two compose projects, `docker compose logs -f <service>` one at a time
+over SSH, plain-text lines, and no cross-service or historical view. Metrics answered "is it
+broken"; nothing answered "what did it say".
+
+- [x] `http_common::telemetry::init(service)` replaces the duplicated
+      `tracing_subscriber::fmt()` in all ten bins; `LOG_FORMAT=json` emits one JSON object per
+      event (`flatten_event`, current span kept, span list dropped), text stays the default for
+      `just run`. Compose sets `json` on every service.
+- [x] Loki (single binary, filesystem, 14-day retention enforced by its own compactor) +
+      Alloy (Docker-socket discovery, read-only) + Grafana in the existing `observability`
+      project, all loopback-only. No per-service log config: `project` / `service` /
+      `container` come from Docker metadata, `level` from the JSON body.
+- [x] Grafana provisioned from disk — both datasources plus the committed
+      `ibv2-overview` dashboard (readiness, allowance, signer balances, outbox depth by status,
+      indexer lag, and two log panels), anonymous read-only with Explore.
+- [x] `scripts/verify_compose_boundaries.sh` extended: the observability project may publish
+      only Grafana/Prometheus/Alloy on `127.0.0.1` (Loki not at all), and holds no service secret.
+
+✅ **Demo passed** (local stack, 2026-08-11): with `identity-api` + Postgres up,
+`{service="identity-api"} | json | status=200` in Loki returned request lines with
+`span_request_id`, `latency`, and `status` as **queryable fields**, labelled
+`project="identity-backend-v2" service="identity-api" level="INFO"`. Loki's label list carried
+`service` values for all six running containers (services, Postgres, and the monitoring stack
+itself). Grafana `/api/health` `ok`, both provisioned datasources resolvable by UID, and
+`ibv2-overview` present in search. `scripts/verify_compose_boundaries.sh` green.
+
+Note for Phase 3: this changes the plan. Grafana's unified alerting can hold the five rules
+and notify Matrix through a webhook contact point, so Alertmanager is probably not needed —
+provisioning directory already exists at
+`observability/grafana/provisioning/alerting/`. Decide before building the Alertmanager path.
+
 # Phase 3 — Actually get paged (half a day)
-- [ ] Alertmanager + a Matrix bot in the backend/ops room
+- [ ] Alertmanager + a Matrix bot in the backend/ops room — **or** Grafana unified alerting
+      with a Matrix webhook contact point (cheaper now that Grafana is deployed; decide first)
 - [ ] Four rules: allowance zero, signer balance low, finalized head stuck 5min, outbox has work but no progress 5min
 - [ ] Fifth rule: `ibv2_readyz_ok == 0` for 5min (a dependency died while the process stayed up)
 
@@ -81,8 +117,8 @@ dead database rather than staying up degraded.
 
 # Later
 - Per-service metrics for DIM/invite/notify (fold in the deferrals already noted in those plans)
-- Grafana, once there are queries we keep re-running by hand
 - Sentry, once we have an unexplained 500
+- Log-based recording rules (error rate per service) once the alert set exists
 
 # Open questions
 - Who creates the Matrix bot?

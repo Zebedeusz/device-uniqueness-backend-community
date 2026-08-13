@@ -6,16 +6,11 @@
 //! relay, and replicas need no coordination.
 
 use anyhow::Context as _;
-use tracing_subscriber::EnvFilter;
 use turn::{routes, AppState, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("turn-api");
     http_common::metrics::spawn("turn-api");
 
     let config = Config::from_env().context("invalid configuration")?;

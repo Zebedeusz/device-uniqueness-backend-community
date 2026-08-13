@@ -26,7 +26,7 @@ subxt-signer = { version = "0.50", default-features = false, features = ["sr2551
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

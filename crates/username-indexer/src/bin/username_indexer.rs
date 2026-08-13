@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use anyhow::Context as _;
-use tracing_subscriber::EnvFilter;
 
 use username_indexer::http::middleware::RateLimiter;
 use username_indexer::poc::{self, Poc};
@@ -12,11 +11,7 @@ use username_indexer::{db, ensure_seeded, routes, AppState, ChainClient, Config}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    http_common::telemetry::init("username-indexer");
     http_common::metrics::spawn("username-indexer");
 
     let config = Config::from_env().context("invalid configuration")?;

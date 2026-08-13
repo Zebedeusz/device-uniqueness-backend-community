@@ -54,7 +54,7 @@ create now. See "How the workspace grows" below.
 | chain connection / RPC transport + writer signing key | `chain-client` | crate (reconnecting connect + `WriterSigner` + `proxy_target`) |
 | Postgres connection + bootstrap | `postgres` | still a module inside identity-service / username-indexer |
 | config loading + fail-fast validation | `config` | still a module per service |
-| telemetry (logs / metrics / tracing) | `telemetry` | not extracted |
+| telemetry (logs / metrics / tracing) | `telemetry` | `http-common` (`telemetry::init` installs the log subscriber, `metrics::spawn` the Prometheus exporter); every process calls both. Logs go to stdout only — labelling, shipping, storage, and retention belong to the host's monitoring project, not to a service |
 | JWT + JWKS verification (for verify-only services) | `jwt-verify` | crate; the cross-service auth contract — identity-service delegates its own verification to it; dim-tickets, invite-tickets, turn, notifications, and username-indexer (for the proof-of-compute bypass) consume it |
 | frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | crate; consumed by dim-tickets, invite-tickets, turn, notifications. The dialect bodies are golden-captured — change only with a fresh capture |
 
