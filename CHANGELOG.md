@@ -13,16 +13,11 @@ they summarise each release rather than list every change.
 
 ## [Unreleased]
 
-### Changed
+## [0.2.0] - 2026-08-14
 
-- **BREAKING (consumers): one image per service.** The single multi-binary image
-  `ghcr.io/paritytech/identity-backend-rust:<tag>` is no longer published. Each of the ten
-  binaries now ships as its own image, `ghcr.io/paritytech/identity-backend-rust/<service>:<tag>`,
-  holding exactly that binary — smaller images, per-service vulnerability scanning, and an
-  independent rollback per service. **All ten always carry the same tag**; a per-service pin is
-  not supported. Anyone pinning the old path must move to the per-service repos and drop any
-  `command:` override, since each image's `CMD` is now its own binary. The compose bundle attached
-  to each release resolves the new paths from `IMAGE_REGISTRY`/`IMAGE_TAG`.
+Breaking on two fronts: the single multi-binary image is replaced by ten
+per-service images, and the proxy-signing and attester-account variables are
+removed or renamed — read **Changed** before upgrading a deployment.
 
 ### Added
 
@@ -40,9 +35,10 @@ they summarise each release rather than list every change.
 - Kubernetes deployment: a Helm chart under `helm/` rendering the ten workloads, per-workload
   secrets, and the route table as a Traefik `IngressRoute`. See
   [`docs/deploy.md`](docs/deploy.md#kubernetes-helm).
-
-### Added
-
+- Merging a PR titled `chore(release): vX.Y.Z` tags the merge commit and cuts the
+  release itself, after checking that the title, `Cargo.toml` and `CHANGELOG.md`
+  agree and the tag is new. Manual `git push --tags` still works unchanged
+  ([#53]).
 - Prometheus metrics for the invite-tickets pool: unclaimed tickets per DIM
   (`ibv2_invite_pool_depth`), the inviter's on-chain quota
   (`ibv2_inviter_available_invites`), its fee balance on the shared
@@ -68,6 +64,14 @@ they summarise each release rather than list every change.
 
 ### Changed
 
+- **BREAKING (consumers): one image per service.** The single multi-binary image
+  `ghcr.io/paritytech/identity-backend-rust:<tag>` is no longer published. Each of the ten
+  binaries now ships as its own image, `ghcr.io/paritytech/identity-backend-rust/<service>:<tag>`,
+  holding exactly that binary — smaller images, per-service vulnerability scanning, and an
+  independent rollback per service. **All ten always carry the same tag**; a per-service pin is
+  not supported. Anyone pinning the old path must move to the per-service repos and drop any
+  `command:` override, since each image's `CMD` is now its own binary. The compose bundle attached
+  to each release resolves the new paths from `IMAGE_REGISTRY`/`IMAGE_TAG`.
 - **Breaking:** `INVITER_PROXY_FOR` and `INVITE_INVITER_PROXY_FOR` are removed.
   `dim-tickets-writer` and `invite-tickets-pool` now derive proxy signing the way
   the chain writer already did in [#32]: the signing key's own account is
@@ -85,6 +89,13 @@ they summarise each release rather than list every change.
 
 ### Fixed
 
+- `notify-relay` serves production and sandbox APNs device tokens from one
+  instance: `APNS_ENVIRONMENT` now picks the host tried *first*, and a token
+  rejected as `400 BadDeviceToken` is retried once against the sibling host.
+  `DeviceTokenNotForTopic` and the 410 reasons stay terminal ([#55]).
+- The compose stack passes the attestation variables through to `identity-api`,
+  which previously started with attestation unconfigured however the host's env
+  file was written ([#54]).
 - The outbox "oldest age" gauges measure time in the current status rather than
   the age of the row, so a retried or newly promoted claim no longer reports as
   hours old and the terminal statuses no longer grow without bound.
@@ -122,7 +133,8 @@ First release published as a multi-arch (amd64 + arm64) image.
 - Username registration is authorized by `candidateSignature` rather than the JWT
   subject ([#3]).
 
-[Unreleased]: https://github.com/paritytech/identity-backend-rust/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/paritytech/identity-backend-rust/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/paritytech/identity-backend-rust/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/paritytech/identity-backend-rust/releases/tag/v0.1.2
 
 [#1]: https://github.com/paritytech/identity-backend-rust/pull/1
@@ -148,3 +160,6 @@ First release published as a multi-arch (amd64 + arm64) image.
 [#33]: https://github.com/paritytech/identity-backend-rust/pull/33
 [#46]: https://github.com/paritytech/identity-backend-rust/pull/46
 [#50]: https://github.com/paritytech/identity-backend-rust/pull/50
+[#53]: https://github.com/paritytech/identity-backend-rust/pull/53
+[#54]: https://github.com/paritytech/identity-backend-rust/pull/54
+[#55]: https://github.com/paritytech/identity-backend-rust/pull/55

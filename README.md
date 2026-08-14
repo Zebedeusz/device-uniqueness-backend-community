@@ -87,5 +87,8 @@ Changes per release: [CHANGELOG.md](CHANGELOG.md). Pre-1.0, breaking changes bum
 the **minor** — `0.1.x` → `0.2.0` can break you.
 
 To cut a release: bump `version` under `[workspace.package]`, add the matching
-`## [X.Y.Z]` changelog section, merge, then push a `vX.Y.Z` tag. CI refuses a tag
-that disagrees with either ([workflow](.github/workflows/release.yml)).
+`## [X.Y.Z]` changelog section, and merge that as a PR titled `chore(release): vX.Y.Z`
+— merging tags the commit and publishes
+([workflow](.github/workflows/release-on-merge.yml)). Pushing a `vX.Y.Z` tag by hand
+runs the same release. CI refuses a tag that disagrees with the manifest or the changelog
+([workflow](.github/workflows/release.yml)).
