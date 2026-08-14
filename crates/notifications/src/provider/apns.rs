@@ -54,6 +54,14 @@ impl ApnsEnvironment {
         }
     }
 
+    /// The sibling endpoint, used for the cross-environment token retry.
+    fn other(self) -> Self {
+        match self {
+            ApnsEnvironment::Production => ApnsEnvironment::Development,
+            ApnsEnvironment::Development => ApnsEnvironment::Production,
+        }
+    }
+
     fn parse(raw: &str) -> Result<Self, ConfigError> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "production" | "prod" => Ok(ApnsEnvironment::Production),
@@ -186,6 +194,17 @@ struct CachedToken {
     issued_at: i64,
 }
 
+/// Everything an APNs request needs except the host, so the same push can be
+/// replayed against the sibling environment without rebuilding it.
+struct Wire<'a> {
+    device_token: &'a str,
+    topic: &'a str,
+    voip: bool,
+    expiry: i64,
+    payload: &'a Value,
+    token: &'a str,
+}
+
 /// Token-authenticated APNs HTTP/2 push provider.
 pub struct ApnsProvider {
     client: reqwest::Client,
@@ -235,6 +254,45 @@ impl ApnsProvider {
         Ok(token)
     }
 
+    /// Post the push to one APNs host, returning `(status, apns-id, body)`.
+    /// The body is only read on rejection (success carries none).
+    async fn attempt(
+        &self,
+        environment: ApnsEnvironment,
+        wire: &Wire<'_>,
+    ) -> Result<(u16, Option<String>, String), ProviderError> {
+        let url = format!(
+            "https://{}/3/device/{}",
+            environment.host(),
+            wire.device_token
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header("authorization", format!("bearer {}", wire.token))
+            .header("apns-topic", wire.topic)
+            .header("apns-push-type", if wire.voip { "voip" } else { "alert" })
+            .header("apns-priority", "10")
+            .header("apns-expiration", wire.expiry.to_string())
+            .json(wire.payload)
+            .send()
+            .await
+            .map_err(|error| ProviderError::Delivery(format!("apns request failed: {error}")))?;
+
+        let status = response.status();
+        let apns_id = response
+            .headers()
+            .get("apns-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let body = if status.is_success() {
+            String::new()
+        } else {
+            response.text().await.unwrap_or_default()
+        };
+        Ok((status.as_u16(), apns_id, body))
+    }
+
     async fn deliver(&self, request: &PushRequest) -> Result<PushOutcome, ProviderError> {
         let token = self.provider_token()?;
         let voip = request.voip.unwrap_or(false);
@@ -247,43 +305,47 @@ impl ApnsProvider {
             now + EXPIRY_DEFAULT_SECONDS
         };
         let payload = build_payload(&request.push_id, &request.message, voip);
-        let url = format!(
-            "https://{}/3/device/{}",
-            self.config.environment.host(),
-            request.device_token
-        );
+        let wire = Wire {
+            device_token: &request.device_token,
+            topic: &apns_topic,
+            voip,
+            expiry,
+            payload: &payload,
+            token: &token,
+        };
 
-        let response = self
-            .client
-            .post(&url)
-            .header("authorization", format!("bearer {token}"))
-            .header("apns-topic", &apns_topic)
-            .header("apns-push-type", if voip { "voip" } else { "alert" })
-            .header("apns-priority", "10")
-            .header("apns-expiration", expiry.to_string())
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|error| ProviderError::Delivery(format!("apns request failed: {error}")))?;
+        let mut environment = self.config.environment;
+        let (mut status, mut apns_id, mut body) = self.attempt(environment, &wire).await?;
+        let mut reason = parse_reason(&body);
 
-        let status = response.status();
-        let apns_id = response
-            .headers()
-            .get("apns-id")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        if status.is_success() {
-            debug!(topic = %apns_topic, environment = self.config.environment.label(), apns_id = apns_id.as_deref().unwrap_or("-"), "APNs push accepted");
+        // A device token is bound to one APNs environment, and the token alone
+        // doesn't say which: a debug-build (sandbox) token rejects as
+        // `BadDeviceToken` on production and vice versa. Retry the sibling host
+        // once so one relay serves both TestFlight and Xcode builds.
+        if retry_other_environment(status, reason.as_deref()) {
+            let fallback = environment.other();
+            debug!(
+                topic = %apns_topic,
+                from = environment.label(),
+                to = fallback.label(),
+                "APNs token rejected; retrying the other environment"
+            );
+            let retried = self.attempt(fallback, &wire).await?;
+            environment = fallback;
+            (status, apns_id, body) = retried;
+            reason = parse_reason(&body);
+        }
+
+        if (200..300).contains(&status) {
+            debug!(topic = %apns_topic, environment = environment.label(), apns_id = apns_id.as_deref().unwrap_or("-"), "APNs push accepted");
             // Legacy shape: APNs success reports counts only, never a messageId.
             return Ok(apns_success());
         }
 
-        let body = response.text().await.unwrap_or_default();
-        let reason = parse_reason(&body);
         warn!(
             topic = %apns_topic,
-            environment = self.config.environment.label(),
-            status = status.as_u16(),
+            environment = environment.label(),
+            status = status,
             reason = reason.as_deref().unwrap_or("-"),
             "APNs push rejected"
         );
@@ -295,8 +357,8 @@ impl ApnsProvider {
             Some(terminal) => Err(ProviderError::Delivery(terminal.to_string())),
             None => Ok(failure_outcome(
                 &request.device_token,
-                self.config.environment.label(),
-                status.as_u16(),
+                environment.label(),
+                status,
                 reason,
             )),
         }
@@ -338,6 +400,14 @@ fn apns_success() -> PushOutcome {
         message_id: None,
         errors: None,
     }
+}
+
+/// Whether a rejection should be retried against the other APNs environment.
+/// Only `400 BadDeviceToken` qualifies: it is exactly what APNs returns for a
+/// well-formed token issued by the sibling environment. `DeviceTokenNotForTopic`
+/// (wrong app) and the 410 reasons (retired token) are genuinely terminal.
+fn retry_other_environment(status: u16, reason: Option<&str>) -> bool {
+    status == 400 && reason == Some("BadDeviceToken")
 }
 
 /// The legacy terminal APNs reasons: a rejection carrying one of these means the
@@ -406,6 +476,36 @@ mod tests {
             topic: "io.parity.brevity".to_string(),
             environment: ApnsEnvironment::Development,
         }
+    }
+
+    #[test]
+    fn bad_device_token_retries_the_sibling_environment_and_nothing_else() {
+        assert!(retry_other_environment(400, Some("BadDeviceToken")));
+        // Wrong app, retired token, bad payload, and auth failures are terminal.
+        assert!(!retry_other_environment(
+            400,
+            Some("DeviceTokenNotForTopic")
+        ));
+        assert!(!retry_other_environment(410, Some("Unregistered")));
+        assert!(!retry_other_environment(400, Some("BadTopic")));
+        assert!(!retry_other_environment(403, Some("InvalidProviderToken")));
+        assert!(!retry_other_environment(400, None));
+    }
+
+    #[test]
+    fn environments_are_siblings_of_each_other() {
+        assert_eq!(
+            ApnsEnvironment::Production.other(),
+            ApnsEnvironment::Development
+        );
+        assert_eq!(
+            ApnsEnvironment::Development.other(),
+            ApnsEnvironment::Production
+        );
+        assert_eq!(
+            ApnsEnvironment::Development.other().host(),
+            "api.push.apple.com"
+        );
     }
 
     #[test]
