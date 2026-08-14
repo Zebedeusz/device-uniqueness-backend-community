@@ -378,6 +378,42 @@ Differences from the compose topology, and why:
   to the instances that do, via `global.sharedServiceNamespace`.
 - **The APNs key** is a Secret volume at mode `0440` with `fsGroup: 10001`, not a host path.
 
+## Cutting a release
+
+Open a PR whose **title is `chore(release): vX.Y.Z`**, containing the version bump and the
+changelog entry — `[workspace.package] version` in `Cargo.toml`, and a `## [X.Y.Z]` section in
+`CHANGELOG.md`. Merging it does the rest:
+
+```
+merge "chore(release): v0.2.0"
+  ├─ release-on-merge.yml   validates title == Cargo.toml == CHANGELOG, that the commit
+  │                         is on main, and that the tag is new, THEN tags the merge commit
+  │                         └─ calls release.yml: the check suite, ten images to ghcr +
+  │                            Docker Hub, binaries, compose bundle, SHA256SUMS
+  └─ deploy.yml             the ordinary `push: main` lane — builds SHA-tagged images
+                            and rolls the host, exactly as any other merge
+```
+
+Everything that can be checked without the tag is checked **before** it is created — the title
+shape, title/`Cargo.toml`/`CHANGELOG.md` agreement, that the commit really is on `main`, and that
+the tag does not already exist. Those are the mistakes a release PR makes, and a tag pointing at a
+release that never happened is a version nobody can re-cut without deleting it first.
+
+The release proper runs *after*, because `release.yml` is cut from the tag. If it fails — a flaky
+suite, a missing registry credential — the tag is published and the release is not: delete the
+tag, fix, and merge a new release PR.
+
+Two mechanics worth knowing:
+
+- **The tag is created, then `release.yml` is *called*, not triggered.** A tag pushed with
+  `GITHUB_TOKEN` does not fire `on: push` — GitHub blocks a workflow from starting another with
+  the default token. Pushing and hoping would create the tag and release nothing.
+- **Manual tagging still works**: `git tag v0.2.0 && git push --tags` runs the same workflow.
+  The merge lane is a convenience, not a replacement.
+
+A pre-release version (`v0.2.0-rc1`) is detected from the `-` and marks the GitHub Release as a
+pre-release, and leaves `stable` pointing at the last stable images.
+
 ## Release images
 
 Pushing a `v*` tag runs [`release.yml`](../.github/workflows/release.yml), publishing a

@@ -1,0 +1,118 @@
+name: Release on merge
+
+# Merging a release PR releases. The PR title carries the version:
+#
+#     chore(release): v0.2.0
+#
+# and the PR itself is the ordinary version bump — `[workspace.package] version`
+# in Cargo.toml plus the CHANGELOG section. Merge it and this tags the merge
+# commit and runs the release; the deploy to the host happens in parallel from
+# deploy.yml's own `push: main` trigger, as it does for any merge.
+#
+# Why this calls release.yml rather than just pushing the tag: a tag pushed with
+# GITHUB_TOKEN does NOT trigger `on: push`. GitHub blocks that deliberately, so a
+# workflow cannot start another with the default token. Pushing and hoping would
+# create the tag and silently release nothing. The tag is still created (it is
+# what the release is cut from and what `stable` is guarded on), then the
+# reusable workflow is invoked directly.
+#
+# Manual `git tag v0.2.0 && git push --tags` still works and is unchanged.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  tag:
+    # Merged, not merely closed. The title prefix is checked here because
+    # expressions have no regex; the exact shape is enforced in the step below,
+    # where a malformed version fails loudly rather than being ignored.
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, 'chore(release): v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The merge commit on main, which is what the tag must point at — not
+          # the PR head, which is not on main.
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      # The cheap invariants that are entirely about THIS PR — the title shape,
+      # title/Cargo.toml/CHANGELOG agreement, the commit being on main, the tag
+      # being new — are checked before the tag exists, because those are the
+      # mistakes a release PR actually makes and a tag pointing at a release
+      # that never happened cannot be re-cut without deleting it first.
+      #
+      # The rest of the release (the check suite, the builds, the manifest join,
+      # the bundle) necessarily runs after: `release.yml` is cut FROM the tag. A
+      # failure there does leave a published tag with no release — delete the
+      # tag, fix, and merge a new release PR.
+      - id: tag
+        name: Validate the release and tag the merge commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          tag="${TITLE#chore(release): }"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::title must be 'chore(release): vX.Y.Z' (got '$TITLE')"; exit 1 ;;
+          esac
+          version="${tag#v}"
+
+          manifest=$(grep -m1 -oP '^version = "\K[^"]+' Cargo.toml)
+          [ "$version" = "$manifest" ] || {
+            echo "::error::PR title says $tag but Cargo.toml is $manifest — bump [workspace.package] version in this PR"
+            exit 1
+          }
+
+          grep -qF "## [$version]" CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has no '## [$version]' section"
+            exit 1
+          }
+
+          # Asked of the REMOTE. `ref:` above is a bare SHA, which checkout
+          # fetches with a bare-commit refspec and `--no-tags`, so the local
+          # clone has no tags at all and `git rev-parse refs/tags/...` could
+          # only ever miss. --exit-code: 0 when the tag is there, 2 when it is
+          # not.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::tag $tag already exists — a release cannot be cut twice"
+            exit 1
+          fi
+
+          # The same clone has no `origin/main` either, so the "this commit is
+          # on main" claim `merge_commit_sha` carries is verified rather than
+          # trusted: a stale or test-merge SHA in the payload would otherwise
+          # publish a tag on a commit unreachable from main. Full depth, not
+          # --depth=1 — ancestry cannot be decided across a shallow boundary.
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$SHA" refs/remotes/origin/main || {
+            echo "::error::$SHA is not an ancestor of main — refusing to tag it"
+            exit 1
+          }
+
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "$tag" -m "$tag" "$SHA"
+          git push origin "refs/tags/$tag"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tagged $SHA as $tag"
+
+  # The same workflow a manual `git push --tags` runs, with the tag passed in.
+  release:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write
+      packages: write

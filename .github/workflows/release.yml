@@ -6,12 +6,28 @@ name: Release
 # Release. Independent of the `main` deploy pipeline in deploy.yml: tagging never
 # restarts production, and `latest` keeps tracking `main`.
 on:
+  # Manual tagging still works exactly as before.
   push:
     tags: ['v*']
+  # Called by release-on-merge.yml. A tag pushed with GITHUB_TOKEN does NOT
+  # trigger `on: push`, by design — GitHub refuses to let a workflow start
+  # another one with the default token. So the merge lane creates the tag and
+  # then calls this workflow directly, rather than pushing and hoping.
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to release (e.g. v0.2.0). Defaults to the pushed ref.
+        required: false
+        type: string
 
 jobs:
+  # The tag is passed explicitly: a called workflow inherits the CALLER's ref,
+  # so on the merge lane the gate would otherwise run against the PR's
+  # test-merge commit rather than the commit being released.
   check:
     uses: ./.github/workflows/check.yml
+    with:
+      ref: refs/tags/${{ inputs.tag || github.ref_name }}
 
   # Fails before the (long) image builds if the tag and the workspace version
   # disagree, so `stable` and the changelog can never point at an image whose
@@ -21,11 +37,20 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
     steps:
+      # `refs/tags/`, not the bare name: given `v0.2.0` checkout prefers a
+      # BRANCH of that name over the tag, so a stray branch would silently build
+      # something other than what the release is labelled with.
       - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
       - id: check
         run: |
-          tag='${{ github.ref_name }}'
+          # One resolution of "which tag is this", used by every job below:
+          # `github.ref_name` is the branch, not the tag, when called.
+          tag='${{ inputs.tag || github.ref_name }}'
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           manifest=$(grep -m1 -oP '^version = "\K[^"]+' Cargo.toml)
           if [ "$tag" != "v$manifest" ]; then
             echo "::error::tag $tag disagrees with Cargo.toml version $manifest"
@@ -66,6 +91,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -143,6 +170,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
       - uses: Swatinem/rust-cache@v2
       - name: Build the release binaries
         run: |
@@ -184,8 +213,10 @@ jobs:
       packages: write
     outputs:
       public_prefix: ${{ steps.dockerhub.outputs.prefix }}
+    # No checkout: every step below works out of `${{ runner.temp }}/digests` or
+    # against a registry, and `permissions: packages: write` zeroes `contents`,
+    # so a checkout could not clone this (private) repository anyway.
     steps:
-      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/digests
@@ -241,7 +272,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           tags=("$VERSION" "v$VERSION")
-          case '${{ github.ref_name }}' in *-*) ;; *) tags+=("stable") ;; esac
+          case '${{ needs.version.outputs.tag }}' in *-*) ;; *) tags+=("stable") ;; esac
 
           for svc in $(jq -r 'keys[]' amd64.json); do
             args=()
@@ -314,6 +345,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
 
       # The binary tarballs the image build exported and the macOS job compiled.
       # Without this they exist only as workflow artifacts, expire in a day, and
@@ -358,7 +391,7 @@ jobs:
             printf 'docker network create ibv2-edge   # once per host\n'
             printf 'docker compose up -d\n\n'
             printf '# ...or one service:\n'
-            printf 'docker pull %sidentity-api:%s\n' "$prefix" "${{ github.ref_name }}"
+            printf 'docker pull %sidentity-api:%s\n' "$prefix" "${{ needs.version.outputs.tag }}"
             printf '```\n'
             printf 'No containers? `ibv2-%s-<target>.tar.gz` carries every service binary for `x86_64`/`aarch64` Linux and Apple Silicon; `SHA256SUMS` covers every asset here.\n\n' "$VERSION"
             cat section.md
@@ -376,7 +409,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           PUBLIC_PREFIX: ${{ needs.manifest.outputs.public_prefix }}
           GHCR_PREFIX: ghcr.io/${{ github.repository }}/
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
           prefix="${PUBLIC_PREFIX:-$GHCR_PREFIX}"
           mkdir -p bundle/gateway
@@ -411,7 +444,7 @@ jobs:
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           # A `-` in the tag (v0.2.0-rc1) is the same pre-release signal the

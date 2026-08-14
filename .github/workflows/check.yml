@@ -2,12 +2,26 @@ name: Required checks
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        # A called workflow inherits the CALLER's ref, which is only right when
+        # the caller is itself running on the commit under test. The release
+        # lane is not: called from release-on-merge.yml it inherits
+        # `refs/pull/N/merge` — the pre-merge test-merge commit, which is not
+        # what ships and which GitHub deletes once the PR is merged. So the
+        # release passes the tag explicitly. Empty means "the caller's ref",
+        # which is what deploy.yml wants.
+        description: The ref to check out. Defaults to the caller's ref.
+        required: false
+        type: string
 
 jobs:
   offline:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - name: compose configuration boundaries
         run: scripts/verify_compose_boundaries.sh
       # One service, one image, one binary. Static (bake --print + compose
@@ -42,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: azure/setup-helm@v4
       - name: route parity — every environment
         run: |
@@ -55,6 +71,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: Swatinem/rust-cache@v2
       - name: database integration tests
         run: scripts/run_live_suites.sh db cargo test

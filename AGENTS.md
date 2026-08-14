@@ -78,6 +78,10 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
   compose, probe budgets), `verify_route_parity_live.sh` (real Caddy vs real Traefik).
   **Kubernetes deployment** — chart in `helm/`, status and sequencing in
   `docs/deploy.md` and `docs/plans/active/kubernetes-helm-deploy.md`.
+- Releasing: open a PR titled **`chore(release): vX.Y.Z`** carrying the `Cargo.toml` version bump
+  and the `CHANGELOG.md` section; merging it tags the merge commit and runs the whole release
+  (`release-on-merge.yml` → `release.yml`), while `deploy.yml` rolls the host from the same merge.
+  Manual `git push --tags` still works. See `docs/deploy.md` — "Cutting a release".
 - Local stack: `docker network create ibv2-edge` once, then `docker compose up`
   (Postgres + `identity-api` + `identity-chain-writer` + `username-indexer` + its own Postgres).
   All env vars in `.env.example`. Nothing publishes a host port: add
