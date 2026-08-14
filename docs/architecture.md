@@ -279,10 +279,17 @@ Operational invariants an agent must respect when touching the code.
   `writer_lease` is the deploy-overlap guard) — never scale it. The internal `SUBMITTING` status
   is reported as `SUBMITTED` on the frozen wire.
 - **`username-indexer` serializes projection writes on one Postgres advisory lock.** Bootstrap and
-  the incremental sync loop share one lock id; a full snapshot bootstrap runs **only when the
-  `sync_state` checkpoint is empty**, and each sync pass takes the lock with `pg_try_advisory_lock`
+  the incremental sync loop share one lock id; a full snapshot bootstrap runs **only when there is no
+  usable `sync_state` checkpoint**, and each sync pass takes the lock with `pg_try_advisory_lock`
   (skips the pass if another instance holds it). So the service is safe as N replicas on one shared
   Postgres, and restarts resume incrementally from the checkpoint (no full re-scan).
+- **A checkpoint is usable only for the chain it was taken from.** `sync_state.genesis_hash` stamps
+  which chain the block number belongs to; on boot, a mismatch against the connected chain means the
+  whole projection restates storage that no longer exists, so the checkpoint and the rows are
+  discarded together (one transaction) and a full bootstrap rebuilds them. This is automatic and
+  unconditional because the projection is derived state — the alternative is an indexer that resumes
+  on a position from a chain it shares no history with and serves the dead chain's usernames. A NULL
+  stamp means the row predates the column and is adopted rather than rebuilt.
 - **`username-indexer` public reads share one per-IP rate-limit bucket, and it is the outermost
   layer on the route.** It does no cryptography by design, so a caller that has exhausted its window
   cannot force JWT verification or puzzle hashing. The gateway forwards the GET surface to the

@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
                 indexed = report.indexed,
                 skipped = report.skipped,
                 snapshot_number = report.snapshot_number,
+                trigger = ?report.trigger,
                 "finalized username bootstrap complete"
             );
             freshness.update(FreshnessSnapshot {

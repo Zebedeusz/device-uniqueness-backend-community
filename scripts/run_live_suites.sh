@@ -94,14 +94,17 @@ if [ "$mode" = "chain" ]; then
   exit 0
 fi
 
-# Deterministic database-only gate: 12 suites / 33 ignored tests. Keep this
+# Deterministic database-only gate: 14 suites / 38 ignored tests. Keep this
 # list here so local tests, CI, and coverage all execute the same catalog.
-for suite in allocation_live auth_live outbox_live queue_live voucher_live payment_live; do
+for suite in allocation_live auth_live outbox_live dotns_live queue_live voucher_live payment_live; do
   IDENTITY_TEST_DATABASE_URL="$identity_url" \
     "${cargo_cmd[@]}" -p identity-service --test "$suite" -- --ignored
 done
 
-for suite in pagination_live poc_gate_live ingest_live; do
+# `ingest_live` and `chain_identity_live` both drive the singleton `sync_state`
+# row, and `chain_identity_live` clears `assigned_usernames` wholesale — this
+# loop runs one suite at a time, which is what keeps them from interleaving.
+for suite in pagination_live poc_gate_live ingest_live chain_identity_live; do
   DATABASE_URL="$indexer_url" \
     "${cargo_cmd[@]}" -p username-indexer --test "$suite" -- --ignored
 done

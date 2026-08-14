@@ -13,7 +13,7 @@ pub mod search;
 pub mod ss58;
 pub mod sync;
 
-pub use bootstrap::{ensure_seeded, BootstrapError, BootstrapReport};
+pub use bootstrap::{ensure_seeded, BootstrapError, BootstrapReport, BootstrapTrigger};
 pub use chain::{ChainClient, ChainError};
 pub use config::{Config, ConfigError};
 pub use http::{routes, AppState};

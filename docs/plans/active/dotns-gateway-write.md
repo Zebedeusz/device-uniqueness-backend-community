@@ -271,7 +271,7 @@ Not a coding phase. Recorded so nobody waits on an ask. Both target environments
   - [x] `DOTNS_MAX_FUTURE_SKEW_SECS` default 600 → 30 in `.env.example`, `docker-compose.yml`, `config.rs` and `.local/previewnet.env`. In `config.rs` the `from_env` default only; `test_default()` stays 600 so the golden fixtures are untouched.
   - [x] Docs in the same change. `docs/architecture.md`: the writer now spans two chains and owns two nonce lanes, plus the dotNS status model. `docs/deploy.md` + `docs/runbook.md`: the new vars, the AH allowance and AH signer balance to watch, and what `DOTNS_EXPIRED` means. And `.env.example`.
   - [x] `just check` green.
-  - [ ] **Not run locally.** `scripts/verify_compose_boundaries.sh` needs the `docker compose` plugin, which is not installed on this machine. Its new assertions were verified against the raw compose files by an equivalent parse: `DOTNS_GATEWAY_ENABLED` required on api **and** writer, `ASSET_HUB_RPC_URL`/`ATTESTER_ACCOUNT` required on the writer and forbidden elsewhere, both intake-only knobs still writer-forbidden. CI runs the real script.
+  - [x] **Run 2026-08-13**, once the `docker compose` plugin was available on this machine (v2.40.3). `scripts/verify_compose_boundaries.sh` prints `compose configuration boundaries: ok`. That confirms directly what was previously only checked by an equivalent hand-parse: `DOTNS_GATEWAY_ENABLED` required on api **and** writer, `ASSET_HUB_RPC_URL`/`ATTESTER_ACCOUNT` required on the writer and forbidden elsewhere, both intake-only knobs still writer-forbidden.
 - **✅ Demo — NOT YET RUN**:
   - `scripts/verify_compose_boundaries.sh` prints `compose configuration boundaries: ok`;
   - one deployable push to `main` updates both stacks and both health checks pass;
@@ -323,6 +323,8 @@ Ships alone. It is the only wire change in the slice.
 - the unchanged replay of the existing dotns fixtures, and that an unverifiable `dotns.signature` still yields a username (Phase 5).
 
 **Live Postgres**, `#[ignore]`-gated on `IDENTITY_TEST_DATABASE_URL` exactly like `queue_live.rs`. A new `crates/identity-service/tests/dotns_live.rs` covers the new columns, `claim_dotns_due` (only `ASSIGNED` + `PENDING`/`RETRY_AFTER`), the lease-guarded transitions, and the no-backfill property: a row inserted with `dotns_status` left `NULL` is never claimed.
+
+> **Fixed 2026-08-13 — the suite existed but nothing ran it.** `dotns_live.rs` was written and green, and was never added to `scripts/run_live_suites.sh`'s `db` catalog. That script *is* the gate (`.github/workflows/check.yml:28` invokes it directly), so all three tests were dead code in CI, in `just test-live-db`, and in `coverage-db`. Being `#[ignore]`d, they were also silently skipped by `just check`, so nothing anywhere reported them missing. `dotns_live` now sits beside `outbox_live` in the identity-service loop and the catalog comment reads **14 suites / 38 ignored tests**, matching a full local run. This is the failure mode the comment's own "keep this list here so local tests, CI, and coverage all execute the same catalog" exists to prevent — a new `*_live.rs` file is not wired up by being written.
 
 **Live chain — deliberately not in CI.** AH submission needs a funded attester holding gateway allowance, and CI has neither. That is the same reason People submission is not in CI today. It is covered instead by:
 

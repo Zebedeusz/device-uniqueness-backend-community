@@ -175,6 +175,51 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
   included. A selector written as `{role="signer"}` alone matches both chains —
   always pin `chain="people"` or `chain="asset-hub"` in alerts and dashboards.
 
+## After a chain wipe
+
+PreviewNet is re-spawned routinely. Two databases hold state derived from the chain
+that just disappeared, and they need opposite treatment.
+
+**`username-indexer` heals itself.** `sync_state.genesis_hash` records which chain the
+checkpoint belongs to. On boot, a mismatch against the connected chain's genesis makes
+the indexer discard the projection and the checkpoint and run a full bootstrap
+(`crates/username-indexer/src/bootstrap.rs`). Expect one long first boot and
+`connected chain is not the one this projection was built from` at WARN, followed by
+`finalized username bootstrap complete` with `trigger=ChainChanged`. Nothing to do.
+
+Without that stamp the failure was silent, so it is worth knowing the shape: a
+checkpoint at a block the new chain has not reached makes `ensure_seeded` skip the
+rescan and the incremental pass no-op, and the service keeps serving the dead chain's
+usernames with `/readyz` green. A checkpoint predating the column is adopted, not
+rebuilt (`adopted an unstamped checkpoint` at INFO) — so the deploy that introduces the
+guard does not rebuild healthy projections.
+
+**The identity database needs a decision, so it is a script.** Its outbox is not
+derivable from anything: `username_reservations` rows name usernames no chain will
+confirm, and each one keeps occupying a discriminator regardless of status, because
+availability unions the whole table with no status filter. A base with 100 historical
+rows reports `EXHAUSTED` against an empty chain. But the same database also holds
+`app_attest_keys` (per-install Apple keys — clearing them makes every tester reinstall)
+and `registration_vouchers` (hash-only; the plaintext existed once, in the mint CLI's
+stdout).
+
+```bash
+# report only; deletes nothing, stops nothing
+scripts/reset_env_state.sh --project identity-previewnet --confirm identity-previewnet --dry-run
+
+# stop the writers, clear the outbox + payment quotes + lease, restart
+scripts/reset_env_state.sh --project identity-previewnet --confirm identity-previewnet
+```
+
+`--confirm` must repeat `--project`. Both environments run from the same compose file
+on one host, so naming the target twice is what stops a reset landing on the wrong
+stack. Add `--include-indexer` to force the projection rebuild by hand instead of
+letting the boot guard do it.
+
+Then re-check the on-chain prerequisites the wipe also cleared — attester allowance,
+proxy delegation, signer funding, invite pools. That sequence is in
+[`plans/active/previewnet-env.md`](plans/active/previewnet-env.md).
+
 ## Writer rules
 
 - **Exactly one instance.** A nonce lane is (signing account, chain). Never

@@ -84,7 +84,8 @@ Not a coding phase; it is the long pole, so it must not start after Phase 1.
   2. `dot previewnet-people.query.PeopleLite.AttestationAllowance --dump` — expect a non-trivial allowance for `5GCF223U…`. Missing → ask for `PeopleLite.increase_attestation_allowance(5GCF223U…, n)` (root origin).
   3. `dot previewnet-people.query.Game.AvailableInvites --dump` and `…ProofOfInk.AvailableInvites --dump` — expect invites for `5GCF223U…`. Missing → ask the same owner to top them up.
   4. `dot previewnet-people.query.System.Account 5HEhiB3hMb8P36L6Edj716fR4wLPUSqoZZpcUrrYEod7f3qu` (and the authority) — expect a funded free balance for fees.
-  5. Only then restart the PreviewNet stack; the writer logs `connected signer=…` and the first extrinsic should finalize.
+  5. Reset the environment's own state, which the wipe invalidated too: `scripts/reset_env_state.sh --project identity-previewnet --confirm identity-previewnet` (`--dry-run` first to see the counts). It clears the registration outbox and payment quotes and leaves the device keys and minted vouchers alone — the rationale per table is in the script header and `docs/runbook.md` → **After a chain wipe**. Skipping it leaves ASSIGNED rows for usernames the new chain has never heard of, and every one of them keeps occupying a discriminator: availability unions the whole outbox with no status filter, so bases go `EXHAUSTED` against an empty chain. The username-indexer needs nothing here — since `sync_state.genesis_hash` it detects the new chain at boot and rebuilds its own projection.
+  6. Only then restart the PreviewNet stack; the writer logs `connected signer=…` and the first extrinsic should finalize.
 - **✅ Demo** (passed 2026-08-03): attester authority, its proxy delegation to our writer signer, attestation allowance, and both invite pools are all visible on PreviewNet People on-chain, with the writer signer funded.
 
 # MVP phases (ship-shaped, demoable)

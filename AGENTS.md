@@ -56,8 +56,8 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 
 ## Commands
 
-- `just check` — the fast offline gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace` + `verify-config` (the deployment invariants below). Mirrors `check.yml`'s offline job exactly.
-- `just test-live-db` (also `just test-live`) — the deterministic Postgres gate: 12 suites / 33 ignored tests against a per-run isolated Compose project. CI runs it after `just check`; run both before declaring done.
+- `just check` — the fast offline gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace`.
+- `just test-live-db` (also `just test-live`) — the deterministic Postgres gate: 14 suites / 38 ignored tests against a per-run isolated Compose project. CI runs it after `just check`; run both before declaring done.
 - `just test-live-chain` — optional Postgres + live People Chain suites; external RPC availability keeps it outside the merge/release gate.
 - `just test-live-providers` — optional credentialed APNs/FCM smokes; runs only the providers configured in the environment and fails if neither is configured.
 - `just coverage-db` — canonical deterministic coverage (offline + Postgres). `just coverage-full` additionally merges the optional live-chain suites.
