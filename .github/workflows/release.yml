@@ -212,7 +212,13 @@ jobs:
     permissions:
       packages: write
     outputs:
-      public_prefix: ${{ steps.dockerhub.outputs.prefix }}
+      # The prefix the release may ADVERTISE, which is not the one it tried to
+      # push to: emitted by `pullable` only when all ten mirrors went up and are
+      # anonymously pullable. Unset credentials, a rejected push, a private
+      # repository — every one of those leaves this empty, and the `release` job
+      # falls back to ghcr pull lines. Never point the notes at a registry the
+      # reader cannot actually reach.
+      public_prefix: ${{ steps.pullable.outputs.prefix }}
     # No checkout: every step below works out of `${{ runner.temp }}/digests` or
     # against a registry, and `permissions: packages: write` zeroes `contents`,
     # so a checkout could not clone this (private) repository anyway.
@@ -230,8 +236,10 @@ jobs:
 
       # A missing credential skips the public mirror loudly rather than failing
       # the release: ghcr is the lane our own deploys pull from, and it must not
-      # be held hostage by a Docker Hub token. `secrets` is not available in an
-      # `if:`, hence the flag.
+      # be held hostage by a Docker Hub token. The steps below extend that to a
+      # credential that is PRESENT but insufficient, and to a repository that is
+      # private — every Docker Hub failure is a warning, never a release
+      # failure. `secrets` is not available in an `if:`, hence the flag.
       #
       # A PREFIX, not a repository: Docker Hub namespaces are one level
       # (`org/name`), so ten services cannot live under `paritytech/ibv2/<svc>`
@@ -255,8 +263,10 @@ jobs:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-      # Tags are computed here rather than via metadata-action: ten services
-      # would need ten invocations to produce the same three strings.
+      # Tags are computed once, here, rather than via metadata-action: ten
+      # services would need ten invocations to produce the same three strings —
+      # and both the ghcr push and the mirror below must tag identically, so
+      # deriving them twice would be a drift waiting to happen.
       #
       # Exact version, plus `stable` for consumers who want "newest release"
       # without pinning. No moving major / minor tags, which would jump across
@@ -264,25 +274,32 @@ jobs:
       # from deploy.yml and must not jump to a release. `stable` is guarded on
       # the tag having no `-`, so a pre-release (v0.2.0-rc1) publishes its exact
       # version without moving `stable` off the last stable image.
+      - id: tags
+        name: Resolve the release tags
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          tags="$VERSION v$VERSION"
+          case "$TAG" in *-*) ;; *) tags="$tags stable" ;; esac
+          echo "list=$tags" >> "$GITHUB_OUTPUT"
+
+      # ghcr FIRST, and alone. This is the lane our own deploys pull from, so it
+      # is the half that may fail the release; the Docker Hub mirror below is
+      # best-effort by design. Both used to share one loop, which meant a Docker
+      # Hub rejection on the alphabetically-first service (`bash -e`, so the loop
+      # aborted immediately) left the other nine WITHOUT ghcr manifest lists —
+      # a Docker Hub credential taking down the entire release, which is exactly
+      # what the `dockerhub` step above exists to prevent.
       - name: Create and push a manifest list per service
         working-directory: ${{ runner.temp }}/digests
         env:
           IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
-          PUBLIC_PREFIX: ${{ steps.dockerhub.outputs.prefix }}
-          VERSION: ${{ needs.version.outputs.version }}
+          TAGS: ${{ steps.tags.outputs.list }}
         run: |
-          tags=("$VERSION" "v$VERSION")
-          case '${{ needs.version.outputs.tag }}' in *-*) ;; *) tags+=("stable") ;; esac
-
           for svc in $(jq -r 'keys[]' amd64.json); do
             args=()
-            for tag in "${tags[@]}"; do
-              args+=(-t "$IMAGE_REGISTRY/$svc:$tag")
-              # Same digests, second registry. `latest` is deliberately absent
-              # from `tags` here: it tracks `main`, and unreleased work is not
-              # what an outside consumer should get by default.
-              [ -z "$PUBLIC_PREFIX" ] || args+=(-t "$PUBLIC_PREFIX$svc:$tag")
-            done
+            for tag in $TAGS; do args+=(-t "$IMAGE_REGISTRY/$svc:$tag"); done
             for arch_file in *.json; do
               digest="$(jq -r --arg s "$svc" '.[$s] // empty' "$arch_file")"
               [ -n "$digest" ] ||
@@ -291,29 +308,85 @@ jobs:
             done
             docker buildx imagetools create "${args[@]}"
           done
+
+      # The same digests, a second registry — and every push guarded, so the
+      # step ends in a warning rather than a failure. The mirror is a
+      # convenience for outside consumers, and the release notes fall back to
+      # ghcr pull lines when it does not happen (see `public_prefix` above).
+      #
+      # `latest` is deliberately absent from `TAGS`: it tracks `main`, and
+      # unreleased work is not what an outside consumer should get by default.
+      #
+      # Every service is attempted even after one fails, so the warning names
+      # the full set rather than only whichever sorts first — the difference
+      # between "the token cannot write this namespace" and "one repo is
+      # missing" is the whole diagnosis.
+      - id: mirror
+        name: Mirror the manifest lists to Docker Hub
+        if: steps.dockerhub.outputs.prefix != ''
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          PUBLIC_PREFIX: ${{ steps.dockerhub.outputs.prefix }}
+          TAGS: ${{ steps.tags.outputs.list }}
+        run: |
+          failed=()
+          for svc in $(jq -r 'keys[]' amd64.json); do
+            args=()
+            for tag in $TAGS; do args+=(-t "$PUBLIC_PREFIX$svc:$tag"); done
+            # Already validated non-empty by the ghcr step above.
+            for arch_file in *.json; do
+              args+=("$IMAGE_REGISTRY/$svc@$(jq -r --arg s "$svc" '.[$s]' "$arch_file")")
+            done
+            docker buildx imagetools create "${args[@]}" || failed+=("$svc")
+          done
+
+          if [ ${#failed[@]} -eq 0 ]; then
+            echo 'mirrored=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'mirrored=false' >> "$GITHUB_OUTPUT"
+          echo "::warning::could not mirror ${#failed[@]} of 10 services to $PUBLIC_PREFIX (${failed[*]}) — the release will point at ghcr instead. Each repository must exist and the DOCKERHUB_PASSWORD token needs write scope on that namespace; see docs/deploy.md."
+
       # The point of the mirror is an unauthenticated `docker pull`, and a Docker
       # Hub repository can be private without the push saying so. Asked with no
-      # credentials at all, so a private repository fails here rather than on
-      # someone else's laptop.
-      - name: Verify the mirror is anonymously pullable
-        if: steps.dockerhub.outputs.prefix != ''
+      # credentials at all, so a private repository is caught here rather than on
+      # someone else's laptop — and, like a failed push, it downgrades the notes
+      # to ghcr rather than failing a release whose images are already published.
+      #
+      # This step's output IS the job's `public_prefix`: it is emitted only on
+      # the path where all ten mirrors were pushed AND are anonymously pullable,
+      # so every other path leaves it empty and the release falls back to ghcr.
+      - id: pullable
+        name: Verify the mirror is anonymously pullable
+        if: steps.mirror.outputs.mirrored == 'true'
         working-directory: ${{ runner.temp }}/digests
         env:
           PUBLIC_PREFIX: ${{ steps.dockerhub.outputs.prefix }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
+          private=()
           for svc in $(jq -r 'keys[]' amd64.json); do
             repo="${PUBLIC_PREFIX#docker.io/}$svc"
-            token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repo:pull" | jq -r .token)
+            # `|| { ...; continue; }`, not a bare assignment: this step runs
+            # under `bash -e`, where a failed command substitution aborts the
+            # step — turning a network blip into the hard release failure this
+            # whole arrangement exists to avoid.
+            token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repo:pull" | jq -r .token) || {
+              private+=("$repo"); continue
+            }
             curl -fsS -o /dev/null \
               -H "Authorization: Bearer $token" \
               -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' \
-              "https://registry-1.docker.io/v2/$repo/manifests/$VERSION" || {
-                echo "::error::$repo:$VERSION is not anonymously pullable — set that Docker Hub repository to public"
-                exit 1
-              }
+              "https://registry-1.docker.io/v2/$repo/manifests/$VERSION" || private+=("$repo")
           done
+
+          if [ ${#private[@]} -gt 0 ]; then
+            echo "::warning::${#private[@]} of 10 mirrors are not anonymously pullable (${private[*]}) — set those Docker Hub repositories to public. The release will point at ghcr instead."
+            exit 0
+          fi
           echo "all ten mirrors are anonymously pullable"
+          echo "prefix=$PUBLIC_PREFIX" >> "$GITHUB_OUTPUT"
 
       - name: Verify every service has both architectures
         env:

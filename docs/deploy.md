@@ -441,14 +441,22 @@ Docker Hub namespaces are one level (`org/name`), so the mirror flattens the ghc
 not one. Override the prefix with the `DOCKERHUB_PREFIX` repository variable; the credentials are
 the `DOCKERHUB_USER` / `DOCKERHUB_PASSWORD` secrets.
 
-Each of the ten must exist **and be public**. A push can auto-create a repository, but the org's
-default visibility decides what it is created as — so pushing may well produce ten *private* repos,
-which succeeds at push time and defeats the entire point of the mirror. `latest` is deliberately ghcr-only: it tracks `main`, and unreleased work
-should not be what an outside consumer picks up by default. The mirror is skipped with a
-warning (not a failure) when `DOCKERHUB_USER` is unset — ghcr is the lane our deploys pull
-from and must not be held hostage by a Docker Hub token. Release-time checks assert each
-mirrored repository is **anonymously pullable**, asked with no credentials at all, so a
-private Docker Hub repository fails the release rather than someone else's `docker pull`.
+Each of the ten must exist **and be public**, and `DOCKERHUB_PASSWORD` must be a token with
+**write** scope on that namespace. A push can auto-create a repository, but only where the
+account may create one — and the org's default visibility decides what it is created as, so a
+push that does succeed may well produce ten *private* repos, defeating the entire point of the
+mirror. `latest` is deliberately ghcr-only: it tracks `main`, and unreleased work should not be
+what an outside consumer picks up by default.
+
+**The mirror is best-effort; ghcr is not.** ghcr is the lane our own deploys pull from, and it
+must never be held hostage by a Docker Hub token — so the two registries are pushed by separate
+steps, ghcr first and alone. Every Docker Hub failure is a `::warning::` rather than a release
+failure: `DOCKERHUB_USER` unset, a token the registry rejects, or a repository that a
+credential-free pull cannot reach (checked at release time, asked with no credentials at all, so
+a private repo is caught here rather than on someone else's laptop). In each case the release
+notes and the compose bundle fall back to ghcr pull lines, because the notes must never point at
+a registry the reader cannot reach. A release is therefore *never* blocked on Docker Hub — but
+check the run's warnings if `docker.io` tags do not appear.
 
 The ghcr packages inherit the repo's private visibility, so external consumers need a GitHub
 token with `read:packages` (SSO-authorized for `paritytech`) to pull. Make the package
