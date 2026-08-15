@@ -7,16 +7,23 @@ license.workspace = true
 publish.workspace = true
 autobins = false
 
-# turn is a library (domain: coturn REST-API ephemeral credential minting). Its
+# turn is a library (domain: coturn REST-API ephemeral credential minting +
+# proof-authorized issuance). Its
 # one deployable service, the stateless N-replica `turn-api`, is a role of the
 # `ibv2` binary (`crates/ibv2`), entered through this crate's `routes()`. No
-# database, no chain — the only secret is the HMAC key shared with the TURN relay.
+# database; the only chain-facing state is the
+# background-refreshed ring-root cache for the proof routes.
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
 jwt-verify.workspace = true
 http-common.workspace = true
+chain-types.workspace = true
+chain-client.workspace = true
+subxt.workspace = true
+# Verify-only (no default features): no prover, no SRS data in the binary.
+verifiable.workspace = true
 
 tokio.workspace = true
 axum.workspace = true
@@ -27,6 +34,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 utoipa.workspace = true
 
+blake2 = "0.10"
 hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
@@ -38,6 +46,11 @@ rand = "0.8"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 ed25519-dalek = "2"
+
+# Tests and the Phase 0 examples need the prover ("std" pulls it in) to
+# manufacture ring proofs, and `subxt-signer` to submit test attestations.
+verifiable = { workspace = true, features = ["std"] }
+subxt-signer.workspace = true
 
 [lints]
 workspace = true

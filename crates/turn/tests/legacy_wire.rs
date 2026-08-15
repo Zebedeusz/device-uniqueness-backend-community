@@ -110,6 +110,7 @@ fn app(rate_limit: u32, algorithm: Algorithm) -> axum::Router {
         jwt_verifier: jwt_verify::Verifier::from_verifying_key(key.verifying_key()),
         rate_limit,
         rate_window: Duration::from_secs(60),
+        proof: None,
     };
     turn::routes(AppState::new(config))
 }

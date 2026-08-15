@@ -81,6 +81,16 @@ TURN_AUTH_ALGORITHM=SHA1                  # must match the relay
 TURN_TTL_SECS=1800
 TURN_REALM=<relay realm, e.g. turn-dev-b.novasama-tech.org>
 ICE_SERVERS=stun:<relay>:3478,turn:<relay>:3478?transport=udp,turns:<relay>:5349?transport=tcp
+# Proof-authorized issuance (POST /api/v1/turn/issue-with-proof; off by default).
+# With TURN_PROOF_ENABLED=true every deployment-specific value below is required
+# and turn-api refuses to start without it. The canonical People Lite and People
+# collections are fixed in code; requests must name one of their exact ids.
+TURN_PROOF_ENABLED=false
+TURN_PROOF_RPC_URL=wss://<people-rpc>
+TURN_PROOF_GENESIS=0x<32-byte-hex>        # root refresher refuses a different chain
+TURN_PROOF_PRODUCTS=<product.dot>[,<other.dot>]
+TURN_PROOF_CONTEXT_SUFFIX=0               # derivation index for every product context
+TURN_PROOF_CONCURRENCY=auto               # available CPUs - 1 (floor 1); override with a positive integer
 
 # notify-relay (stateless push relay; service-owned secrets)
 NOTIFY_RATE_LIMIT=60                      # per-subject requests per window

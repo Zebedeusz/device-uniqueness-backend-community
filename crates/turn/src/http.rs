@@ -18,6 +18,7 @@
 //! [`crate::credentials`]; the `servers` array echoes `ICE_SERVERS` verbatim.
 
 pub mod error;
+pub mod proof_routes;
 pub mod state;
 
 use axum::extract::State;
@@ -38,8 +39,19 @@ use self::state::AppState;
 /// The in-prefix `fallback(hono_not_found)` on the method router stays here: it
 /// is this surface's own dialect for a wrong method, and it must win inside
 /// `/api/v1/turn` however the router is assembled.
+///
+/// The proof routes are present only when proof-authorized issuance is enabled.
+/// A hex proof is ~1.6 KB, so an 8 KB cap bounds every legitimate proof request.
 pub fn router(state: AppState) -> Router {
-    let api = Router::new().route("/issue", post(issue_credentials).fallback(hono_not_found));
+    let mut api = Router::new().route("/issue", post(issue_credentials).fallback(hono_not_found));
+    if state.proof.is_some() {
+        api = api.route(
+            "/issue-with-proof",
+            post(proof_routes::issue_with_proof)
+                .layer(axum::extract::DefaultBodyLimit::max(8 * 1024))
+                .fallback(hono_not_found),
+        );
+    }
     Router::new().nest("/api/v1/turn", api).with_state(state)
 }
 

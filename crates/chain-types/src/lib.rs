@@ -19,11 +19,11 @@
 //! - Source: Paseo Next v2 People Chain — `wss://paseo-people-next-system-rpc.polkadot.io`
 //! - Runtime: `next-people-paseo`, specVersion `1000030`, transactionVersion `4`
 //! - Format: metadata V16, trimmed to pallets `System`, `Balances`, `Utility`,
-//!   `Proxy`, `People`, `PeopleLite`, `Resources`, `Game`, `ProofOfInk`
+//!   `Proxy`, `People`, `PeopleLite`, `Resources`, `Game`, `ProofOfInk`, `Members`
 //! - File: [`metadata/people.scale`](../metadata/people.scale)
 //!
 //! Refresh with:
-//! `subxt metadata --url <people-rpc> --pallets System,Balances,Utility,Proxy,People,PeopleLite,Resources,Game,ProofOfInk -f bytes -o crates/chain-types/metadata/people.scale`
+//! `subxt metadata --url <people-rpc> --pallets System,Balances,Utility,Proxy,People,PeopleLite,Resources,Game,ProofOfInk,Members -f bytes -o crates/chain-types/metadata/people.scale`
 
 /// Generated People Chain runtime API (calls, storage, constants, events).
 ///
@@ -847,5 +847,24 @@ mod tests {
             config.metadata_for_spec_version(1_000_031).is_none(),
             "registration must not leak to other spec versions"
         );
+    }
+
+    /// The personhood-proof verifier can construct the `Members` pallet lookups
+    /// it verifies ring-VRF proofs against: the current ring root, the
+    /// retained previous roots, and the collection descriptor carrying the
+    /// ring size (`Root`/`OldRoots` keyed by collection at fetch time).
+    #[test]
+    fn builds_members_ring_root_queries() {
+        let root = people::storage().members().root();
+        assert_eq!(root.pallet_name(), "Members");
+        assert_eq!(root.entry_name(), "Root");
+
+        let old_roots = people::storage().members().old_roots();
+        assert_eq!(old_roots.pallet_name(), "Members");
+        assert_eq!(old_roots.entry_name(), "OldRoots");
+
+        let collections = people::storage().members().collections();
+        assert_eq!(collections.pallet_name(), "Members");
+        assert_eq!(collections.entry_name(), "Collections");
     }
 }

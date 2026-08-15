@@ -23,6 +23,11 @@ subxt = { version = "0.50", default-features = false, features = ["native", "rec
 subxt-rpcs = { version = "0.50", default-features = false, features = ["native", "reconnecting-rpc-client"] }
 subxt-signer = { version = "0.50", default-features = false, features = ["sr25519", "std"] }
 
+# Ring-VRF personhood-proof verification. Pinned to the revision
+# `paritytech/individuality` pins (the 288-byte `MembersCommitment` encoding);
+# verify-only consumers keep default features off (no prover, no SRS data).
+verifiable = { git = "https://github.com/paritytech/verifiable", rev = "1f9f67524acce0d9c46dbbb566f84ce52757b114", default-features = false }
+
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 tracing = "0.1"

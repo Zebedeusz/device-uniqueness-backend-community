@@ -835,6 +835,7 @@ table.params td.desc code{
     <div class="nav-section">
       <div class="nav-section-title">TURN</div>
       <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-api-v1-turn-issue"><span class="method-mini">POST</span><span class="path">/turn/issue</span></a>
+      <a class="nav-item m-post" href="javascript:void(0)" data-scroll-to="ep-api-v1-turn-issue-with-proof"><span class="method-mini">POST</span><span class="path">/turn/issue-with-proof</span></a>
     </div>
 
     <div class="nav-section">
@@ -2576,6 +2577,115 @@ legacy quirk).</td></tr>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
               <div class="sc-desc">Per-subject rate limit exceeded (RFC 9457 problem details, with <code>Retry-After</code>).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint" id="ep-api-v1-turn-issue-with-proof">
+        <div class="endpoint-head">
+          <div class="endpoint-title">
+            <span class="method-badge m-post">POST</span>
+            <span class="endpoint-path">/api/v1/turn/issue-with-proof</span>
+          </div>
+          <div class="endpoint-meta">
+            <span class="chip green">201</span>
+            <span class="chip red">400</span>
+            <span class="chip red">403</span>
+            <span class="chip yellow">429</span>
+            <span class="chip red">503</span>
+            <span class="chip">public</span>
+          </div>
+        </div>
+        <div class="endpoint-body">
+          <p class="endpoint-desc">Redeem a personhood proof for the same credentials as <code>/turn/issue</code>.</p>
+          <div class="tbl-wrap">
+            <table class="params">
+              <thead>
+                <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="name">productId</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">The product the proof was made for. Its context is the one the proof
+is verified under, so a product proves under its own identifier. Must
+be one this deployment accepts.</td></tr>
+                <tr><td class="name">collection</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Hex-encoded 32-byte collection id from the proof's TrUAPI
+<code>ringLocation</code>. Only the canonical People Lite and People collections
+are accepted.</td></tr>
+                <tr><td class="name">proof</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Ring-VRF proof over the derived message (hex), exactly as the host
+returns it — raw signature bytes, with no SCALE length prefix.</td></tr>
+                <tr><td class="name">ringIndex</td><td class="type">number</td><td class="req yes">yes</td><td class="desc">Ring containing the proving member, used to locate the root.</td></tr>
+                <tr><td class="name">ringRevision</td><td class="type">number</td><td class="req yes">yes</td><td class="desc">Revision of that ring the proof was made against, as the host reports
+it. Only that revision's root is tried, so a revision this deployment
+no longer holds is refused without verifying anything.</td></tr>
+                <tr><td class="name">timestamp</td><td class="type">number</td><td class="req yes">yes</td><td class="desc">Client Unix seconds, bound into the proved message. Must be within the
+server's accepted skew.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Request Body</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"productId"</span><span class="p">:</span> <span class="s">"vox.dot"</span><span class="p">,</span>
+  <span class="s">"collection"</span><span class="p">:</span> <span class="s">"0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465"</span><span class="p">,</span>
+  <span class="s">"proof"</span><span class="p">:</span> <span class="k">null</span><span class="p">,</span>
+  <span class="s">"ringIndex"</span><span class="p">:</span> <span class="n">0</span><span class="p">,</span>
+  <span class="s">"ringRevision"</span><span class="p">:</span> <span class="n">3</span><span class="p">,</span>
+  <span class="s">"timestamp"</span><span class="p">:</span> <span class="n">1784757652</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 201 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"servers"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="s">"stun:stun.example.com:3478"</span><span class="p">,</span>
+    <span class="s">"turn:turn.example.com:3478?transport=udp"</span>
+  <span class="p">]</span><span class="p">,</span>
+  <span class="s">"username"</span><span class="p">:</span> <span class="s">"1784757652:0a79e3412921701a"</span><span class="p">,</span>
+  <span class="s">"password"</span><span class="p">:</span> <span class="s">"qmg5g7d1bXzY0qZkRUqtIPEIKjA="</span><span class="p">,</span>
+  <span class="s">"ttl"</span><span class="p">:</span> <span class="n">1800</span>
+<span class="p">}</span></pre>
+          </div>
+          <div class="status-grid">
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c201">201</span>
+                <span class="sc-label">CREATED</span>
+              </div>
+              <div class="sc-desc">Proof accepted; returns servers, username, password, and the configured TTL. Credentials expire <code>ttl</code> seconds after issuance; no alias appears in the response.</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c400">400</span>
+                <span class="sc-label">WRONG_DATA</span>
+              </div>
+              <div class="sc-desc">Unparseable body, invalid hex, a collection outside the canonical People Lite/People allowlist, a proof that is not a single-context ring-VRF signature, a product this deployment does not accept, or a timestamp outside the accepted skew (RFC 9457 problem details).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c403">403</span>
+                <span class="sc-label">FORBIDDEN</span>
+              </div>
+              <div class="sc-desc">The proof did not verify against the named ring root under that product's context — including when <code>(ringIndex, ringRevision)</code> is outside the roots this deployment still holds (RFC 9457 problem details; deliberately unspecific).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c429">429</span>
+                <span class="sc-label">RATE_LIMITED</span>
+              </div>
+              <div class="sc-desc">This person's redemption limit was exceeded (RFC 9457 problem details, with <code>Retry-After</code>).</div>
+            </div>
+            <div class="status-card">
+              <div class="sc-head">
+                <span class="sc-code c503">503</span>
+                <span class="sc-label">UNAVAILABLE</span>
+              </div>
+              <div class="sc-desc">Verification unavailable: no ring-root snapshot yet (chain unreachable since boot), the bounded waiter queue is full, or all verification slots remained busy for the bounded wait. Saturation responses include <code>Retry-After</code>.</div>
             </div>
           </div>
         </div>

@@ -1,8 +1,9 @@
 //! coturn REST-API ephemeral credential minting (the construction the legacy
 //! backend and coturn's `--use-auth-secret` mode share):
 //!
-//! - `username = "{unixExpiry}:{hex(8 random bytes)}"` with
-//!   `expiry = now + ttl`;
+//! - JWT issuance uses `username = "{now + ttl}:{hex(8 random bytes)}"`;
+//! - proof issuance uses a deterministic 16-byte id bound to
+//!   `(product, contextual alias, expiry = now + ttl)`;
 //! - `password = base64(HMAC_<algo>(secret, username))`.
 //!
 //! The TURN relay recomputes the same HMAC from its copy of the secret, so
@@ -95,7 +96,35 @@ impl Issuer {
 
     /// Mint a credential pair for `id`, expiring `ttl` after `now_unix`.
     pub fn issue(&self, now_unix: u64, id: [u8; 8]) -> Credentials {
-        let username = format!("{}:{}", now_unix + self.ttl_secs, hex::encode(id));
+        self.issue_until(now_unix + self.ttl_secs, &id)
+    }
+
+    /// Mint a proof credential for a person and product, expiring `ttl_secs`
+    /// after `now_unix`.
+    pub fn issue_for_proof(&self, now_unix: u64, product_id: &str, alias: &[u8]) -> Credentials {
+        let expiry = now_unix + self.ttl_secs;
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(&self.secret)
+            .expect("HMAC accepts any key length");
+        mac.update(b"ibv2/turn-proof-credential-id/v1\0");
+        mac.update(
+            &u64::try_from(product_id.len())
+                .expect("product id length fits u64")
+                .to_be_bytes(),
+        );
+        mac.update(product_id.as_bytes());
+        mac.update(
+            &u64::try_from(alias.len())
+                .expect("alias length fits u64")
+                .to_be_bytes(),
+        );
+        mac.update(alias);
+        mac.update(&expiry.to_be_bytes());
+        let digest = mac.finalize().into_bytes();
+        self.issue_until(expiry, &digest[..16])
+    }
+
+    fn issue_until(&self, expiry: u64, id: &[u8]) -> Credentials {
+        let username = format!("{}:{}", expiry, hex::encode(id));
         let password = self.password_for(&username);
         Credentials { username, password }
     }
@@ -144,6 +173,28 @@ mod tests {
                 hex::decode("effcdf6ae5eb2fa2d27416d5f184df9c259a7c79").expect("valid hex")
             ),
         );
+    }
+
+    #[test]
+    fn proof_credentials_expire_after_full_ttl() {
+        let issuer = Issuer::new(vec![0x42; 32], Algorithm::Sha1, 60);
+        let first = issuer.issue_for_proof(121, "game.dot", &[7; 32]);
+        assert!(first.username.starts_with("181:"));
+        assert_eq!(first.username.split(':').nth(1).expect("id").len(), 32);
+
+        let second = issuer.issue_for_proof(150, "game.dot", &[7; 32]);
+        assert!(second.username.starts_with("210:"));
+    }
+
+    #[test]
+    fn proof_credentials_change_across_product_alias_or_time() {
+        let issuer = Issuer::new(vec![0x42; 32], Algorithm::Sha1, 60);
+        let issue = |now, product, alias| issuer.issue_for_proof(now, product, alias).username;
+        let base = issue(121, "game.dot", &[7; 32]);
+
+        assert_ne!(base, issue(121, "other.dot", &[7; 32]));
+        assert_ne!(base, issue(121, "game.dot", &[8; 32]));
+        assert_ne!(base, issue(122, "game.dot", &[7; 32]));
     }
 
     #[test]

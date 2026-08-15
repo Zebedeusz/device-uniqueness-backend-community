@@ -1178,6 +1178,49 @@
         ]
       }
     },
+    "/api/v1/turn/issue-with-proof": {
+      "post": {
+        "tags": [
+          "TURN"
+        ],
+        "summary": "Redeem a personhood proof for the same credentials as `/turn/issue`.",
+        "operationId": "issue_with_proof",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueWithProofBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Proof accepted; returns servers, username, password, and the configured TTL. Credentials expire `ttl` seconds after issuance; no alias appears in the response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unparseable body, invalid hex, a collection outside the canonical People Lite/People allowlist, a proof that is not a single-context ring-VRF signature, a product this deployment does not accept, or a timestamp outside the accepted skew (RFC 9457 problem details)."
+          },
+          "403": {
+            "description": "The proof did not verify against the named ring root under that product's context — including when `(ringIndex, ringRevision)` is outside the roots this deployment still holds (RFC 9457 problem details; deliberately unspecific)."
+          },
+          "429": {
+            "description": "This person's redemption limit was exceeded (RFC 9457 problem details, with `Retry-After`)."
+          },
+          "503": {
+            "description": "Verification unavailable: no ring-root snapshot yet (chain unreachable since boot), the bounded waiter queue is full, or all verification slots remained busy for the bounded wait. Saturation responses include `Retry-After`."
+          }
+        }
+      }
+    },
     "/api/v1/notify": {
       "post": {
         "tags": [
@@ -2029,7 +2072,7 @@
       },
       "IssueResponse": {
         "type": "object",
-        "description": "The frozen 201 body: coturn REST-API ephemeral credentials plus the ICE\nserver list.",
+        "description": "The shared 201 body: coturn REST-API ephemeral credentials plus the ICE\nserver list.",
         "required": [
           "servers",
           "username",
@@ -2050,7 +2093,7 @@
           },
           "username": {
             "type": "string",
-            "description": "`{unixExpiry}:{hexId}` — expiry is mint time + TTL; the id is 8 random\nbytes hex-encoded.",
+            "description": "`{unixExpiry}:{hexId}`. JWT issuance uses mint time + configured TTL\nand 8 random id bytes; proof issuance uses mint time + configured TTL\nand a deterministic opaque 16-byte id derived from product and alias.",
             "example": "1784757652:0a79e3412921701a"
           },
           "password": {
@@ -2061,8 +2104,57 @@
           "ttl": {
             "type": "integer",
             "format": "int64",
-            "description": "Credential time-to-live in seconds.",
+            "description": "Credential time-to-live in whole seconds (the configured `ttl_secs`).",
             "example": 1800,
+            "minimum": 0
+          }
+        }
+      },
+      "IssueWithProofBody": {
+        "type": "object",
+        "description": "Proof-redemption request.",
+        "required": [
+          "productId",
+          "collection",
+          "proof",
+          "ringIndex",
+          "ringRevision",
+          "timestamp"
+        ],
+        "properties": {
+          "productId": {
+            "type": "string",
+            "description": "The product the proof was made for. Its context is the one the proof\nis verified under, so a product proves under its own identifier. Must\nbe one this deployment accepts.",
+            "example": "vox.dot"
+          },
+          "collection": {
+            "type": "string",
+            "description": "Hex-encoded 32-byte collection id from the proof's TrUAPI\n`ringLocation`. Only the canonical People Lite and People collections\nare accepted.",
+            "example": "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465"
+          },
+          "proof": {
+            "type": "string",
+            "description": "Ring-VRF proof over the derived message (hex), exactly as the host\nreturns it — raw signature bytes, with no SCALE length prefix."
+          },
+          "ringIndex": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Ring containing the proving member, used to locate the root.",
+            "example": 0,
+            "minimum": 0
+          },
+          "ringRevision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Revision of that ring the proof was made against, as the host reports\nit. Only that revision's root is tried, so a revision this deployment\nno longer holds is refused without verifying anything.",
+            "example": 3,
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Client Unix seconds, bound into the proved message. Must be within the\nserver's accepted skew.",
+            "example": 1784757652,
             "minimum": 0
           }
         }
@@ -2245,7 +2337,7 @@
     },
     {
       "name": "TURN",
-      "description": "Short-lived TURN credentials for WebRTC ICE negotiation: the coturn REST-API construction (username = expiry:id, password = HMAC over the username) minted against a secret shared with the TURN relay. Stateless — nothing is stored."
+      "description": "Short-lived TURN credentials for WebRTC ICE negotiation: the coturn REST-API construction (username = expiry:id, password = HMAC over the username) minted against a secret shared with the TURN relay. Stateless — nothing is stored. Issuance is authorized either by an access JWT (`/issue`) or, when enabled, by a personhood ring-VRF proof over a client-timestamped message (`/issue-with-proof`)."
     },
     {
       "name": "Notifications",

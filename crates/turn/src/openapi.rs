@@ -21,7 +21,7 @@ pub struct IssueRequest {
     pub region_hint: Option<String>,
 }
 
-/// The frozen 201 body: coturn REST-API ephemeral credentials plus the ICE
+/// The shared 201 body: coturn REST-API ephemeral credentials plus the ICE
 /// server list.
 #[derive(Serialize, ToSchema)]
 #[allow(dead_code)] // documentation-only mirror of the frozen wire shape
@@ -29,15 +29,16 @@ pub struct IssueResponse {
     /// Configured ICE server URLs (`stun:` / `turn:` forms), echoed verbatim.
     #[schema(example = json!(["stun:stun.example.com:3478", "turn:turn.example.com:3478?transport=udp"]))]
     pub servers: Vec<String>,
-    /// `{unixExpiry}:{hexId}` — expiry is mint time + TTL; the id is 8 random
-    /// bytes hex-encoded.
+    /// `{unixExpiry}:{hexId}`. JWT issuance uses mint time + configured TTL
+    /// and 8 random id bytes; proof issuance uses mint time + configured TTL
+    /// and a deterministic opaque 16-byte id derived from product and alias.
     #[schema(example = "1784757652:0a79e3412921701a")]
     pub username: String,
     /// Base64 HMAC over `username` under the relay-shared secret (algorithm
     /// per deployment config, default HMAC-SHA1).
     #[schema(example = "qmg5g7d1bXzY0qZkRUqtIPEIKjA=")]
     pub password: String,
-    /// Credential time-to-live in seconds.
+    /// Credential time-to-live in whole seconds (the configured `ttl_secs`).
     #[schema(example = 1800)]
     pub ttl: u64,
 }
@@ -71,10 +72,19 @@ impl Modify for SecurityAddon {
         (name = "TURN",
          description = "Short-lived TURN credentials for WebRTC ICE negotiation: the coturn \
 REST-API construction (username = expiry:id, password = HMAC over the username) minted \
-against a secret shared with the TURN relay. Stateless — nothing is stored.")
+against a secret shared with the TURN relay. Stateless — nothing is stored. Issuance is \
+authorized either by an access JWT (`/issue`) or, when enabled, by a personhood ring-VRF \
+proof over a client-timestamped message (`/issue-with-proof`).")
     ),
-    paths(crate::http::issue_credentials),
-    components(schemas(IssueRequest, IssueResponse)),
+    paths(
+        crate::http::issue_credentials,
+        crate::http::proof_routes::issue_with_proof,
+    ),
+    components(schemas(
+        IssueRequest,
+        IssueResponse,
+        crate::http::proof_routes::IssueWithProofBody,
+    )),
     modifiers(&SecurityAddon)
 )]
 pub struct ApiDoc;

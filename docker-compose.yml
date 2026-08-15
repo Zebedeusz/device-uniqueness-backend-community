@@ -530,6 +530,15 @@ services:
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       TURN_RATE_LIMIT: ${TURN_RATE_LIMIT:-30}
       TURN_RATE_LIMIT_WINDOW_SECS: ${TURN_RATE_LIMIT_WINDOW_SECS:-60}
+      # Proof-authorized issuance (POST /api/v1/turn/issue-with-proof).
+      # Absent unless TURN_PROOF_ENABLED=true, in which case every
+      # deployment-specific value below is required and startup fails without it.
+      TURN_PROOF_ENABLED: ${TURN_PROOF_ENABLED:-false}
+      TURN_PROOF_RPC_URL: ${TURN_PROOF_RPC_URL:-}
+      TURN_PROOF_GENESIS: ${TURN_PROOF_GENESIS:-}
+      TURN_PROOF_PRODUCTS: ${TURN_PROOF_PRODUCTS:-}
+      TURN_PROOF_CONTEXT_SUFFIX: ${TURN_PROOF_CONTEXT_SUFFIX:-0}
+      TURN_PROOF_CONCURRENCY: ${TURN_PROOF_CONCURRENCY:-auto}
       # Prometheus exporter, scraped on the private metrics network only.
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
