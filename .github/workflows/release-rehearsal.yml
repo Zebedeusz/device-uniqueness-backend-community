@@ -1,7 +1,8 @@
 name: Release rehearsal
 
-# The release lane publishes ten images by digest and joins ten manifest lists,
-# and none of that runs until someone pushes a `v*` tag. That is how it came to
+# The release lane publishes the image by digest and joins the per-arch digests
+# into one manifest list, and none of that runs until someone pushes a `v*` tag.
+# That is how it came to
 # be broken for every release without anyone noticing: `--print` looked right,
 # and nothing ever pushed.
 #

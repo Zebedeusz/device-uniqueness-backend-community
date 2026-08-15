@@ -8,10 +8,10 @@ Two compose projects share the host: the environment (the project name declared 
 
 ## Deploys
 
-Push to `main` → CI tests, builds the ten service images
-(`ghcr.io/paritytech/identity-backend-rust/<service>:<sha>` — all holding the one `ibv2` binary,
-each pinned to its own role by the image's `CMD`, all at the same tag), and the server pulls +
-restarts (health-gated). Watch with `gh run watch`.
+Push to `main` → CI tests, builds the one service image
+(`ghcr.io/paritytech/identity-backend-rust:<sha>`, holding the one `ibv2` binary; each
+container is pinned to its role by its compose `command:` / chart `args:`), and the server
+pulls + restarts (health-gated). Watch with `gh run watch`.
 
 Manual restart, on the images CI already built for this checkout:
 
@@ -23,7 +23,7 @@ sudo -E docker compose pull
 sudo -E docker compose up -d --no-build
 # Image not cached locally? The server holds no ghcr credentials:
 #   echo <PAT with read:packages> | sudo docker login ghcr.io -u <user> --password-stdin
-# Last resort, builds on the server (several minutes; one compile, ten images):
+# Last resort, builds on the server (several minutes; one compile, one image):
 #   sudo docker buildx bake all && sudo docker compose up -d --no-build
 # only when the Caddyfile changed — a reload, not a restart (see Caddy / TLS / docs)
 sudo docker compose -f gateway/docker-compose.yml -p edge \

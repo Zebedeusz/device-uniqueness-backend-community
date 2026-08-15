@@ -5,7 +5,7 @@
 //! binary, byte for byte in behaviour. The role name is also the compose
 //! service name, the chart workload name and the Dockerfile stage name — one
 //! string end to end, so a typo cannot silently run the wrong thing
-//! (`scripts/verify_image_split.sh` checks the agreement).
+//! (`scripts/verify_role_split.sh` checks the agreement).
 //!
 //! Argument parsing is hand-rolled against `std::env::args`, matching
 //! `voucher-mint` — the workspace has no `clap`, and a role selector does not

@@ -1,6 +1,6 @@
 apiVersion: v2
 name: identity-backend-v2
-description: Identity Backend V2 — ten services from ten images, one tag
+description: Identity Backend V2 — ten services from one image, one tag
 type: application
 # Chart version. The app version is not pinned here: `global.imageTag` is the
 # single source of "which build is this environment on", and it is set by the

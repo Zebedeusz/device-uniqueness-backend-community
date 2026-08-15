@@ -13,47 +13,12 @@ they summarise each release rather than list every change.
 
 ## [Unreleased]
 
-### Changed
+## [0.2.0] - 2026-08-15
 
-- **BREAKING (deployment): ten images and ten binaries become ONE image and one
-  binary.** Every service and worker is now a *role* of the `ibv2` binary
-  selected at runtime — `docker run <image> --role identity-api`;
-  `ibv2 --list-roles` prints the ten. There is one image tag for the whole
-  deployment, and what makes a container a given service is its `--role`, not a
-  different image.
-  - `IMAGE_REGISTRY` is renamed **`IMAGE_REPO`** and is now a full repository
-    path with no `/<service>` appended: `ghcr.io/paritytech/identity-backend-rust`.
-    The chart's `global.imageRegistry` becomes `global.imageRepo` likewise.
-  - A self-hosted compose file must add `command: ["--role", "<service>"]` to
-    each service; the released compose bundle already carries it.
-  - The image has an `ENTRYPOINT` and **no `CMD`**: a container started with no
-    arguments exits non-zero listing the roles rather than defaulting into a
-    service.
-  - The released binary tarballs now hold the single `ibv2` binary instead of
-    ten.
-  - `curl` is gone from the image; container healthchecks use
-    `ibv2 --healthcheck`, which probes the container's own `/readyz`.
-  - The Docker Hub mirror is `paritytech/identity-backend-rust`, not
-    `paritytech/ibv2-<service>` — one image needs no per-service prefix.
-  - `scripts/verify_image_split.sh` is replaced by
-    `scripts/verify_role_split.sh`, which asserts every compose service and
-    chart workload names a role the binary accepts, exactly once.
-
-  No API, wire-format or database change: the public surface is byte-identical,
-  and production still runs ten processes with ten per-workload secret sets.
-
-- **BREAKING (configuration): per-service config keys are namespaced.** A bare
-  `DATABASE_URL` was read by eight call sites naming **four different Postgres
-  instances**, and a bare `RATE_LIMIT` by three services, so tuning or
-  misrouting one silently hit the others.
-  - `DATABASE_URL` → `IDENTITY_DATABASE_URL`, `INDEXER_DATABASE_URL`,
-    `DIM_TICKETS_DATABASE_URL`, `INVITE_TICKETS_DATABASE_URL`.
-  - `RATE_LIMIT` / `RATE_LIMIT_WINDOW_SECS` → `DIM_TICKETS_*`,
-    `INVITE_TICKETS_*`, `TURN_*` (identity and notifications already had
-    `AUTH_*` / `NOTIFY_*`).
-  - `BIND_ADDR` and `PEOPLE_RPC_URL` are unchanged and stay shared.
-  - **The old names still work for this release**, with a `WARN` naming the
-    replacement. They will be removed in a later one.
+Breaking on three fronts: the image's ten binaries become one `ibv2` binary
+picked with `--role`, per-service config keys are namespaced, and the
+proxy-signing and attester-account variables are removed or renamed — read
+**Changed** before upgrading a deployment.
 
 ### Added
 
@@ -61,7 +26,7 @@ they summarise each release rather than list every change.
   port, with the route table compiled in — no edge, and nothing to reconstruct
   from a Caddyfile. Verified byte-identical to the ten-service stack behind the
   real edge across a 24-row sweep of the route table. It serves `/docs` itself
-  and an aggregate `/readyz` naming every component.
+  and an aggregate `/readyz` naming every component ([#58]).
 
   **Not a deployable workload**: it holds the union of every secret in the
   system in one address space, so it is absent from `--list-roles` and the
@@ -70,7 +35,7 @@ they summarise each release rather than list every change.
 
 - **A second, opt-in deployment topology: five workloads instead of ten.** One
   `all-in-one` process serves all six HTTP surfaces; the four single-instance
-  workers stay separate. Example values in `helm/values-small.yaml`.
+  workers stay separate. Example values in `helm/values-small.yaml` ([#58]).
 
   It trades the standard topology's secret compartmentalisation: one process
   holds `JWT_ED25519_SECRET` (mint a token for any subject), `POC_HMAC_SECRET`,
@@ -94,27 +59,18 @@ they summarise each release rather than list every change.
   `--role all-in-one` serves — and a staleness test fails the build if either
   drifts. Both regenerate byte-identically to the previous hand-written files,
   so there is no behaviour change; what changed is that there is one copy of the
-  ownership map instead of three.
-
-## [0.2.0] - 2026-08-14
-
-Breaking on two fronts: the single multi-binary image is replaced by ten
-per-service images, and the proxy-signing and attester-account variables are
-removed or renamed — read **Changed** before upgrading a deployment.
-
-### Added
-
-- Released images are mirrored to **public Docker Hub** — `docker pull
-  paritytech/ibv2-identity-api:stable` needs no account. `vX.Y.Z` and `stable` are on both
-  registries; `latest` stays ghcr-only, since it tracks unreleased `main`. Docker Hub
-  namespaces are one level, so the mirror is `paritytech/ibv2-<service>`, not a nested path
-  ([#50]).
+  ownership map instead of three ([#58]).
+- The released image is mirrored to **public Docker Hub** — `docker pull
+  paritytech/identity-backend-rust:stable` needs no account. `vX.Y.Z` and `stable` are on
+  both registries; `latest` stays ghcr-only, since it tracks unreleased `main` ([#50],
+  [#58]).
 - Every release attaches per-platform binaries (`ibv2-<version>-<target>.tar.gz` for
-  x86_64 / aarch64 Linux and Apple Silicon), exported from the same builder layer the images
-  are built from, so the tarballs and the images hold the same bytes ([#50]).
+  x86_64 / aarch64 Linux and Apple Silicon), exported from the same builder layer the image
+  is built from, so the tarball and the image hold the same bytes ([#50]).
 - The released `ibv2-compose-*.tar.gz` bundle now starts without a source tree: its
-  `docker-compose.yml` drops every `build:` stanza and pins all ten images to that release,
-  so `docker compose up -d` needs neither `--no-build` nor a manually set tag ([#50]).
+  `docker-compose.yml` drops every `build:` stanza and pins the image to that release,
+  so `docker compose up -d` needs neither `--no-build` nor a manually set tag ([#50],
+  [#58]).
 - Kubernetes deployment: a Helm chart under `helm/` rendering the ten workloads, per-workload
   secrets, and the route table as a Traefik `IngressRoute`. See
   [`docs/deploy.md`](docs/deploy.md#kubernetes-helm).
@@ -147,14 +103,45 @@ removed or renamed — read **Changed** before upgrading a deployment.
 
 ### Changed
 
-- **BREAKING (consumers): one image per service.** The single multi-binary image
-  `ghcr.io/paritytech/identity-backend-rust:<tag>` is no longer published. Each of the ten
-  binaries now ships as its own image, `ghcr.io/paritytech/identity-backend-rust/<service>:<tag>`,
-  holding exactly that binary — smaller images, per-service vulnerability scanning, and an
-  independent rollback per service. **All ten always carry the same tag**; a per-service pin is
-  not supported. Anyone pinning the old path must move to the per-service repos and drop any
-  `command:` override, since each image's `CMD` is now its own binary. The compose bundle attached
-  to each release resolves the new paths from `IMAGE_REGISTRY`/`IMAGE_TAG`.
+- **BREAKING (deployment): the image's ten binaries become one `ibv2` binary,
+  and a container picks its service with `--role`.** 0.1.2 shipped one image
+  holding ten separate binaries, defaulting to `CMD ["identity-api"]` with a
+  `command:` override naming the binary. There is still exactly one image, but
+  it holds one binary: every service and worker is a *role* of it —
+  `docker run <image> --role identity-api`; `ibv2 --list-roles` prints the ten
+  ([#58]).
+  - A self-hosted compose file changes `command: ["identity-api"]` to
+    `command: ["--role", "identity-api"]`; the released compose bundle already
+    carries it.
+  - The image has an `ENTRYPOINT` and **no `CMD`**: a container started with no
+    arguments exits non-zero listing the roles, rather than silently becoming
+    `identity-api` as 0.1.2 did.
+  - The image reference moves from `${IDENTITY_IMAGE}` to
+    `${IMAGE_REPO}:${IMAGE_TAG}`, where `IMAGE_REPO` is a full repository path
+    with no `/<service>` appended. The chart's equivalent is
+    `global.imageRepo`.
+  - `curl` is gone from the image; container healthchecks use
+    `ibv2 --healthcheck`, which probes the container's own `/readyz`.
+    Kubernetes `httpGet` probes are unaffected.
+  - `scripts/verify_role_split.sh` asserts every compose service and chart
+    workload names a role the binary accepts, exactly once.
+
+  No API, wire-format or database change: the public surface is byte-identical,
+  and production still runs ten processes with ten per-workload secret sets.
+
+- **BREAKING (configuration): per-service config keys are namespaced.** A bare
+  `DATABASE_URL` was read by eight call sites naming **four different Postgres
+  instances**, and a bare `RATE_LIMIT` by three services, so tuning or
+  misrouting one silently hit the others ([#58]).
+  - `DATABASE_URL` → `IDENTITY_DATABASE_URL`, `INDEXER_DATABASE_URL`,
+    `DIM_TICKETS_DATABASE_URL`, `INVITE_TICKETS_DATABASE_URL`.
+  - `RATE_LIMIT` / `RATE_LIMIT_WINDOW_SECS` → `DIM_TICKETS_*`,
+    `INVITE_TICKETS_*`, `TURN_*` (identity and notifications already had
+    `AUTH_*` / `NOTIFY_*`).
+  - `BIND_ADDR` and `PEOPLE_RPC_URL` are unchanged and stay shared.
+  - **The old names still work for this release**, with a `WARN` naming the
+    replacement. They will be removed in a later one.
+
 - **Breaking:** `INVITER_PROXY_FOR` and `INVITE_INVITER_PROXY_FOR` are removed.
   `dim-tickets-writer` and `invite-tickets-pool` now derive proxy signing the way
   the chain writer already did in [#32]: the signing key's own account is
@@ -246,3 +233,4 @@ First release published as a multi-arch (amd64 + arm64) image.
 [#53]: https://github.com/paritytech/identity-backend-rust/pull/53
 [#54]: https://github.com/paritytech/identity-backend-rust/pull/54
 [#55]: https://github.com/paritytech/identity-backend-rust/pull/55
+[#58]: https://github.com/paritytech/identity-backend-rust/pull/58

@@ -138,12 +138,11 @@ jobs:
           primary="$HOME/identity-backend-v2"
           preview="$HOME/identity-backend-previewnet"
 
-          # Ten images now, all at the same tag. `compose pull` reads the
-          # service list out of the compose file, so the set stays right when a
-          # service is added — and it pulls the subset PreviewNet actually runs
-          # rather than all ten. The images share every layer below the binary,
-          # so this is roughly the old single-image transfer plus nine copies of
-          # one small layer.
+          # One image, and every service resolves to it. `compose pull` reads
+          # the service list out of the compose file, so the set stays right
+          # when a service is added — and because all ten resolve to the same
+          # `$IMAGE_REPO:$IMAGE_TAG`, the transfer is one image however many
+          # services the project runs.
           compose_primary() {
             sudo IMAGE_REPO="$IMAGE_REPO" IMAGE_TAG="$SHA" \
               docker compose -p identity-backend-v2 "$@"

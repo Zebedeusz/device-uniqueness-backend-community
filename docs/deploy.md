@@ -118,9 +118,9 @@ The `turn-api` variables have compose dev defaults (placeholder secret, `example
 ## 3. Run
 
 ```bash
-# the ten service images — one cargo build, ten thin runtimes (several minutes
-# the first time). `bake` is the only builder: compose's per-service `build.target`
-# keys exist so `docker compose build` works too, but bake shares the compile.
+# the service image — one cargo build, one runtime stage (several minutes the
+# first time). `bake` is the only builder: compose's `build.target` keys exist
+# so `docker compose build` works too, but bake shares the compile.
 sudo docker buildx bake all
 
 # the environment (migrations run on boot, advisory-locked)
@@ -431,7 +431,7 @@ changelog entry — `[workspace.package] version` in `Cargo.toml`, and a `## [X.
 merge "chore(release): v0.2.0"
   ├─ release-on-merge.yml   validates title == Cargo.toml == CHANGELOG, that the commit
   │                         is on main, and that the tag is new, THEN tags the merge commit
-  │                         └─ calls release.yml: the check suite, ten images to ghcr +
+  │                         └─ calls release.yml: the check suite, the image to ghcr +
   │                            Docker Hub, binaries, compose bundle, SHA256SUMS
   └─ deploy.yml             the ordinary `push: main` lane — builds SHA-tagged images
                             and rolls the host, exactly as any other merge
@@ -459,12 +459,13 @@ pre-release, and leaves `stable` pointing at the last stable images.
 
 ## Release images
 
-Pushing a `v*` tag runs [`release.yml`](../.github/workflows/release.yml), publishing a
-**ten** multi-arch (`linux/amd64` + `linux/arm64`) images —
-`ghcr.io/paritytech/identity-backend-rust/<service>` — each tagged `1.2.3`, `v1.2.3` and
+Pushing a `v*` tag runs [`release.yml`](../.github/workflows/release.yml), publishing **one**
+multi-arch (`linux/amd64` + `linux/arm64`) image —
+`ghcr.io/paritytech/identity-backend-rust` — tagged `1.2.3`, `v1.2.3` and
 (for a non-pre-release) `stable`. Each architecture builds on its own native runner, pushing
-by digest; the digests are then joined into one manifest list per service, so a single tag
-serves both architectures and all ten services move together. Releases are independent of the `main` deploy above: tagging never
+by digest; the digests are then joined into one manifest list, so a single tag serves both
+architectures and every service, each of which is a `--role` of the one binary inside.
+Releases are independent of the `main` deploy above: tagging never
 restarts production, and `latest` keeps tracking `main`. Tag a commit that already passed
 CI on `main` — the release workflow builds and publishes without re-running the test gate.
 
@@ -476,20 +477,20 @@ The same digests are published to two registries:
 
 | Registry | Tags | Who it is for |
 |---|---|---|
-| `ghcr.io/paritytech/identity-backend-rust/<service>` | `vX.Y.Z`, `X.Y.Z`, `stable`, `latest` | our own deploys — inherits the repo's **private** visibility |
-| `docker.io/paritytech/ibv2-<service>` | `vX.Y.Z`, `X.Y.Z`, `stable` | **public**, unauthenticated `docker pull` for external consumers |
+| `ghcr.io/paritytech/identity-backend-rust` | `vX.Y.Z`, `X.Y.Z`, `stable`, `latest` | our own deploys — inherits the repo's **private** visibility |
+| `docker.io/paritytech/identity-backend-rust` | `vX.Y.Z`, `X.Y.Z`, `stable` | **public**, unauthenticated `docker pull` for external consumers |
 
-Docker Hub namespaces are one level (`org/name`), so the mirror flattens the ghcr path into an
-`ibv2-` prefix: **ten repositories**, `paritytech/ibv2-identity-api` … `paritytech/ibv2-notify-relay`,
-not one. Override the prefix with the `DOCKERHUB_PREFIX` repository variable; the credentials are
-the `DOCKERHUB_USER` / `DOCKERHUB_PASSWORD` secrets.
+Docker Hub namespaces are one level (`org/name`), which one image fits without a workaround —
+the per-service `ibv2-` prefix the ten-image layout needed is gone. Override the destination
+with the `DOCKERHUB_REPO` repository variable; the credentials are the `DOCKERHUB_USER` /
+`DOCKERHUB_PASSWORD` secrets.
 
-Each of the ten must exist **and be public**, and `DOCKERHUB_PASSWORD` must be a token with
-**write** scope on that namespace. A push can auto-create a repository, but only where the
-account may create one — and the org's default visibility decides what it is created as, so a
-push that does succeed may well produce ten *private* repos, defeating the entire point of the
-mirror. `latest` is deliberately ghcr-only: it tracks `main`, and unreleased work should not be
-what an outside consumer picks up by default.
+**The repository must exist and be public before the first release**, and `DOCKERHUB_PASSWORD`
+must be a token with **write** scope on that namespace. A push can auto-create a repository, but
+only where the account may create one — and the org's default visibility decides what it is
+created as, so a push that does succeed may well produce a *private* repo, defeating the entire
+point of the mirror. `latest` is deliberately ghcr-only: it tracks `main`, and unreleased work
+should not be what an outside consumer picks up by default.
 
 **The mirror is best-effort; ghcr is not.** ghcr is the lane our own deploys pull from, and it
 must never be held hostage by a Docker Hub token — so the two registries are pushed by separate

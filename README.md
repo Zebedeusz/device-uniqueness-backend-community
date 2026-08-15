@@ -50,26 +50,23 @@ Push to `main`. CI tests, builds the image, and updates the test server
 
 ## Releases
 
-Released images are mirrored to public Docker Hub — no account, no token:
+**One image, ten roles.** The released image is mirrored to public Docker Hub — no
+account, no token:
 
 ```bash
-docker pull paritytech/ibv2-identity-api:stable
+docker pull paritytech/identity-backend-rust:stable
+docker run paritytech/identity-backend-rust:stable --role identity-api
 ```
 
-Docker Hub namespaces are one level deep, so the ten services are
-`paritytech/ibv2-<service>` there, and `ghcr.io/paritytech/identity-backend-rust/<service>`
-on ghcr. `vX.Y.Z` and `stable` exist on both; **`latest` is ghcr-only**, because it tracks
-`main` and unreleased work is not what an outside consumer should pick up by default. The
-ghcr packages inherit this repo's private visibility, so pulling those needs a token.
+Every service and worker is a `--role` of the single `ibv2` binary the image holds
+(`ibv2 --list-roles` prints the ten); what makes a container a given service is its
+role, not a different image. The same digests are on
+`ghcr.io/paritytech/identity-backend-rust` — `vX.Y.Z` and `stable` exist on both;
+**`latest` is ghcr-only**, because it tracks `main` and unreleased work is not what an
+outside consumer should pick up by default. The ghcr package inherits this repo's
+private visibility, so pulling that needs a token.
 
-Each release also attaches `ibv2-<version>-<target>.tar.gz` — every service binary for
-x86_64/aarch64 Linux and Apple Silicon — and an `ibv2-compose-*.tar.gz` bundle whose
-compose file needs no source tree: the `build:` stanzas are gone and all ten images are
-pinned to that release, so `docker compose up -d` starts the stack as-is.
-
-Images are published as `ghcr.io/paritytech/identity-backend-rust/<service>` — one per
-service, all sharing a tag — multi-arch
-(amd64 + arm64). Three kinds of tag, and the difference matters:
+Images are multi-arch (amd64 + arm64). Three kinds of tag, and the difference matters:
 
 | Tag | Points at | Use it for |
 | --- | --- | --- |
@@ -77,11 +74,12 @@ service, all sharing a tag — multi-arch
 | `stable` | the newest release | "track releases, not `main`" |
 | `latest` | tip of `main` | our own test server; **contains unreleased work** |
 
-Every service has its own image holding exactly its own binary (one `cargo build`, ten
-thin runtime stages — see [`docker-bake.hcl`](docker-bake.hcl)), wired together by
-`docker-compose.yml`;
-each release attaches an `ibv2-compose-*.tar.gz` with that file, `.env.example`
-and the gateway config, so a standalone stack has something to start from.
+Each release also attaches `ibv2-<version>-<target>.tar.gz` — the single `ibv2` binary
+for x86_64/aarch64 Linux and Apple Silicon — and an `ibv2-compose-*.tar.gz` bundle with
+`docker-compose.yml`, `.env.example` and the gateway config. That compose file needs no
+source tree: the `build:` stanzas are gone and the image is pinned to that release, so
+`docker compose up -d` starts the stack as-is. The build graph is one target — see
+[`docker-bake.hcl`](docker-bake.hcl).
 
 Changes per release: [CHANGELOG.md](CHANGELOG.md). Pre-1.0, breaking changes bump
 the **minor** — `0.1.x` → `0.2.0` can break you.
