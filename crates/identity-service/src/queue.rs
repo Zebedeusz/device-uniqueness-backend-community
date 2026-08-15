@@ -305,8 +305,11 @@ impl AdvancerConfig {
     /// Read and validate advancer configuration from the environment
     /// (fail-fast: a malformed value aborts startup, never a silent default).
     pub fn from_env() -> anyhow::Result<Self> {
-        use anyhow::Context as _;
-        let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL is required")?;
+        // Namespaced: this worker shares its sibling API's database, and a bare
+        // DATABASE_URL means four different instances across the workspace.
+        // The bare name is still accepted for one release, with a WARN.
+        let database_url =
+            http_common::config::required_renamed("IDENTITY_DATABASE_URL", "DATABASE_URL")?;
         let interval = Duration::from_secs(env_u64_strict("QUEUE_ADVANCE_INTERVAL_SECS", 6)?);
         let lease_ttl = Duration::from_secs(env_u64_strict("QUEUE_LEASE_TTL_SECS", 30)?);
         validate_cadence(interval, lease_ttl)?;

@@ -8,25 +8,17 @@ publish.workspace = true
 autobins = false
 
 # identity-service is a library (shared domain: auth, usernames, outbox) plus
-# three deployable binaries — the N-replica `identity-api`, the single-instance
-# `identity-chain-writer` that drains the reservation outbox onto People Chain,
-# and the single-instance `registration-queue` advancer (optional at runtime —
-# when it is down, api + writer fall back to the direct registration path) —
-# plus the `voucher-mint` operator CLI.
+# the `voucher-mint` operator CLI.
+#
+# Its three deployable services — the N-replica `identity-api`, the
+# single-instance `identity-chain-writer` that drains the reservation outbox
+# onto People Chain, and the single-instance `registration-queue` advancer
+# (optional at runtime — when it is down, api + writer fall back to the direct
+# registration path) — are ROLES of the `ibv2` binary (`crates/ibv2`), not
+# binaries of their own. Their entry points here are the library's `routes()`
+# and `run()`, which is what the integration suites exercise.
 [lib]
 path = "src/lib.rs"
-
-[[bin]]
-name = "identity-api"
-path = "src/bin/identity_api.rs"
-
-[[bin]]
-name = "identity-chain-writer"
-path = "src/bin/identity_chain_writer.rs"
-
-[[bin]]
-name = "registration-queue"
-path = "src/bin/registration_queue.rs"
 
 # Operator CLI (not a service): mints registration vouchers for the INSTANT
 # lane. No HTTP surface by design — see the bin's docs.

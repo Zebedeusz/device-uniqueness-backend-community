@@ -12,8 +12,7 @@ use anyhow::Context as _;
 
 use dim_tickets::writer::{self, WriterConfig};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+pub async fn run() -> anyhow::Result<()> {
     http_common::telemetry::init("dim-tickets-writer");
     http_common::metrics::spawn("dim-tickets-writer");
 

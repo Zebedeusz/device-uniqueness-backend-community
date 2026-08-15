@@ -1,7 +1,7 @@
 //! `registration-queue` — the standalone single-instance queue-advancer
-//! service. Holds the advancer lease (which doubles as the queue's liveness
+//! role. Holds the advancer lease (which doubles as the queue's liveness
 //! signal) and drains the registration queue by the spec's slot rules. While
-//! `QUEUE_ENABLED` is on, this service's promotion is the only way a claim
+//! `QUEUE_ENABLED` is on, this role's promotion is the only way a claim
 //! leaves the queue — if the process is down, claims park as `QUEUED` behind
 //! the free lane's throttle and the chain-writer raises a stranded-queue
 //! warning until it is restarted — see [`identity_service::queue`].
@@ -11,8 +11,7 @@ use anyhow::Context as _;
 use identity_service::queue::{self, AdvancerConfig};
 use identity_service::ChainClient;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+pub async fn run() -> anyhow::Result<()> {
     http_common::telemetry::init("registration-queue");
     http_common::metrics::spawn("registration-queue");
 

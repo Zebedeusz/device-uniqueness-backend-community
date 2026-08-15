@@ -99,17 +99,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # One bake per architecture builds all ten images off a single compile of
-      # the workspace. Pushed by digest only; `manifest` below joins each
-      # service's two digests into its own tagged manifest list.
+      # One bake per architecture builds THE image off a single compile of the
+      # workspace. Pushed by digest only; `manifest` below joins the two
+      # per-arch digests into one tagged manifest list.
       #
       # Per-arch cache ref: one shared ref would have each architecture evict
       # the other's layers on every release. Registry-backed rather than
       # type=gha, because bake runs as a plain command here and the GitHub cache
       # backend's credentials are not exported to `run:` steps.
-      - name: Build and push all ten by digest
+      - name: Build and push the image by digest
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           IMAGE_TAG: ${{ needs.version.outputs.version }}
           # Digest mode: bake clears `tags` and names the repo in the exporter.
           # buildkit refuses to push a tagged ref by digest, so this cannot be a
@@ -121,18 +121,18 @@ jobs:
           docker buildx bake all \
             --set "*.platform=${{ matrix.platform }}" \
             --metadata-file "${{ runner.temp }}/metadata.json"
-      # Collapse bake's metadata to {service: digest}. Keys without a digest are
+      # Collapse bake's metadata to the one digest. Keys without a digest are
       # bake's own bookkeeping, not targets.
-      - name: Export digests
+      - name: Export the digest
         run: |
           mkdir -p "${{ runner.temp }}/digests"
-          jq '[to_entries[]
-                | select(.value["containerimage.digest"])
-                | {(.key): .value["containerimage.digest"]}] | add' \
+          jq -r 'to_entries[]
+                 | select(.value["containerimage.digest"])
+                 | .value["containerimage.digest"]' \
             "${{ runner.temp }}/metadata.json" \
-            > "${{ runner.temp }}/digests/${{ matrix.arch }}.json"
-          test "$(jq 'length' "${{ runner.temp }}/digests/${{ matrix.arch }}.json")" -eq 10 ||
-            { echo "::error::expected 10 digests"; exit 1; }
+            > "${{ runner.temp }}/digests/${{ matrix.arch }}.txt"
+          test "$(wc -l < "${{ runner.temp }}/digests/${{ matrix.arch }}.txt")" -eq 1 ||
+            { echo "::error::expected exactly 1 digest"; exit 1; }
       # The `binaries` stage is the same builder layer the images were just built
       # from, so this exports files rather than compiling a second time — and the
       # tarball holds the very binaries that shipped in the images.
@@ -163,8 +163,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # macOS has no image lane, so it compiles natively — the same bin list the
-  # Dockerfile builds. Apple Silicon only: `macos-latest` is arm64.
+  # macOS has no image lane, so it compiles natively — the same single binary
+  # the Dockerfile builds. Apple Silicon only: `macos-latest` is arm64.
   macos-binaries:
     needs: [check, version]
     runs-on: macos-latest
@@ -173,15 +173,8 @@ jobs:
         with:
           ref: refs/tags/${{ needs.version.outputs.tag }}
       - uses: Swatinem/rust-cache@v2
-      - name: Build the release binaries
-        run: |
-          cargo build --release \
-            -p identity-service --bin identity-api --bin identity-chain-writer --bin registration-queue \
-            -p username-indexer --bin username-indexer \
-            -p dim-tickets --bin dim-tickets-api --bin dim-tickets-writer \
-            -p invite-tickets --bin invite-tickets-api --bin invite-tickets-pool \
-            -p turn --bin turn-api \
-            -p notifications --bin notify-relay
+      - name: Build the release binary
+        run: cargo build --release -p ibv2
       - name: Package the binaries
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -189,12 +182,9 @@ jobs:
         run: |
           name="ibv2-$VERSION-$TARGET"
           mkdir -p "$RUNNER_TEMP/$name"
-          # No docker on macOS runners — the service list comes from the bake
-          # file's `all` group directly, so it cannot drift from the images.
-          for b in $(sed -n '/^group "all"/,/^}/p' docker-bake.hcl \
-                     | grep -oE '"[a-z-]+"' | tr -d '"' | grep -v '^all$'); do
-            cp "target/release/$b" "$RUNNER_TEMP/$name/"
-          done
+          # One binary, every service: `ibv2 --role <name>`. The tarball's
+          # contents now match the image's, with no list to keep in step.
+          cp target/release/ibv2 "$RUNNER_TEMP/$name/"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v7
         with:
@@ -212,13 +202,13 @@ jobs:
     permissions:
       packages: write
     outputs:
-      # The prefix the release may ADVERTISE, which is not the one it tried to
-      # push to: emitted by `pullable` only when all ten mirrors went up and are
+      # The repository the release may ADVERTISE, which is not the one it tried
+      # to push to: emitted by `pullable` only when the mirror went up and is
       # anonymously pullable. Unset credentials, a rejected push, a private
       # repository — every one of those leaves this empty, and the `release` job
       # falls back to ghcr pull lines. Never point the notes at a registry the
       # reader cannot actually reach.
-      public_prefix: ${{ steps.pullable.outputs.prefix }}
+      public_repo: ${{ steps.pullable.outputs.repo }}
     # No checkout: every step below works out of `${{ runner.temp }}/digests` or
     # against a registry, and `permissions: packages: write` zeroes `contents`,
     # so a checkout could not clone this (private) repository anyway.
@@ -241,32 +231,32 @@ jobs:
       # private — every Docker Hub failure is a warning, never a release
       # failure. `secrets` is not available in an `if:`, hence the flag.
       #
-      # A PREFIX, not a repository: Docker Hub namespaces are one level
-      # (`org/name`), so ten services cannot live under `paritytech/ibv2/<svc>`
-      # the way they do under a ghcr path. They become `paritytech/ibv2-<svc>`.
+      # A plain repository. Docker Hub namespaces are one level (`org/name`),
+      # which used to force a `<prefix><service>` hack because ten images could
+      # not live under `paritytech/ibv2/<svc>` the way they did under a ghcr
+      # path. One image needs no such workaround.
       - id: dockerhub
         name: Resolve the Docker Hub mirror
         env:
           USERNAME: ${{ secrets.DOCKERHUB_USER }}
-          PREFIX: ${{ vars.DOCKERHUB_PREFIX }}
+          MIRROR: ${{ vars.DOCKERHUB_REPO }}
         run: |
           if [ -z "$USERNAME" ]; then
             echo '::warning::DOCKERHUB_USER is unset — publishing to ghcr only, no public mirror'
-            echo 'prefix=' >> "$GITHUB_OUTPUT"
+            echo 'repo=' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "prefix=${PREFIX:-docker.io/paritytech/ibv2-}" >> "$GITHUB_OUTPUT"
+          echo "repo=${MIRROR:-docker.io/paritytech/identity-backend-rust}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v4
-        if: steps.dockerhub.outputs.prefix != ''
+        if: steps.dockerhub.outputs.repo != ''
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-      # Tags are computed once, here, rather than via metadata-action: ten
-      # services would need ten invocations to produce the same three strings —
-      # and both the ghcr push and the mirror below must tag identically, so
-      # deriving them twice would be a drift waiting to happen.
+      # Tags are computed once, here, rather than via metadata-action: both the
+      # ghcr push and the mirror below must tag identically, so deriving them
+      # twice would be a drift waiting to happen.
       #
       # Exact version, plus `stable` for consumers who want "newest release"
       # without pinning. No moving major / minor tags, which would jump across
@@ -286,67 +276,52 @@ jobs:
 
       # ghcr FIRST, and alone. This is the lane our own deploys pull from, so it
       # is the half that may fail the release; the Docker Hub mirror below is
-      # best-effort by design. Both used to share one loop, which meant a Docker
-      # Hub rejection on the alphabetically-first service (`bash -e`, so the loop
-      # aborted immediately) left the other nine WITHOUT ghcr manifest lists —
-      # a Docker Hub credential taking down the entire release, which is exactly
-      # what the `dockerhub` step above exists to prevent.
-      - name: Create and push a manifest list per service
+      # best-effort by design, and they are separate steps so a Docker Hub
+      # credential can never take down a release whose ghcr images published.
+      - name: Create and push the manifest list
         working-directory: ${{ runner.temp }}/digests
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           TAGS: ${{ steps.tags.outputs.list }}
         run: |
-          for svc in $(jq -r 'keys[]' amd64.json); do
-            args=()
-            for tag in $TAGS; do args+=(-t "$IMAGE_REGISTRY/$svc:$tag"); done
-            for arch_file in *.json; do
-              digest="$(jq -r --arg s "$svc" '.[$s] // empty' "$arch_file")"
-              [ -n "$digest" ] ||
-                { echo "::error::$svc missing from $arch_file"; exit 1; }
-              args+=("$IMAGE_REGISTRY/$svc@$digest")
-            done
-            docker buildx imagetools create "${args[@]}"
+          args=()
+          for tag in $TAGS; do args+=(-t "$IMAGE_REPO:$tag"); done
+          for arch_file in *.txt; do
+            digest="$(cat "$arch_file")"
+            [ -n "$digest" ] || { echo "::error::$arch_file is empty"; exit 1; }
+            args+=("$IMAGE_REPO@$digest")
           done
+          docker buildx imagetools create "${args[@]}"
 
       # The same digests, a second registry — and every push guarded, so the
       # step ends in a warning rather than a failure. The mirror is a
       # convenience for outside consumers, and the release notes fall back to
-      # ghcr pull lines when it does not happen (see `public_prefix` above).
+      # ghcr pull lines when it does not happen (see `public_repo` above).
       #
       # `latest` is deliberately absent from `TAGS`: it tracks `main`, and
       # unreleased work is not what an outside consumer should get by default.
-      #
-      # Every service is attempted even after one fails, so the warning names
-      # the full set rather than only whichever sorts first — the difference
-      # between "the token cannot write this namespace" and "one repo is
-      # missing" is the whole diagnosis.
       - id: mirror
-        name: Mirror the manifest lists to Docker Hub
-        if: steps.dockerhub.outputs.prefix != ''
+        name: Mirror the manifest list to Docker Hub
+        if: steps.dockerhub.outputs.repo != ''
         working-directory: ${{ runner.temp }}/digests
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
-          PUBLIC_PREFIX: ${{ steps.dockerhub.outputs.prefix }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
+          PUBLIC_REPO: ${{ steps.dockerhub.outputs.repo }}
           TAGS: ${{ steps.tags.outputs.list }}
         run: |
-          failed=()
-          for svc in $(jq -r 'keys[]' amd64.json); do
-            args=()
-            for tag in $TAGS; do args+=(-t "$PUBLIC_PREFIX$svc:$tag"); done
-            # Already validated non-empty by the ghcr step above.
-            for arch_file in *.json; do
-              args+=("$IMAGE_REGISTRY/$svc@$(jq -r --arg s "$svc" '.[$s]' "$arch_file")")
-            done
-            docker buildx imagetools create "${args[@]}" || failed+=("$svc")
+          args=()
+          for tag in $TAGS; do args+=(-t "$PUBLIC_REPO:$tag"); done
+          # Already validated non-empty by the ghcr step above.
+          for arch_file in *.txt; do
+            args+=("$IMAGE_REPO@$(cat "$arch_file")")
           done
 
-          if [ ${#failed[@]} -eq 0 ]; then
+          if docker buildx imagetools create "${args[@]}"; then
             echo 'mirrored=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo 'mirrored=false' >> "$GITHUB_OUTPUT"
-          echo "::warning::could not mirror ${#failed[@]} of 10 services to $PUBLIC_PREFIX (${failed[*]}) — the release will point at ghcr instead. Each repository must exist and the DOCKERHUB_PASSWORD token needs write scope on that namespace; see docs/deploy.md."
+          echo "::warning::could not mirror to $PUBLIC_REPO — the release will point at ghcr instead. The repository must exist and the DOCKERHUB_PASSWORD token needs write scope on that namespace; see docs/deploy.md."
 
       # The point of the mirror is an unauthenticated `docker pull`, and a Docker
       # Hub repository can be private without the push saying so. Asked with no
@@ -354,57 +329,48 @@ jobs:
       # someone else's laptop — and, like a failed push, it downgrades the notes
       # to ghcr rather than failing a release whose images are already published.
       #
-      # This step's output IS the job's `public_prefix`: it is emitted only on
-      # the path where all ten mirrors were pushed AND are anonymously pullable,
-      # so every other path leaves it empty and the release falls back to ghcr.
+      # This step's output IS the job's `public_repo`: it is emitted only on the
+      # path where the mirror was pushed AND is anonymously pullable, so every
+      # other path leaves it empty and the release falls back to ghcr.
       - id: pullable
         name: Verify the mirror is anonymously pullable
         if: steps.mirror.outputs.mirrored == 'true'
-        working-directory: ${{ runner.temp }}/digests
         env:
-          PUBLIC_PREFIX: ${{ steps.dockerhub.outputs.prefix }}
+          PUBLIC_REPO: ${{ steps.dockerhub.outputs.repo }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          private=()
-          for svc in $(jq -r 'keys[]' amd64.json); do
-            repo="${PUBLIC_PREFIX#docker.io/}$svc"
-            # `|| { ...; continue; }`, not a bare assignment: this step runs
-            # under `bash -e`, where a failed command substitution aborts the
-            # step — turning a network blip into the hard release failure this
-            # whole arrangement exists to avoid.
-            token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repo:pull" | jq -r .token) || {
-              private+=("$repo"); continue
-            }
-            curl -fsS -o /dev/null \
-              -H "Authorization: Bearer $token" \
-              -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' \
-              "https://registry-1.docker.io/v2/$repo/manifests/$VERSION" || private+=("$repo")
-          done
-
-          if [ ${#private[@]} -gt 0 ]; then
-            echo "::warning::${#private[@]} of 10 mirrors are not anonymously pullable (${private[*]}) — set those Docker Hub repositories to public. The release will point at ghcr instead."
+          repo="${PUBLIC_REPO#docker.io/}"
+          # `|| { ...; }`, not a bare assignment: this step runs under `bash -e`,
+          # where a failed command substitution aborts the step — turning a
+          # network blip into the hard release failure this whole arrangement
+          # exists to avoid.
+          token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repo:pull" | jq -r .token) || {
+            echo "::warning::$repo is not anonymously pullable — set the Docker Hub repository to public. The release will point at ghcr instead."
             exit 0
-          fi
-          echo "all ten mirrors are anonymously pullable"
-          echo "prefix=$PUBLIC_PREFIX" >> "$GITHUB_OUTPUT"
+          }
+          curl -fsS -o /dev/null \
+            -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://registry-1.docker.io/v2/$repo/manifests/$VERSION" || {
+            echo "::warning::$repo is not anonymously pullable — set the Docker Hub repository to public. The release will point at ghcr instead."
+            exit 0
+          }
+          echo "the mirror is anonymously pullable"
+          echo "repo=$PUBLIC_REPO" >> "$GITHUB_OUTPUT"
 
-      - name: Verify every service has both architectures
+      - name: Verify the image has both architectures
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
-        working-directory: ${{ runner.temp }}/digests
         run: |
-          for svc in $(jq -r 'keys[]' amd64.json); do
-            echo "--- $svc"
-            docker buildx imagetools inspect "$IMAGE_REGISTRY/$svc:$VERSION" \
-              --format '{{range .Manifest.Manifests}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}' \
-              | tee /dev/stderr | grep -q 'linux/amd64' \
-              || { echo "::error::$svc is missing linux/amd64"; exit 1; }
-            docker buildx imagetools inspect "$IMAGE_REGISTRY/$svc:$VERSION" \
-              --format '{{range .Manifest.Manifests}}{{.Platform.Architecture}} {{end}}' \
-              | grep -q 'arm64' \
-              || { echo "::error::$svc is missing linux/arm64"; exit 1; }
-          done
+          docker buildx imagetools inspect "$IMAGE_REPO:$VERSION" \
+            --format '{{range .Manifest.Manifests}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}' \
+            | tee /dev/stderr | grep -q 'linux/amd64' \
+            || { echo "::error::missing linux/amd64"; exit 1; }
+          docker buildx imagetools inspect "$IMAGE_REPO:$VERSION" \
+            --format '{{range .Manifest.Manifests}}{{.Platform.Architecture}} {{end}}' \
+            | grep -q 'arm64' \
+            || { echo "::error::missing linux/arm64"; exit 1; }
 
   # The human-facing half of a release: notes lifted from CHANGELOG.md, plus the
   # compose bundle — the image alone does not say how the services are wired
@@ -436,8 +402,8 @@ jobs:
           # The pull line must name a registry an outside consumer can reach:
           # Docker Hub when the mirror is configured, ghcr (private, token-gated)
           # only as the fallback.
-          PUBLIC_PREFIX: ${{ needs.manifest.outputs.public_prefix }}
-          GHCR_PREFIX: ghcr.io/${{ github.repository }}/
+          PUBLIC_REPO: ${{ needs.manifest.outputs.public_repo }}
+          GHCR_REPO: ghcr.io/${{ github.repository }}
         run: |
           # The section body for this version: everything between its heading
           # and the next `## `, which is the previous release. Link definitions
@@ -454,19 +420,19 @@ jobs:
             echo "::error::the CHANGELOG.md section for $VERSION is empty"
             exit 1
           }
-          prefix="${PUBLIC_PREFIX:-$GHCR_PREFIX}"
+          repo="${PUBLIC_REPO:-$GHCR_REPO}"
           {
-            # Ten images, one tag — so the quickstart is the whole stack, not
-            # ten `docker pull`s. The bundle below is already pinned to it.
+            # One image, one tag — the quickstart is the whole stack, and a
+            # single service is that same image with a different --role.
             printf '```bash\n'
             printf '# the whole stack, pinned to this release:\n'
             printf 'tar xzf ibv2-compose-%s.tar.gz && cp .env.example .env\n' "$VERSION"
             printf 'docker network create ibv2-edge   # once per host\n'
             printf 'docker compose up -d\n\n'
             printf '# ...or one service:\n'
-            printf 'docker pull %sidentity-api:%s\n' "$prefix" "${{ needs.version.outputs.tag }}"
+            printf 'docker run %s:%s --role identity-api\n' "$repo" "${{ needs.version.outputs.tag }}"
             printf '```\n'
-            printf 'No containers? `ibv2-%s-<target>.tar.gz` carries every service binary for `x86_64`/`aarch64` Linux and Apple Silicon; `SHA256SUMS` covers every asset here.\n\n' "$VERSION"
+            printf 'No containers? `ibv2-%s-<target>.tar.gz` carries the single `ibv2` binary for `x86_64`/`aarch64` Linux and Apple Silicon — every service is a role of it (`ibv2 --role identity-api`, `ibv2 --list-roles`); `SHA256SUMS` covers every asset here.\n\n' "$VERSION"
             cat section.md
             grep -E '^\[[^]]+\]: ' CHANGELOG.md
           } > notes.md
@@ -480,18 +446,17 @@ jobs:
       - name: Bundle the compose files
         env:
           VERSION: ${{ needs.version.outputs.version }}
-          PUBLIC_PREFIX: ${{ needs.manifest.outputs.public_prefix }}
-          GHCR_PREFIX: ghcr.io/${{ github.repository }}/
+          PUBLIC_REPO: ${{ needs.manifest.outputs.public_repo }}
+          GHCR_REPO: ghcr.io/${{ github.repository }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
-          prefix="${PUBLIC_PREFIX:-$GHCR_PREFIX}"
+          repo="${PUBLIC_REPO:-$GHCR_REPO}"
           mkdir -p bundle/gateway
-          # Per-service images resolve from two variables, so pinning is two
-          # substitutions rather than ten image lines. The prefix already ends in
-          # `/` (ghcr path) or `-` (Docker Hub, whose namespaces are one level),
-          # and the compose template supplies neither.
+          # Every service names the same image, so pinning is two substitutions
+          # of one variable each. `command: ["--role", ...]` is what still makes
+          # each service itself, and it survives the rewrite untouched.
           sed -e '/^    build:$/,+2d' \
-              -e "s|\${IMAGE_REGISTRY:-identity-backend-v2}/|$prefix|g" \
+              -e "s|\${IMAGE_REPO:-identity-backend-rust}|$repo|g" \
               -e "s|\${IMAGE_TAG:-local}|$TAG|g" \
               docker-compose.yml > bundle/docker-compose.yml
           cp .env.example bundle/.env.example
@@ -501,12 +466,14 @@ jobs:
             echo '::error::the bundled docker-compose.yml still declares `build:` — it would try to build from a source tree the bundle does not carry'
             exit 1
           fi
-          if grep -qE '\$\{IMAGE_(REGISTRY|TAG)' bundle/docker-compose.yml; then
+          if grep -qE '\$\{IMAGE_(REPO|TAG)' bundle/docker-compose.yml; then
             echo '::error::the bundled docker-compose.yml still has unresolved image variables'
             exit 1
           fi
           test "$(grep -cE "^    image: .*:$TAG\$" bundle/docker-compose.yml)" -eq 10 ||
-            { echo "::error::expected ten pinned service images in the bundle"; exit 1; }
+            { echo "::error::expected ten services pinned to the release image"; exit 1; }
+          test "$(grep -cE '^    command: \["--role", ' bundle/docker-compose.yml)" -eq 10 ||
+            { echo "::error::the bundle lost a service's --role; every service would start the same way"; exit 1; }
           # The edits above are textual; this proves the result is still a valid
           # compose file rather than something the substitutions mangled.
           docker compose -f bundle/docker-compose.yml config -q

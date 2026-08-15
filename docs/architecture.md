@@ -132,6 +132,93 @@ Remaining slices. Each gets its own ship-first plan under `docs/plans/` when wor
 
 The legacy backend is retired only after every required route has an owner, the gateway is validated, parity gates pass, rollback is proven, and release-device smokes succeed.
 
+## Deployment topologies
+
+The system runs in one of **two** shapes. They serve an identical public API — a client cannot tell
+them apart — and differ only in how many processes hold how many secrets.
+
+### Standard: ten workloads (the default)
+
+Six HTTP services and four single-instance workers, each its own process with its own environment.
+This is what `paseo-next-v2` and `previewnet` run, and the only shape either of them may run.
+
+Its defining property is **secret compartmentalisation**, enforced rather than intended:
+`identity-api` is the one process holding `JWT_ED25519_SECRET`, so it is the one process that can
+mint a token; the other five hold only `JWT_ED25519_PUBLIC_KEY` and can verify. `POC_HMAC_SECRET`
+reaches `username-indexer` and nothing else. The two inviter signing keys are separate accounts on
+separate workloads. Each of the four databases is reachable by only the services that own it.
+`scripts/verify_compose_boundaries.sh` and the chart's per-workload `Secret` assert every one of
+those, and a change that widens them fails CI.
+
+### Small: five workloads (`--role all-in-one` + the four workers)
+
+One process serves all six HTTP surfaces on one port, with the route table compiled in; the four
+single-instance workers stay separate, because each owns a Postgres lease and a nonce lane and can
+never be collapsed into anything.
+
+This exists for deployments where operating ten workloads is not worth it. **It is a deliberate
+trade, not a simplification**, and the thing being traded is the compartmentalisation above.
+
+#### What the small topology gives up
+
+In `all-in-one`, a single process holds, simultaneously:
+
+| secret | what it grants |
+|---|---|
+| `JWT_ED25519_SECRET` | mint an access token for **any** subject |
+| `POC_HMAC_SECRET` | forge proof-of-compute solutions, defeating the anti-scraping gate |
+| four `*_DATABASE_URL`s | full read/write on identity, the username projection, and both ticket pools |
+| `TURN_SECRET` | mint TURN relay credentials |
+
+and it reaches them from the same address space that serves `GET /api/v1/usernames/search` — an
+**unauthenticated, public, internet-facing** endpoint.
+
+So the difference is concrete: a memory-disclosure or RCE bug reachable from the search path reaches
+a read-only username projection and a verify-only public key in the ten-workload topology, and
+reaches token minting for the entire system in the small one. Nothing else about the two topologies
+differs in this respect — same code, same handlers, same dependencies. The boundary is the process.
+
+Secondary consequences, all of which follow from one process rather than six:
+
+- **Blast radius.** Six surfaces share one Tokio runtime, one `standard_layers` timeout, and four
+  connection-pool budgets. `standard_layers` has a timeout but no bulkhead, so a saturated search
+  path and the auth handshake compete for the same resources.
+- **Boot coupling.** Four migration sets run against four databases before anything serves, and
+  `identity-api`'s blocking People Chain connect gates the whole API — so with no reachable RPC
+  there is no TURN, no notifications and no ticket claims either, where today there would be.
+- **Deploy coupling.** Every deploy of any surface restarts all of them.
+
+#### The rules that make it reviewable
+
+- **Topologies are mutually exclusive.** A deployment renders ten per-service workloads *or*
+  `all-in-one` plus the four workers — never a mix, which would pay the cost of the union while
+  still running the compartmentalised services. The chart refuses to render a mix.
+- **It cannot be reached by accident.** Selecting it requires an explicit acknowledgement value in
+  the values file; the chart fails to render without it. Copying an existing values file does not
+  get you here.
+- **The union is written out by hand.** `all-in-one`'s `secretKeys` enumerates every key it
+  receives rather than computing it, so the list growing is a visible diff in review.
+- **The real environments are excluded by contract.** `values-paseo-next-v2.yaml` and
+  `values-previewnet.yaml` stay on the ten-workload topology; moving either is a security decision,
+  not a configuration tweak.
+- **Nothing is relaxed for the standard topology.** Every per-service `require_key`/`forbid_key`
+  assertion still holds; the small topology adds rules rather than loosening any.
+
+#### Readiness in the small topology
+
+`all-in-one`'s `/readyz` is **degraded-but-ready**: it reports every component, and answers `200`
+with `"status": "degraded"` while some are down, rather than `503`.
+
+That is the opposite of the per-service behaviour, and deliberately so. Readiness controls whether
+the instance receives traffic at all. With six surfaces behind one probe, a strict aggregate would
+convert *"the ticket service's database is down"* into *"the whole API is out of rotation, auth
+included"* — turning a partial outage into a total one, and with a single workload there is no
+healthy replica for the traffic to move to, so nothing is gained by refusing it. A surface whose
+dependency is down fails its own requests; that is where the failure belongs.
+
+`/livez` remains a liveness echo in both topologies: dependency outages must never restart a
+process, or a database blip becomes a crash loop.
+
 ## Implementation notes (data flow & invariants)
 
 Operational invariants an agent must respect when touching the code.

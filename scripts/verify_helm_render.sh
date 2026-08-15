@@ -121,7 +121,26 @@ SUBSET = {
         "registration-queue", "dim-tickets-api", "dim-tickets-writer",
         "invite-tickets-api", "invite-tickets-pool", "turn-api", "notify-relay",
     },
+    # The SMALL topology: all six per-service HTTP workloads are absent by
+    # design, because one `all-in-one` process serves their surfaces. This is a
+    # different KIND of omission from previewnet's — not "we don't run that
+    # service here" but "that service runs inside another workload" — which is
+    # why MERGED below re-checks the union rather than letting the six vanish
+    # unaccounted for.
+    "helm/values-small.yaml": {
+        "identity-api", "username-indexer", "dim-tickets-api",
+        "invite-tickets-api", "turn-api", "notify-relay",
+    },
 }
+
+# Workloads that merge OTHER services' surfaces: every env key the merged
+# services need in compose must reach the merged workload, or the small topology
+# would deploy a process missing a surface's configuration and only find out at
+# runtime.
+MERGED = {"all-in-one": {
+    "identity-api", "username-indexer", "dim-tickets-api",
+    "invite-tickets-api", "turn-api", "notify-relay",
+}}
 expected_absent = SUBSET.get(os.environ["CHART_VALUES"], set())
 missing_services = set(compose_env) - set(deployments) - expected_absent
 for svc in sorted(missing_services):
@@ -132,6 +151,35 @@ for svc in sorted(expected_absent & set(deployments)):
 
 for name, dep in deployments.items():
     if name == "api-docs":
+        continue
+    if name in MERGED:
+        # Its compose counterpart is the set of services it merges.
+        chart_keys = {
+            e["name"]
+            for c in dep["spec"]["template"]["spec"]["containers"]
+            for e in (c.get("env") or [])
+        }
+        # Per-service DATABASE_URLs and rate limits are namespaced, so the union
+        # is a plain union with no collisions — which is exactly why the
+        # namespacing had to land before this topology could exist.
+        union = set()
+        for merged in MERGED[name]:
+            union |= compose_env.get(merged, set())
+        optional = {"FCM_SERVICE_ACCOUNT_JSON", "APNS_PRIVATE_KEY_FILE",
+                    "APNS_KEY_FILE", "APNS_KEY_ID",
+                    "APNS_TEAM_ID", "APNS_TOPIC", "APNS_ENVIRONMENT",
+                    "DEVICE_CHECK_KEY_ID", "DEVICE_CHECK_PRIVATE_KEY",
+                    "PLAY_INTEGRITY_DECRYPTION_KEY", "PLAY_INTEGRITY_VERIFICATION_KEY",
+                    "GOOGLE_CREDENTIALS", "APPLE_TEAM_ID", "REGISTRATION_VOUCHERS_ENABLED",
+                    "PAYMENT_LANE_ENABLED", "PAYMENT_MASTER_ACCOUNT", "PAYMENT_AMOUNT_PLANCK",
+                    "PAYMENT_REQUEST_TTL_SECS", "PLAY_INTEGRITY_MODE",
+                    "ANDROID_ATTESTATION_CRL_URL", "DEVICE_CHECK_IOS_ENABLED"}
+        missing = union - chart_keys - optional
+        if missing:
+            problems.append(
+                f"{name} merges {sorted(MERGED[name])} but is missing "
+                f"{sorted(missing)} — a merged surface without its configuration"
+            )
         continue
     if name not in compose_env:
         problems.append(f"{name} is deployed by the chart but is not a compose service")

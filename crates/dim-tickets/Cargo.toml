@@ -8,19 +8,12 @@ publish.workspace = true
 autobins = false
 
 # dim-tickets is a library (domain: DIM ticket state machine + frozen wire
-# mapping) plus two deployable binaries: the N-replica `dim-tickets-api` and the
-# single-instance `dim-tickets-writer` that registers pending tickets on People
-# Chain (Phase 2).
+# mapping). Its two deployable services — the N-replica `dim-tickets-api` and
+# the single-instance `dim-tickets-writer` that registers pending tickets on
+# People Chain — are roles of the `ibv2` binary (`crates/ibv2`), entered
+# through this crate's `routes()` and `writer::run()`.
 [lib]
 path = "src/lib.rs"
-
-[[bin]]
-name = "dim-tickets-api"
-path = "src/bin/dim_tickets_api.rs"
-
-[[bin]]
-name = "dim-tickets-writer"
-path = "src/bin/dim_tickets_writer.rs"
 
 [dependencies]
 chain-types.workspace = true

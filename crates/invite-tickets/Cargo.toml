@@ -8,19 +8,13 @@ publish.workspace = true
 autobins = false
 
 # invite-tickets is a library (domain: the invitation-ticket keypair pool +
-# frozen claim wire mapping) plus two deployable binaries: the N-replica
+# frozen claim wire mapping). Its two deployable services — the N-replica
 # `invite-tickets-api` and the single-instance `invite-tickets-pool` that
-# generates keypairs and registers them on People Chain (Phase 2).
+# generates keypairs and registers them on People Chain — are roles of the
+# `ibv2` binary (`crates/ibv2`), entered through this crate's `routes()` and
+# `pool::run()`.
 [lib]
 path = "src/lib.rs"
-
-[[bin]]
-name = "invite-tickets-api"
-path = "src/bin/invite_tickets_api.rs"
-
-[[bin]]
-name = "invite-tickets-pool"
-path = "src/bin/invite_tickets_pool.rs"
 
 [dependencies]
 jwt-verify.workspace = true

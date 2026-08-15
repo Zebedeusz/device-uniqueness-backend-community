@@ -14,24 +14,15 @@ use notifications::{
     RateLimiter, UnconfiguredProvider,
 };
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+pub async fn run() -> anyhow::Result<()> {
     http_common::telemetry::init("notify-relay");
     http_common::metrics::spawn("notify-relay");
 
     let config = Config::from_env().context("invalid configuration")?;
     tracing::info!(bind = %config.bind_addr, "starting notify-relay");
 
-    let apns = build_apns_provider()?;
-    let fcm = build_fcm_provider()?;
-    let limiter = RateLimiter::new(config.rate_limit, config.rate_window);
-    tracing::info!(
-        limit = config.rate_limit,
-        window_secs = config.rate_window.as_secs(),
-        "per-subject notify rate limit configured"
-    );
     let bind_addr = config.bind_addr;
-    let state = AppState::new(config.jwt_verifier, apns, fcm, limiter);
+    let state = build_state(config)?;
     http_common::metrics::spawn_readiness_probe(
         "notify-relay",
         state.clone(),
@@ -44,10 +35,27 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %bind_addr, "notify-relay listening");
 
     axum::serve(listener, routes(state))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(crate::shutdown::drain())
         .await
         .context("server error")?;
     Ok(())
+}
+
+/// The push providers, the per-subject limiter, and the state they live in.
+///
+/// Shared with the `all-in-one` role, which needs the identical construction —
+/// including the "configured or an explicit stub" decision, which must not be
+/// made twice.
+pub fn build_state(config: Config) -> anyhow::Result<AppState> {
+    let apns = build_apns_provider()?;
+    let fcm = build_fcm_provider()?;
+    let limiter = RateLimiter::new(config.rate_limit, config.rate_window);
+    tracing::info!(
+        limit = config.rate_limit,
+        window_secs = config.rate_window.as_secs(),
+        "per-subject notify rate limit configured"
+    );
+    Ok(AppState::new(config.jwt_verifier, apns, fcm, limiter))
 }
 
 /// Build the iOS provider: real APNs when configured, else an unconfigured stub.
@@ -84,28 +92,4 @@ fn build_fcm_provider() -> anyhow::Result<Arc<dyn PushProvider>> {
             Ok(Arc::new(UnconfiguredProvider))
         }
     }
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("install Ctrl-C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler")
-            .recv()
-            .await;
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-    tracing::info!("shutdown signal received; draining connections");
 }

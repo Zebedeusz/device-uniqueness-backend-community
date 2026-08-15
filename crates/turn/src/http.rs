@@ -30,17 +30,29 @@ use http_common::{health, layers, zod, AuthSubject};
 use self::error::{AppError, AppResult, FieldError};
 use self::state::AppState;
 
-/// Assemble the full router: health at root, the frozen `/api/v1/turn`
-/// surface below, wrapped in the production middleware stack.
-pub fn routes(state: AppState) -> Router {
+/// This service's own paths and nothing else: no health routes, no service-wide
+/// fallback, no middleware stack. That is what makes it mergeable with its
+/// siblings in the `all-in-one` role — six copies of `/livez`, six fallbacks and
+/// six middleware stacks cannot coexist in one router.
+///
+/// The in-prefix `fallback(hono_not_found)` on the method router stays here: it
+/// is this surface's own dialect for a wrong method, and it must win inside
+/// `/api/v1/turn` however the router is assembled.
+pub fn router(state: AppState) -> Router {
     let api = Router::new().route("/issue", post(issue_credentials).fallback(hono_not_found));
+    Router::new().nest("/api/v1/turn", api).with_state(state)
+}
 
-    let router = Router::new()
-        .merge(health::router("turn", readiness))
-        .nest("/api/v1/turn", api)
-        .fallback(hono_not_found)
-        .with_state(state);
-    layers::standard_layers(router)
+/// Assemble the full standalone service: [`router`] plus health at root, the
+/// service-wide Hono 404, and the production middleware stack.
+pub fn routes(state: AppState) -> Router {
+    let health = health::router("turn", readiness).with_state(state.clone());
+    layers::standard_layers(
+        Router::new()
+            .merge(health)
+            .merge(router(state))
+            .fallback(hono_not_found),
+    )
 }
 
 /// Stateless service: nothing to gate readiness on — if the process serves,

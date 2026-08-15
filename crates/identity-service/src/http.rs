@@ -20,6 +20,23 @@ use crate::{auth, queue, usernames};
 /// tracing → timeout). Unmatched paths fall back to the frozen Hono
 /// `404 Not Found` (the legacy global 404 dialect).
 pub fn routes(state: AppState) -> Router {
+    let health = health::router().with_state(state.clone());
+    layers::standard_layers(
+        Router::new()
+            .merge(health)
+            .merge(router(state))
+            .fallback(hono_not_found),
+    )
+}
+
+/// This service's own paths and nothing else: no health routes, no service-wide
+/// fallback, no middleware stack. That is what makes it mergeable with its
+/// siblings in the `all-in-one` role.
+///
+/// Identity owns the *global* fallback in the deployed route table — the edge's
+/// `handle { }` block sends everything unclaimed here — so a merged router's
+/// service-wide `hono_not_found` is this service's dialect, not a new one.
+pub fn router(state: AppState) -> Router {
     let api_v1 = Router::new()
         .nest("/auth", auth::router(state.clone()))
         .route("/attester", get(usernames::attester))
@@ -36,13 +53,10 @@ pub fn routes(state: AppState) -> Router {
         api_v1
     };
 
-    let router = Router::new()
-        .merge(health::router())
+    Router::new()
         .route("/.well-known/jwks.json", get(jwks))
         .nest("/api/v1", api_v1)
-        .fallback(hono_not_found)
-        .with_state(state);
-    layers::standard_layers(router)
+        .with_state(state)
 }
 
 /// Publish the Ed25519 public key so siblings can verify tokens.

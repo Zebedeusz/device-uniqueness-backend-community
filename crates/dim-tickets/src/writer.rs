@@ -104,7 +104,11 @@ impl WriterConfig {
     /// Fails (rather than defaulting) for `DATABASE_URL`, `PEOPLE_RPC_URL`,
     /// `PEOPLE_NETWORK`, `INVITER_ADDRESS`, and `INVITER_SIGNER_SURI`.
     pub fn from_env() -> anyhow::Result<Self> {
-        let database_url = required_env("DATABASE_URL")?;
+        // Namespaced: this worker shares its sibling API's database, and a bare
+        // DATABASE_URL means four different instances across the workspace.
+        // The bare name is still accepted for one release, with a WARN.
+        let database_url =
+            http_common::config::required_renamed("DIM_TICKETS_DATABASE_URL", "DATABASE_URL")?;
         let people_rpc_url = required_env("PEOPLE_RPC_URL")?;
         let network_raw = required_env("PEOPLE_NETWORK")?;
         let network = Network::from_str(&network_raw).map_err(|()| {
@@ -575,6 +579,9 @@ mod tests {
     /// Every env var `from_env` reads, cleared around each case so neither a
     /// previous case nor the developer's ambient shell leaks into the next.
     const FROM_ENV_VARS: &[&str] = &[
+        "DIM_TICKETS_DATABASE_URL",
+        // The pre-namespacing name, still accepted for one release. Cleared
+        // too, so a developer's ambient shell cannot satisfy the dual-read.
         "DATABASE_URL",
         "PEOPLE_RPC_URL",
         "PEOPLE_NETWORK",
@@ -594,7 +601,10 @@ mod tests {
 
     /// The five vars `from_env` fails on rather than defaults.
     const REQUIRED_ENV: &[(&str, &str)] = &[
-        ("DATABASE_URL", "postgres://dim:pw@localhost/dim"),
+        (
+            "DIM_TICKETS_DATABASE_URL",
+            "postgres://dim:pw@localhost/dim",
+        ),
         ("PEOPLE_RPC_URL", "wss://rpc.example"),
         ("PEOPLE_NETWORK", "paseo"),
         (
@@ -689,7 +699,7 @@ mod tests {
 
         // Each missing required var fails naming exactly that var.
         for missing in [
-            "DATABASE_URL",
+            "DIM_TICKETS_DATABASE_URL",
             "PEOPLE_RPC_URL",
             "PEOPLE_NETWORK",
             "INVITER_ADDRESS",
@@ -701,11 +711,34 @@ mod tests {
                 .filter(|(key, _)| *key != missing)
                 .collect();
             let err = from_env_with(&vars).unwrap_err();
-            assert!(
-                err.to_string().contains(&format!("{missing} is required")),
-                "{missing}: {err}"
-            );
+            assert!(err.to_string().contains(missing), "{missing}: {err}");
         }
+
+        // The database URL was namespaced (four services read a bare
+        // DATABASE_URL pointing at four different instances). The bare name is
+        // still honoured for one release, and the namespaced one wins when both
+        // are set — otherwise an upgrade would silently keep the old value.
+        let legacy: Vec<_> = REQUIRED_ENV
+            .iter()
+            .copied()
+            .map(|(key, value)| {
+                if key == "DIM_TICKETS_DATABASE_URL" {
+                    ("DATABASE_URL", value)
+                } else {
+                    (key, value)
+                }
+            })
+            .collect();
+        let config = from_env_with(&legacy).expect("the bare DATABASE_URL is still accepted");
+        assert_eq!(config.database_url, "postgres://dim:pw@localhost/dim");
+
+        let mut both = REQUIRED_ENV.to_vec();
+        both.push(("DATABASE_URL", "postgres://dim:pw@localhost/stale"));
+        let config = from_env_with(&both).expect("both names set");
+        assert_eq!(
+            config.database_url, "postgres://dim:pw@localhost/dim",
+            "the namespaced key must win over the legacy one"
+        );
 
         // A required var set to whitespace is rejected, not treated as a value.
         let mut vars = REQUIRED_ENV.to_vec();

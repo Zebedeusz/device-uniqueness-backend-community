@@ -6,7 +6,7 @@ name: Release rehearsal
 # and nothing ever pushed.
 #
 # This rehearses the whole lane against a throwaway local registry. It is NOT on
-# every PR — it recompiles the workspace, and `scripts/verify_image_split.sh`
+# every PR — it recompiles the workspace, and `scripts/verify_role_split.sh`
 # already asserts the exporter *shape* offline on every push. This catches what
 # a shape check cannot: the registry refusing what we actually send it.
 on:
@@ -23,7 +23,7 @@ jobs:
         image: registry:2
         ports: ["5000:5000"]
     env:
-      IMAGE_REGISTRY: localhost:5000/rehearsal
+      IMAGE_REPO: localhost:5000/rehearsal/identity-backend-rust
       IMAGE_TAG: 0.0.0-rehearsal
     steps:
       - uses: actions/checkout@v7
@@ -35,29 +35,37 @@ jobs:
           driver: docker-container
           driver-opts: network=host
 
-      - name: Build and push all ten by digest
+      - name: Build and push the image by digest
         env:
           PUSH_BY_DIGEST: "true"
         run: docker buildx bake all --metadata-file metadata.json
 
-      - name: Join each service's digest into a tagged manifest list
+      - name: Join the digest into a tagged manifest list
         run: |
-          count=0
-          for svc in $(docker buildx bake --print all | jq -r '.group.all.targets[]'); do
-            digest="$(jq -r --arg s "$svc" '.[$s]["containerimage.digest"]' metadata.json)"
-            [ -n "$digest" ] && [ "$digest" != "null" ] ||
-              { echo "::error::$svc produced no digest"; exit 1; }
-            docker buildx imagetools create \
-              -t "$IMAGE_REGISTRY/$svc:$IMAGE_TAG" -t "$IMAGE_REGISTRY/$svc:stable" \
-              "$IMAGE_REGISTRY/$svc@$digest"
-            count=$((count + 1))
-          done
-          [ "$count" -eq 10 ] || { echo "::error::expected 10 services, joined $count"; exit 1; }
+          target="$(docker buildx bake --print all | jq -r '.group.all.targets[0]')"
+          digest="$(jq -r --arg t "$target" '.[$t]["containerimage.digest"]' metadata.json)"
+          [ -n "$digest" ] && [ "$digest" != "null" ] ||
+            { echo "::error::the build produced no digest"; exit 1; }
+          docker buildx imagetools create \
+            -t "$IMAGE_REPO:$IMAGE_TAG" -t "$IMAGE_REPO:stable" \
+            "$IMAGE_REPO@$digest"
 
       - name: The registry serves every tag
         run: |
-          for svc in $(docker buildx bake --print all | jq -r '.group.all.targets[]'); do
-            docker buildx imagetools inspect "$IMAGE_REGISTRY/$svc:$IMAGE_TAG" >/dev/null
-            docker buildx imagetools inspect "$IMAGE_REGISTRY/$svc:stable" >/dev/null
-          done
-          echo "ten images, twenty tags, all resolvable"
+          docker buildx imagetools inspect "$IMAGE_REPO:$IMAGE_TAG" >/dev/null
+          docker buildx imagetools inspect "$IMAGE_REPO:stable" >/dev/null
+          echo "one image, two tags, both resolvable"
+
+      # The rehearsal's whole point is catching what only shows up once an image
+      # exists. Both checks are deterministic — actually STARTING a role would
+      # block on its database or chain RPC, and which roles the binary accepts
+      # is already compared against compose and the chart by
+      # scripts/verify_role_split.sh.
+      - name: The published image knows its roles and defaults to none
+        run: |
+          count="$(docker run --rm "$IMAGE_REPO:$IMAGE_TAG" --list-roles | wc -l)"
+          [ "$count" -eq 10 ] ||
+            { echo "::error::published image lists $count roles, expected 10"; exit 1; }
+          ! docker run --rm "$IMAGE_REPO:$IMAGE_TAG" >/dev/null 2>&1 ||
+            { echo "::error::the published image starts with no arguments; it must exit non-zero listing the roles"; exit 1; }
+          echo "ten roles listed; an argument-less run fails"

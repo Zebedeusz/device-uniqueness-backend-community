@@ -13,9 +13,11 @@ global:
   # them itself.
   sharedServiceNamespace: ""
 
-  # ONE registry, ONE tag, all ten images. The per-service repo name is the
-  # workload key below — never a per-service tag (see the plan's Contracts).
-  imageRegistry: ghcr.io/paritytech/identity-backend-rust
+  # ONE image, ONE tag, every workload. `imageRepo` is a full repository path,
+  # not a registry — the tag is appended directly, so moving registries is a
+  # change to this one value. What makes a workload a given service is its
+  # `--role` arg, never a per-workload image or tag (see the plan's Contracts).
+  imageRepo: ghcr.io/paritytech/identity-backend-rust
   imageTag: ""
   imagePullPolicy: IfNotPresent
 
@@ -65,6 +67,12 @@ global:
     # needs to name the environment.
     LOG_FORMAT: "json"
 
+  # The SMALL topology's acknowledgement. Absent by default: the standard
+  # topology needs no opinion about it, and its absence is what makes enabling
+  # all-in-one a deliberate act rather than an inherited one.
+  # allInOne:
+  #   acknowledgedSecretUnion: true
+
   # The two inviters MUST be different accounts — one account is one nonce
   # lane, and two submitters on it race. Asserted at template time.
   inviters:
@@ -78,6 +86,79 @@ global:
 secrets: {}
 
 workloads:
+  # ── The SMALL topology ──────────────────────────────────────────────────
+  #
+  # Disabled here. Enabling it is mutually exclusive with the six per-service
+  # HTTP workloads below and additionally requires
+  # `global.allInOne.acknowledgedSecretUnion: true`; the chart refuses to render
+  # otherwise. See helm/values-small.yaml for a complete example, and
+  # docs/architecture.md "Deployment topologies" for what it trades away.
+  all-in-one:
+    enabled: false
+    kind: http
+    # NEVER more than one: not for correctness (the surfaces are stateless and
+    # the leases live on the four workers) but because this is the topology for
+    # deployments that did not want ten workloads — scale by moving to the
+    # standard topology, which is what horizontal scale is actually for.
+    replicas: 1
+    # The longest of the six, plus the four migration sets and the blocking
+    # People Chain connect: username-indexer's finalized scan dominates.
+    startupSeconds: 350
+    globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, PEOPLE_NETWORK, ASSET_HUB_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
+    inviter: dim
+    # THE UNION, enumerated by hand rather than computed from the six services.
+    # The list growing must be a visible diff in review — that is the whole
+    # control. One process holding all of these is the trade this topology
+    # makes; see docs/architecture.md "Deployment topologies".
+    secretKeys:
+      - IDENTITY_DATABASE_URL      # identity: full read/write
+      - INDEXER_DATABASE_URL       # the username projection
+      - DIM_TICKETS_DATABASE_URL   # ticket pool
+      - INVITE_TICKETS_DATABASE_URL
+      - JWT_ED25519_SECRET         # mint an access token for ANY subject
+      - POC_HMAC_SECRET            # forge proof-of-compute solutions
+      - TURN_SECRET                # mint TURN relay credentials
+    env:
+      # Four pools in one process against four databases. Left at the per-service
+      # defaults would multiply the connection budget by four against every
+      # instance; these are the ceilings for a single merged process and are
+      # deliberately smaller than six services' worth.
+      DB_MAX_CONNECTIONS: "5"
+      ACCESS_TOKEN_TTL_SECS: "86400"
+      REFRESH_TOKEN_TTL_SECS: "2592000"
+      CHALLENGE_TTL_SECS: "300"
+      AUTH_RATE_LIMIT: "30"
+      AUTH_RATE_WINDOW_SECS: "60"
+      AUTH_ENABLED: "false"
+      ENFORCE_AUTH: "false"
+      JWT_ISSUER: "polkadot-app"
+      ANDROID_PACKAGE_NAMES: ""
+      ANDROID_SIGNING_DIGEST_PLAYSTORE: ""
+      ANDROID_SIGNING_DIGEST_WEBSITE: ""
+      APPLE_APP_ATTEST_APP_IDS: ""
+      IOS_PACKAGE_NAMES: ""
+      DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS: "600"
+      DOTNS_MAX_FUTURE_SKEW_SECS: "30"
+      SEARCH_RATE_LIMIT: "60"
+      SEARCH_RATE_LIMIT_WINDOW_SECS: "60"
+      POC_ENABLED: "false"
+      POC_DIFFICULTY_BITS: "16"
+      STORAGE_PAGE_SIZE: "1000"
+      SYNC_INTERVAL_SECS: "30"
+      QUOTA_TIMEOUT_SECS: "15"
+      DIM_TICKETS_RATE_LIMIT: "30"
+      DIM_TICKETS_RATE_LIMIT_WINDOW_SECS: "60"
+      INVITE_TICKETS_RATE_LIMIT: "30"
+      INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS: "60"
+      TURN_RATE_LIMIT: "30"
+      TURN_RATE_LIMIT_WINDOW_SECS: "60"
+      TURN_AUTH_ALGORITHM: "SHA1"
+      TURN_REALM: "example.org"
+      TURN_TTL_SECS: "1800"
+      ICE_SERVERS: "stun:stun.example.com:3478,turn:turn.example.com:3478?transport=udp"
+      NOTIFY_RATE_LIMIT: "60"
+      NOTIFY_RATE_LIMIT_WINDOW_SECS: "60"
+
   dim-tickets-api:
     enabled: true
     kind: http
@@ -90,11 +171,11 @@ workloads:
     # and the kubelet kills the container. Total = start_period + retries x interval.
     startupSeconds: 90
     globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, PEOPLE_NETWORK, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL]
+    secretKeys: [DIM_TICKETS_DATABASE_URL]
     env:
       QUOTA_TIMEOUT_SECS: "15"
-      RATE_LIMIT: "30"
-      RATE_LIMIT_WINDOW_SECS: "60"
+      DIM_TICKETS_RATE_LIMIT: "30"
+      DIM_TICKETS_RATE_LIMIT_WINDOW_SECS: "60"
 
   dim-tickets-writer:
     enabled: true
@@ -104,7 +185,7 @@ workloads:
     replicas: 1
     inviter: dim   # which global.inviters entry funds this workload
     globalEnv: [PEOPLE_RPC_URL, PEOPLE_NETWORK, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL, INVITER_SIGNER_SURI]
+    secretKeys: [DIM_TICKETS_DATABASE_URL, INVITER_SIGNER_SURI]
     env:
       WRITER_BATCH_SIZE: "10"
       WRITER_FINALIZE_SECS: "120"
@@ -123,7 +204,7 @@ workloads:
     # Startup grace, from the compose healthcheck's start_period.
     startupSeconds: 90
     globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL, JWT_ED25519_SECRET]
+    secretKeys: [IDENTITY_DATABASE_URL, JWT_ED25519_SECRET]
     env:
       ACCESS_TOKEN_TTL_SECS: "86400"
       ANDROID_PACKAGE_NAMES: ""
@@ -148,7 +229,7 @@ workloads:
     singleton: true
     replicas: 1
     globalEnv: [PEOPLE_RPC_URL, ASSET_HUB_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL, CHAIN_WRITER_SIGNER_SURI]
+    secretKeys: [IDENTITY_DATABASE_URL, CHAIN_WRITER_SIGNER_SURI]
     env:
       ATTESTER_ALLOWANCE_FLOOR: "100"
       ATTESTER_RESOURCE_POLL_SECS: "60"
@@ -169,10 +250,10 @@ workloads:
     # Startup grace, from the compose healthcheck's start_period.
     startupSeconds: 70
     globalEnv: [BIND_ADDR, PEOPLE_NETWORK, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL]
+    secretKeys: [INVITE_TICKETS_DATABASE_URL]
     env:
-      RATE_LIMIT: "30"
-      RATE_LIMIT_WINDOW_SECS: "60"
+      INVITE_TICKETS_RATE_LIMIT: "30"
+      INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS: "60"
 
   invite-tickets-pool:
     enabled: true
@@ -182,7 +263,7 @@ workloads:
     replicas: 1
     inviter: invite   # which global.inviters entry funds this workload
     globalEnv: [PEOPLE_RPC_URL, PEOPLE_NETWORK, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL, INVITER_SIGNER_SURI]
+    secretKeys: [INVITE_TICKETS_DATABASE_URL, INVITER_SIGNER_SURI]
     env:
       POOL_BATCH_MAX: "100"
       POOL_DIMS: "Game,ProofOfInk"
@@ -228,7 +309,7 @@ workloads:
     singleton: true
     replicas: 1
     globalEnv: [PEOPLE_RPC_URL, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL]
+    secretKeys: [IDENTITY_DATABASE_URL]
     env:
       QUEUE_ADVANCE_INTERVAL_SECS: "6"
       QUEUE_LEASE_TTL_SECS: "30"
@@ -243,8 +324,8 @@ workloads:
     secretKeys: [TURN_SECRET]
     env:
       ICE_SERVERS: "stun:stun.example.com:3478,turn:turn.example.com:3478?transport=udp"
-      RATE_LIMIT: "30"
-      RATE_LIMIT_WINDOW_SECS: "60"
+      TURN_RATE_LIMIT: "30"
+      TURN_RATE_LIMIT_WINDOW_SECS: "60"
       TURN_AUTH_ALGORITHM: "SHA1"
       TURN_REALM: "example.org"
       TURN_TTL_SECS: "1800"
@@ -264,7 +345,7 @@ workloads:
     # Startup grace, from the compose healthcheck's start_period.
     startupSeconds: 350
     globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DATABASE_URL]
+    secretKeys: [INDEXER_DATABASE_URL]
     # Required only when POC_ENABLED is true; the service refuses to boot then.
     optionalSecretKeys: [POC_HMAC_SECRET]
     env:
@@ -303,56 +384,59 @@ docs:
 # Kubernetes equivalent (the committed API reference as a ConfigMap) lands with
 # the route-parity work in Phase 5.
 routes:
-  # GET username reads belong to the indexer — EXCEPT the payment-status poll,
-  # which is identity-api's, and except every non-GET method (the write and
-  # availability surface, and the collection-root CORS preflight). Plain
-  # path-prefix Ingress cannot express either carve-out; this is why the chart
-  # renders a Traefik IngressRoute.
-  # The committed API reference. Caddy serves this from a file_server; the
-  # cluster serves it from a ConfigMap behind a static server, so the ownership
-  # map stays complete.
+  # generated:route-table
+  # The committed API reference. Caddy file-serves it; the cluster serves it from a
+  # ConfigMap behind a static server, so the ownership map stays complete. The prefix is
+  # STRIPPED before the server sees it — without that the static server is handed
+  # /docs/openapi.json, looks for it under its document root and 404s, while its readiness
+  # probe stays green. Ownership parity is not path parity.
   - name: docs
     match: PathPrefix(`/docs`)
     service: api-docs
     priority: 110
-    # Caddy uses `handle_path /docs*`, which STRIPS the prefix before the file
-    # server sees it. Without the same strip here the static server is handed
-    # /docs/openapi.json, looks for it under its document root, and 404s — while
-    # its readiness probe (/index.html) stays green. Ownership parity is not
-    # path parity.
     stripPrefix: /docs
+  # GET username reads belong to the indexer — EXCEPT the payment-status poll, which is
+  # identity-api's, and except every non-GET method (the write and availability surface,
+  # and the collection-root CORS preflight). A plain path-prefix rule can express neither
+  # carve-out; this is why the chart renders a Traefik IngressRoute rather than an Ingress.
   - name: username-reads
     match: Method(`GET`) && PathPrefix(`/api/v1/usernames`) && !Path(`/api/v1/usernames/payment-status`)
     service: username-indexer
     priority: 100
+  # The DIM ticket request and status surface.
   - name: dim-tickets
     match: PathPrefix(`/api/v1/dim-ticket`)
     service: dim-tickets-api
     priority: 90
+  # The synchronous invitation-credential claim route.
   - name: invite-tickets
     match: PathPrefix(`/api/v1/invitation-ticket/`)
     service: invite-tickets-api
     priority: 90
-  # shared: one instance serves every environment. Where the workload is
-  # disabled, the route still resolves — to global.sharedServiceNamespace.
+  # shared: one instance serves every environment. Where the workload is not deployed the
+  # route still resolves — to global.sharedServiceNamespace.
   - name: turn
     match: PathPrefix(`/api/v1/turn/`)
     service: turn-api
     shared: true
     priority: 90
+  # shared, like turn. NOTE: this service answers an EMPTY 404 for an unmatched path and
+  # 405 for a wrong method, where every sibling answers the frozen Hono text body. The
+  # whole prefix is routed here, so that is the live contract — see routes::fallback.
   - name: notify
     match: PathPrefix(`/api/v1/notify`)
     service: notify-relay
     shared: true
     priority: 90
-  # Proof-of-compute gates the indexer's own public search, so it is the
-  # indexer's route. Off by default, in which case the service answers 404.
+  # Proof-of-compute gates the indexer's own public search, so it is the indexer's route.
+  # Off by default, in which case the service answers its plain-text 404.
   - name: proof-of-compute
     match: PathPrefix(`/api/v1/poc`)
     service: username-indexer
     priority: 90
-  # Everything else: auth, attester, username writes, JWKS, health.
+  # Everything else: auth, attester, username writes, JWKS, root health.
   - name: default
     match: PathPrefix(`/`)
     service: identity-api
     priority: 1
+  # /generated:route-table

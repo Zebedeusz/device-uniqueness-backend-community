@@ -2,14 +2,13 @@
 //!
 //! Serves health plus the frozen `/api/v1/dim-ticket` surface (request +
 //! status). Writes land as `PENDING` rows; the separate single-instance
-//! `dim-tickets-writer` binary registers them on People Chain (Phase 2).
+//! `dim-tickets-writer` role registers them on People Chain.
 
 use anyhow::Context as _;
 
 use dim_tickets::{db, routes, AppState, ChainClient, Config};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+pub async fn run() -> anyhow::Result<()> {
     http_common::telemetry::init("dim-tickets-api");
     http_common::metrics::spawn("dim-tickets-api");
 
@@ -41,35 +40,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %bind_addr, "dim-tickets-api listening");
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(crate::shutdown::drain())
         .await
         .context("server error")?;
 
     Ok(())
-}
-
-/// Resolve on Ctrl-C or (on Unix) `SIGTERM` so axum can drain in-flight
-/// requests before the process exits.
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("install Ctrl-C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler")
-            .recv()
-            .await;
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-    tracing::info!("shutdown signal received; draining connections");
 }

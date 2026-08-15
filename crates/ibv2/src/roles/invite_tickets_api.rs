@@ -3,15 +3,14 @@
 //!
 //! Serves health plus the frozen `POST /api/v1/invitation-ticket/claim`
 //! surface. Claims consume pre-staged keypairs from this service's own
-//! Postgres; the separate single-instance `invite-tickets-pool` binary keeps
-//! the pool stocked (Phase 2) — this process never touches the People Chain.
+//! Postgres; the separate single-instance `invite-tickets-pool` role keeps
+//! the pool stocked — this process never touches the People Chain.
 
 use anyhow::Context as _;
 
 use invite_tickets::{db, routes, AppState, Config};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+pub async fn run() -> anyhow::Result<()> {
     http_common::telemetry::init("invite-tickets-api");
     http_common::metrics::spawn("invite-tickets-api");
 
@@ -39,35 +38,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %bind_addr, "invite-tickets-api listening");
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(crate::shutdown::drain())
         .await
         .context("server error")?;
 
     Ok(())
-}
-
-/// Resolve on Ctrl-C or (on Unix) `SIGTERM` so axum can drain in-flight
-/// requests before the process exits.
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("install Ctrl-C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler")
-            .recv()
-            .await;
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-    tracing::info!("shutdown signal received; draining connections");
 }

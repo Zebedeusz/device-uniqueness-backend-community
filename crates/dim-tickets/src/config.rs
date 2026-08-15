@@ -10,7 +10,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 pub use http_common::config::ConfigError;
-use http_common::config::{jwt_verifier_from_env, parse_var, positive, required_var};
+use http_common::config::{
+    jwt_verifier_from_env, parse_renamed, parse_var, positive, required_renamed, required_var,
+};
 
 use crate::tickets::Network;
 
@@ -65,7 +67,7 @@ impl Config {
     /// `PEOPLE_NETWORK`, `INVITER_ADDRESS`, and the JWT key material
     /// (`JWT_JWKS_JSON` or `JWT_ED25519_PUBLIC_KEY`).
     pub fn from_env() -> Result<Self, ConfigError> {
-        let database_url = required_var("DATABASE_URL")?;
+        let database_url = required_renamed("DIM_TICKETS_DATABASE_URL", "DATABASE_URL")?;
 
         let network_raw = required_var("PEOPLE_NETWORK")?;
         let network = Network::from_str(&network_raw).map_err(|_| ConfigError::Invalid {
@@ -85,10 +87,17 @@ impl Config {
 
         let quota_timeout_secs: u64 =
             positive("QUOTA_TIMEOUT_SECS", parse_var("QUOTA_TIMEOUT_SECS", "15")?)?;
-        let rate_limit: u32 = positive("RATE_LIMIT", parse_var("RATE_LIMIT", "30")?)?;
+        let rate_limit: u32 = positive(
+            "DIM_TICKETS_RATE_LIMIT",
+            parse_renamed("DIM_TICKETS_RATE_LIMIT", "RATE_LIMIT", "30")?,
+        )?;
         let rate_window_secs: u64 = positive(
-            "RATE_LIMIT_WINDOW_SECS",
-            parse_var("RATE_LIMIT_WINDOW_SECS", "60")?,
+            "DIM_TICKETS_RATE_LIMIT_WINDOW_SECS",
+            parse_renamed(
+                "DIM_TICKETS_RATE_LIMIT_WINDOW_SECS",
+                "RATE_LIMIT_WINDOW_SECS",
+                "60",
+            )?,
         )?;
         Ok(Self {
             bind_addr: parse_var("BIND_ADDR", "0.0.0.0:8080")?,

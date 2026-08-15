@@ -30,8 +30,11 @@ services:
   identity-api:
     build:
       context: .
-      target: identity-api
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/identity-api:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "identity-api"]
     restart: unless-stopped
     depends_on:
       postgres:
@@ -40,7 +43,7 @@ services:
     # also contains service-owned signing secrets.
     environment:
       BIND_ADDR: 0.0.0.0:8080
-      DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      IDENTITY_DATABASE_URL: postgres://identity:identity@postgres:5432/identity
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       # Dev-only 32-byte Ed25519 seed (0x + 64 hex). Replace in prod.
       JWT_ED25519_SECRET: ${JWT_ED25519_SECRET:-0x0101010101010101010101010101010101010101010101010101010101010101}
@@ -89,7 +92,7 @@ services:
       metrics:
         aliases: ["identity-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      test: ["CMD", "ibv2", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -102,8 +105,11 @@ services:
   identity-chain-writer:
     build:
       context: .
-      target: identity-chain-writer
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/identity-chain-writer:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "identity-chain-writer"]
     restart: unless-stopped
     depends_on:
       postgres:
@@ -113,7 +119,7 @@ services:
     # Explicit allowlist: do not inject the shared .env wholesale because it
     # also contains service-owned signing secrets.
     environment:
-      DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      IDENTITY_DATABASE_URL: postgres://identity:identity@postgres:5432/identity
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       # Dev signer. In prod the least-privilege proxy key; the writer proxies
       # whenever ATTESTER_ACCOUNT is not this key.
@@ -172,8 +178,11 @@ services:
   registration-queue:
     build:
       context: .
-      target: registration-queue
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/registration-queue:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "registration-queue"]
     restart: unless-stopped
     depends_on:
       postgres:
@@ -181,7 +190,7 @@ services:
     # Explicit allowlist: no signing secrets — this service only reads chain
     # balances and flips queue rows in the identity DB.
     environment:
-      DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      IDENTITY_DATABASE_URL: postgres://identity:identity@postgres:5432/identity
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       QUEUE_ADVANCE_INTERVAL_SECS: ${QUEUE_ADVANCE_INTERVAL_SECS:-6}
       QUEUE_LEASE_TTL_SECS: ${QUEUE_LEASE_TTL_SECS:-30}
@@ -219,8 +228,11 @@ services:
   username-indexer:
     build:
       context: .
-      target: username-indexer
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/username-indexer:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "username-indexer"]
     restart: unless-stopped
     depends_on:
       username-indexer-postgres:
@@ -229,7 +241,7 @@ services:
     # also contains service-owned signing secrets.
     environment:
       BIND_ADDR: 0.0.0.0:8080
-      DATABASE_URL: postgres://username_indexer:username_indexer@username-indexer-postgres:5432/username_indexer
+      INDEXER_DATABASE_URL: postgres://username_indexer:username_indexer@username-indexer-postgres:5432/username_indexer
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       STORAGE_PAGE_SIZE: ${STORAGE_PAGE_SIZE:-1000}
       SYNC_INTERVAL_SECS: ${SYNC_INTERVAL_SECS:-30}
@@ -259,7 +271,7 @@ services:
       metrics:
         aliases: ["username-indexer-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      test: ["CMD", "ibv2", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -290,15 +302,18 @@ services:
   dim-tickets-api:
     build:
       context: .
-      target: dim-tickets-api
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/dim-tickets-api:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "dim-tickets-api"]
     restart: unless-stopped
     depends_on:
       dim-tickets-postgres:
         condition: service_healthy
     environment:
       BIND_ADDR: 0.0.0.0:8080
-      DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
+      DIM_TICKETS_DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
@@ -307,8 +322,8 @@ services:
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       QUOTA_TIMEOUT_SECS: ${QUOTA_TIMEOUT_SECS:-15}
-      RATE_LIMIT: ${RATE_LIMIT:-30}
-      RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      DIM_TICKETS_RATE_LIMIT: ${DIM_TICKETS_RATE_LIMIT:-30}
+      DIM_TICKETS_RATE_LIMIT_WINDOW_SECS: ${DIM_TICKETS_RATE_LIMIT_WINDOW_SECS:-60}
       # Prometheus exporter, scraped on the private metrics network only.
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
@@ -321,7 +336,7 @@ services:
       metrics:
         aliases: ["dim-tickets-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      test: ["CMD", "ibv2", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -336,8 +351,11 @@ services:
   dim-tickets-writer:
     build:
       context: .
-      target: dim-tickets-writer
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/dim-tickets-writer:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "dim-tickets-writer"]
     restart: unless-stopped
     depends_on:
       dim-tickets-postgres:
@@ -345,7 +363,7 @@ services:
       dim-tickets-api:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
+      DIM_TICKETS_DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
@@ -396,23 +414,26 @@ services:
   invite-tickets-api:
     build:
       context: .
-      target: invite-tickets-api
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/invite-tickets-api:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "invite-tickets-api"]
     restart: unless-stopped
     depends_on:
       invite-tickets-postgres:
         condition: service_healthy
     environment:
       BIND_ADDR: 0.0.0.0:8080
-      DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
+      INVITE_TICKETS_DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       # Verifies identity-service JWTs. Dev default = the public half of
       # identity-api's dev JWT_ED25519_SECRET above; in prod prefer
       # JWT_JWKS_JSON from identity-service's /.well-known/jwks.json.
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
-      RATE_LIMIT: ${RATE_LIMIT:-30}
-      RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      INVITE_TICKETS_RATE_LIMIT: ${INVITE_TICKETS_RATE_LIMIT:-30}
+      INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS: ${INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS:-60}
       # Prometheus exporter, scraped on the private metrics network only.
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
@@ -425,7 +446,7 @@ services:
       metrics:
         aliases: ["invite-tickets-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      test: ["CMD", "ibv2", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -441,14 +462,17 @@ services:
   invite-tickets-pool:
     build:
       context: .
-      target: invite-tickets-pool
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/invite-tickets-pool:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "invite-tickets-pool"]
     restart: unless-stopped
     depends_on:
       invite-tickets-postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
+      INVITE_TICKETS_DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
       # Dev signer (unfunded: batches finalize with ItemFailed and no tickets
@@ -483,8 +507,11 @@ services:
   turn-api:
     build:
       context: .
-      target: turn-api
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/turn-api:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "turn-api"]
     restart: unless-stopped
     environment:
       BIND_ADDR: 0.0.0.0:8080
@@ -501,8 +528,8 @@ services:
       # JWT_JWKS_JSON from identity-service's /.well-known/jwks.json.
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
-      RATE_LIMIT: ${RATE_LIMIT:-30}
-      RATE_LIMIT_WINDOW_SECS: ${RATE_LIMIT_WINDOW_SECS:-60}
+      TURN_RATE_LIMIT: ${TURN_RATE_LIMIT:-30}
+      TURN_RATE_LIMIT_WINDOW_SECS: ${TURN_RATE_LIMIT_WINDOW_SECS:-60}
       # Prometheus exporter, scraped on the private metrics network only.
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
@@ -515,7 +542,7 @@ services:
       metrics:
         aliases: ["turn-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      test: ["CMD", "ibv2", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -528,8 +555,11 @@ services:
   notify-relay:
     build:
       context: .
-      target: notify-relay
-    image: ${IMAGE_REGISTRY:-identity-backend-v2}/notify-relay:${IMAGE_TAG:-local}
+      target: ibv2
+    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    # One image, ten roles: this line is what makes the container this
+    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    command: ["--role", "notify-relay"]
     restart: unless-stopped
     environment:
       BIND_ADDR: 0.0.0.0:8080
@@ -562,7 +592,7 @@ services:
       metrics:
         aliases: ["notify-relay-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readyz"]
+      test: ["CMD", "ibv2", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5

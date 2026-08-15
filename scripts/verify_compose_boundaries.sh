@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Every database credential in the workspace. The four services read NAMESPACED
+# names — a bare DATABASE_URL was read by four configs pointing at four
+# different Postgres instances, so one process reading two of them would connect
+# a service to another service's database and run the wrong migrations against
+# it. The bare name is still honoured by the dual-read for one release, so it is
+# forbidden alongside the four.
+DB_URL_KEYS=(
+  IDENTITY_DATABASE_URL
+  INDEXER_DATABASE_URL
+  DIM_TICKETS_DATABASE_URL
+  INVITE_TICKETS_DATABASE_URL
+  DATABASE_URL
+)
+
 rendered="$(docker compose config)"
 # Cleared so a shell still holding the local-run overrides (see the header of
 # gateway/docker-compose.yml) checks the committed defaults, not its own ports.
@@ -168,7 +182,10 @@ require_key dim-tickets-writer PEOPLE_NETWORK
 require_key dim-tickets-writer INVITER_ADDRESS
 require_key dim-tickets-writer INVITER_SIGNER_SURI
 
-for key in JWT_JWKS_JSON JWT_ED25519_PUBLIC_KEY QUOTA_TIMEOUT_SECS RATE_LIMIT RATE_LIMIT_WINDOW_SECS; do
+# Namespaced per service: three services read a bare RATE_LIMIT, so tuning one
+# retuned all three.
+for key in JWT_JWKS_JSON JWT_ED25519_PUBLIC_KEY QUOTA_TIMEOUT_SECS \
+           DIM_TICKETS_RATE_LIMIT DIM_TICKETS_RATE_LIMIT_WINDOW_SECS; do
   require_key dim-tickets-api "$key"
 done
 
@@ -207,10 +224,54 @@ if [ "$debug_unique" -ne "$debug_count" ]; then
   exit 1
 fi
 
+# Each database credential reaches ONLY the services that own that database.
+#
+# This is the invariant the namespacing exists to make checkable. Before it,
+# eight services read the same key name — `DATABASE_URL` — pointing at four
+# different Postgres instances, so "is this service wired to the right database?"
+# was not expressible here at all. A misrouted URL starts cleanly and runs the
+# wrong migrations against someone else's schema.
+declare -A DB_OWNERS=(
+  [IDENTITY_DATABASE_URL]="identity-api identity-chain-writer registration-queue"
+  [INDEXER_DATABASE_URL]="username-indexer"
+  [DIM_TICKETS_DATABASE_URL]="dim-tickets-api dim-tickets-writer"
+  [INVITE_TICKETS_DATABASE_URL]="invite-tickets-api invite-tickets-pool"
+)
+APP_SERVICES=(
+  identity-api identity-chain-writer registration-queue username-indexer
+  dim-tickets-api dim-tickets-writer invite-tickets-api invite-tickets-pool
+  turn-api notify-relay
+)
+for key in "${!DB_OWNERS[@]}"; do
+  for service in "${APP_SERVICES[@]}"; do
+    if [[ " ${DB_OWNERS[$key]} " == *" $service "* ]]; then
+      require_key "$service" "$key"
+    else
+      forbid_key "$service" "$key"
+    fi
+  done
+done
+# The pre-namespacing name is still honoured by the dual-read, so leaving it set
+# anywhere would silently keep the old value through the deprecation release.
+for service in "${APP_SERVICES[@]}"; do
+  forbid_key "$service" DATABASE_URL
+done
+
+# The per-service rate limits, which used to be one shared `RATE_LIMIT` — tuning
+# one service retuned the other two.
+require_key invite-tickets-api INVITE_TICKETS_RATE_LIMIT
+require_key invite-tickets-api INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS
+require_key turn-api TURN_RATE_LIMIT
+require_key turn-api TURN_RATE_LIMIT_WINDOW_SECS
+for service in "${APP_SERVICES[@]}"; do
+  forbid_key "$service" RATE_LIMIT
+  forbid_key "$service" RATE_LIMIT_WINDOW_SECS
+done
+
 # notify-relay is verify-only and holds its own push secrets, but never another
 # service's signing/DB secrets.
 for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
-           INVITE_INVITER_SIGNER_SURI TURN_SECRET DATABASE_URL; do
+           INVITE_INVITER_SIGNER_SURI TURN_SECRET "${DB_URL_KEYS[@]}"; do
   forbid_key notify-relay "$key"
 done
 require_key notify-relay JWT_ED25519_PUBLIC_KEY
@@ -223,7 +284,7 @@ require_key notify-relay NOTIFY_RATE_LIMIT_WINDOW_SECS
 (
   rendered="$rendered_gateway"
   for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
-             INVITE_INVITER_SIGNER_SURI TURN_SECRET DATABASE_URL JWT_JWKS_JSON \
+             INVITE_INVITER_SIGNER_SURI TURN_SECRET "${DB_URL_KEYS[@]}" JWT_JWKS_JSON \
              JWT_ED25519_PUBLIC_KEY APNS_PRIVATE_KEY APNS_PRIVATE_KEY_FILE \
              FCM_SERVICE_ACCOUNT_JSON POC_HMAC_SECRET DOTNS_GATEWAY_ENABLED \
              ASSET_HUB_RPC_URL DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS \
@@ -260,7 +321,7 @@ fi
   rendered="$rendered_observability"
   for service in prometheus loki alloy grafana; do
     for key in JWT_ED25519_SECRET CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI \
-               INVITE_INVITER_SIGNER_SURI TURN_SECRET POC_HMAC_SECRET DATABASE_URL \
+               INVITE_INVITER_SIGNER_SURI TURN_SECRET POC_HMAC_SECRET "${DB_URL_KEYS[@]}" \
                APNS_PRIVATE_KEY FCM_SERVICE_ACCOUNT_JSON; do
       forbid_key "$service" "$key"
     done

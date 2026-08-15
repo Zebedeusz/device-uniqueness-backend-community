@@ -26,8 +26,8 @@ jobs:
         run: scripts/verify_compose_boundaries.sh
       # One service, one image, one binary. Static (bake --print + compose
       # config), so it belongs in the offline job next to the boundary checks.
-      - name: image split
-        run: scripts/verify_image_split.sh
+      - name: role split
+        run: scripts/verify_role_split.sh
       - uses: azure/setup-helm@v4
       # Renders every environment and checks two things against the ARTIFACT:
       # secret boundaries (the Kubernetes form of the compose allowlists) and

@@ -18,12 +18,13 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 {{- end -}}
 
 {{/*
-The image for a workload: one registry, one tag, repo named after the service.
-There is deliberately no per-workload tag override — see the plan's Contracts.
+THE image: one repo, one tag, for every workload. What makes a workload that
+service is its `--role` arg, not its image — so there is deliberately no
+per-workload image or tag override (see the plan's Contracts).
 */}}
 {{- define "ibv2.image" -}}
 {{- $g := .root.Values.global -}}
-{{- printf "%s/%s:%s" $g.imageRegistry .name $g.imageTag -}}
+{{- printf "%s:%s" $g.imageRepo $g.imageTag -}}
 {{- end -}}
 
 {{/*
@@ -101,6 +102,46 @@ chart every time, so a `fail` here is the last check that always runs.
      signing account with nothing to stop it. Membership is asserted in both
      directions below, so neither a missing flag nor a spurious one passes. */}}
 {{- $singletons := list "identity-chain-writer" "registration-queue" "dim-tickets-writer" "invite-tickets-pool" -}}
+
+{{/* ── Topology ─────────────────────────────────────────────────────────────
+
+     A deployment renders the STANDARD topology (six per-service HTTP workloads)
+     or the SMALL one (`all-in-one`, which serves all six surfaces in one
+     process) — plus the four workers above, which belong to both. Never a mix.
+
+     The small topology collapses the secret compartmentalisation the standard
+     one enforces: one process holds JWT_ED25519_SECRET (mint any token),
+     POC_HMAC_SECRET, TURN_SECRET and all four database URLs, in the same address
+     space that serves the unauthenticated public search. That is a legitimate
+     trade for a small deployment and a bad accident for anyone else, so it is
+     gated on an explicit acknowledgement rather than on a workload being
+     enabled. See "Deployment topologies" in docs/architecture.md. */}}
+{{- $merged := list "all-in-one" -}}
+{{- $perService := list "identity-api" "username-indexer" "dim-tickets-api" "invite-tickets-api" "turn-api" "notify-relay" -}}
+{{- $mergedOn := list -}}
+{{- $perServiceOn := list -}}
+{{- range $name, $w := $enabled }}
+{{- if has $name $merged }}{{ $mergedOn = append $mergedOn $name }}{{ end }}
+{{- if has $name $perService }}{{ $perServiceOn = append $perServiceOn $name }}{{ end }}
+{{- end }}
+
+{{- if and $mergedOn $perServiceOn }}
+{{- fail (printf "both topologies are enabled: %v alongside %v. A mix pays the small topology's secret union while still running the compartmentalised services — enable one or the other (docs/architecture.md, Deployment topologies)" $mergedOn $perServiceOn) }}
+{{- end }}
+
+{{- if $mergedOn }}
+{{- if not $g.allInOne }}
+{{- fail "all-in-one is enabled but global.allInOne is unset — the small topology must be chosen deliberately, not inherited by copying a values file" }}
+{{- end }}
+{{- if not (eq (toString $g.allInOne.acknowledgedSecretUnion) "true") }}
+{{- fail "all-in-one is enabled but global.allInOne.acknowledgedSecretUnion is not true. This topology puts JWT_ED25519_SECRET (mint any token), POC_HMAC_SECRET, TURN_SECRET and all four database URLs in ONE process with the unauthenticated public search endpoint. Read docs/architecture.md \"Deployment topologies\" and set it explicitly to accept that" }}
+{{- end }}
+{{- range $name := $perService }}
+{{- if hasKey $.Values.secrets $name }}
+{{- fail (printf "the small topology is enabled but secrets.%s is still populated — a per-service secret set left behind is a credential nobody is deploying and nobody is rotating" $name) }}
+{{- end }}
+{{- end }}
+{{- end }}
 
 {{/* Every workload, not just the enabled ones: a plaintext secret parked under a
      disabled workload is a secret in git that nobody is checking, and it goes

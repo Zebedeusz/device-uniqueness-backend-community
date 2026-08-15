@@ -13,6 +13,17 @@
 # upstreams that echo their own name. For each request both edges are asked and
 # must agree on WHO answered and WITH WHAT.
 #
+# What this proves CHANGED when the route table became a generated artifact.
+# Both configs are now rendered by `just routes` from one table
+# (crates/ibv2/src/routes/table.rs), so they can no longer drift by a hand-edit
+# — `cargo test -p routegen` catches that offline and for free. What only a live
+# run can still prove is that the two RENDERINGS mean the same thing to the two
+# proxies: Caddy and Traefik do not share a matching language (ordered
+# first-match vs explicit priorities; `path /p/*` not matching the bare `/p`;
+# handle_path stripping vs a stripPrefix middleware), so one emitter can be
+# correct while the other is subtly wrong. That is what these 25 requests are
+# for, and it is why the table has two emitters rather than a translation.
+#
 # Needs docker, so it is not part of the offline gate — it is its own CI job,
 # like the live-DB suites.
 #
@@ -93,15 +104,47 @@ docker run -d --rm --label ibv2-parity=1 --name ibv2-edge-caddy \
   --set global.imageTag=parity-live \
   --set "global.ingress.host=$HOST" 2>/dev/null > "$work/rendered.yaml"
 
+# The SMALL topology is a different DEPLOYMENT, not a different route table.
+#
+# gateway/Caddyfile always proxies to per-service upstreams — compose runs the
+# standard topology and there is no Caddy in front of the small one. Asking "do
+# Caddy and Traefik agree?" there compares two different deployments: Traefik
+# would send everything to a merged upstream this harness has no stub for.
+#
+# What IS worth asserting is that collapsing the upstreams did not quietly
+# change WHICH requests are routed — same matches, all pointing at the merged
+# workload. The in-process dispatch behind it was proved by sweeping the whole
+# ownership map against a live `--role all-in-one` and against the real edge
+# (docs/plans/active/one-image-one-binary.md, Phase 3).
+if merged_summary="$(RENDERED="$work/rendered.yaml" python3 scripts/lib/merged_topology_routes.py)"; then
+  if [ -n "$merged_summary" ]; then
+    echo "live route parity: skipped — $VALUES selects the small topology"
+    echo "  $merged_summary"
+    echo "  Two proxies cannot be compared across two deployments; the merged process's own"
+    echo "  dispatch is covered by the all-in-one route-table sweep, not by this harness."
+    exit 0
+  fi
+else
+  exit 1
+fi
+
 RENDERED="$work/rendered.yaml" OUT="$work/dynamic.yml" python3 - <<'PY'
 import os, yaml
 docs = [d for d in yaml.safe_load_all(open(os.environ["RENDERED"])) if d]
 # Select the TABLE, not the plain-HTTP redirect router. Taking "the first
 # IngressRoute" would silently start comparing the redirect the day document
 # order changed.
-tables = [d for d in docs if d["kind"] == "IngressRoute"
-          and any(r["services"][0]["name"] != "identity-api" or len(d["spec"]["routes"]) > 1
-                  for r in d["spec"]["routes"])]
+# Identified by what it IS, not by which service it names: the redirect router
+# is the one whose every route carries the redirect-to-https middleware. Keying
+# on the service name broke the moment a topology pointed the redirect at
+# something other than identity-api.
+def is_redirect(doc):
+    return all(
+        any(m["name"] == "redirect-to-https" for m in r.get("middlewares") or [])
+        for r in doc["spec"]["routes"]
+    )
+
+tables = [d for d in docs if d["kind"] == "IngressRoute" and not is_redirect(d)]
 if len(tables) != 1:
     raise SystemExit(f"expected exactly one route table IngressRoute, found {len(tables)}: "
                      + ", ".join(d["metadata"]["name"] for d in tables))

@@ -15,7 +15,9 @@ use std::str::FromStr as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 pub use http_common::config::ConfigError;
-use http_common::config::{jwt_verifier_from_env, parse_var, positive, required_var};
+use http_common::config::{
+    jwt_verifier_from_env, parse_renamed, parse_var, positive, required_var,
+};
 
 use crate::credentials::Algorithm;
 
@@ -82,10 +84,17 @@ impl Config {
         let realm = validated_realm(&required_var("TURN_REALM")?)?;
         let ice_servers = parse_ice_servers(&std::env::var("ICE_SERVERS").unwrap_or_default())?;
 
-        let rate_limit: u32 = positive("RATE_LIMIT", parse_var("RATE_LIMIT", "30")?)?;
+        let rate_limit: u32 = positive(
+            "TURN_RATE_LIMIT",
+            parse_renamed("TURN_RATE_LIMIT", "RATE_LIMIT", "30")?,
+        )?;
         let rate_window_secs: u64 = positive(
-            "RATE_LIMIT_WINDOW_SECS",
-            parse_var("RATE_LIMIT_WINDOW_SECS", "60")?,
+            "TURN_RATE_LIMIT_WINDOW_SECS",
+            parse_renamed(
+                "TURN_RATE_LIMIT_WINDOW_SECS",
+                "RATE_LIMIT_WINDOW_SECS",
+                "60",
+            )?,
         )?;
         Ok(Self {
             bind_addr: parse_var("BIND_ADDR", "0.0.0.0:8080")?,

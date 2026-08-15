@@ -31,24 +31,24 @@ workloads:
 
 secrets:
   identity-api:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
+    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
     JWT_ED25519_SECRET: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#JWT_ED25519_SECRET
   identity-chain-writer:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
+    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
     CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#CHAIN_WRITER_SIGNER_SURI
   registration-queue:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
+    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
   username-indexer:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INDEXER_DATABASE_URL
+    INDEXER_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INDEXER_DATABASE_URL
   dim-tickets-api:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_DATABASE_URL
+    DIM_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_DATABASE_URL
   dim-tickets-writer:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_DATABASE_URL
+    DIM_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_DATABASE_URL
     INVITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_INVITER_SIGNER_SURI
   invite-tickets-api:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_DATABASE_URL
+    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_DATABASE_URL
   invite-tickets-pool:
-    DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_DATABASE_URL
+    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_DATABASE_URL
     INVITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_INVITER_SIGNER_SURI
   turn-api:
     TURN_SECRET: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#TURN_SECRET

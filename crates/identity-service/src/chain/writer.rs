@@ -99,7 +99,11 @@ pub struct WriterConfig {
 impl WriterConfig {
     /// Read and validate writer configuration from the environment.
     pub fn from_env() -> anyhow::Result<Self> {
-        let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL is required")?;
+        // Namespaced: this worker shares its sibling API's database, and a bare
+        // DATABASE_URL means four different instances across the workspace.
+        // The bare name is still accepted for one release, with a WARN.
+        let database_url =
+            http_common::config::required_renamed("IDENTITY_DATABASE_URL", "DATABASE_URL")?;
         let people_rpc_url = std::env::var("PEOPLE_RPC_URL")
             .unwrap_or_else(|_| "wss://previewnet.substrate.dev/people".to_string());
         let signer_suri = std::env::var("CHAIN_WRITER_SIGNER_SURI")
@@ -1723,6 +1727,9 @@ mod tests {
     /// Every env var `from_env` reads, cleared around each case so neither a
     /// previous case nor the developer's ambient shell leaks into the next.
     const FROM_ENV_VARS: &[&str] = &[
+        "IDENTITY_DATABASE_URL",
+        // The pre-namespacing name, still accepted for one release. Cleared too,
+        // so a developer's ambient shell cannot satisfy the dual-read.
         "DATABASE_URL",
         "PEOPLE_RPC_URL",
         "CHAIN_WRITER_SIGNER_SURI",
@@ -1744,7 +1751,10 @@ mod tests {
 
     /// The vars `from_env` refuses to default.
     const REQUIRED_ENV: &[(&str, &str)] = &[
-        ("DATABASE_URL", "postgres://writer:pw@localhost/identity"),
+        (
+            "IDENTITY_DATABASE_URL",
+            "postgres://writer:pw@localhost/identity",
+        ),
         ("CHAIN_WRITER_SIGNER_SURI", "//Writer"),
         ("ATTESTER_ACCOUNT", ALICE_SS58),
     ];
@@ -1859,10 +1869,9 @@ mod tests {
 
         // Missing required vars fail naming the var.
         let err = from_env_with(&[("CHAIN_WRITER_SIGNER_SURI", "//Writer")]).unwrap_err();
-        assert!(
-            err.to_string().contains("DATABASE_URL is required"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("IDENTITY_DATABASE_URL"), "{err}");
+        // The bare name is still honoured for one release: this case must fail
+        // on the SIGNER_SURI, not on a database URL it was given.
         let err = from_env_with(&[("DATABASE_URL", "postgres://x")]).unwrap_err();
         assert!(
             err.to_string()

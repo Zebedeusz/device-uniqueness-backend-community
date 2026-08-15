@@ -57,41 +57,38 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # One bake, ten images: the targets share the Dockerfile's `builder`
-      # stage, so the workspace is compiled once. A build matrix would compile
-      # it ten times.
+      # One bake, one image: every service runs it with a different `--role`.
       #
       # Registry-backed cache rather than type=gha: bake runs here as a plain
       # command, and the GitHub cache backend needs runtime credentials that
       # are only exported to actions, not to `run:` steps.
-      - name: Build and push all ten images
+      - name: Build and push the image
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           IMAGE_TAG: ${{ github.sha }}
           CACHE_FROM: ghcr.io/${{ github.repository }}/buildcache:main
           CACHE_TO: ghcr.io/${{ github.repository }}/buildcache:main
         run: docker buildx bake --push all
       # What was actually published, not what the Dockerfile says: the static
-      # check reads source, this pulls each pushed image and looks inside.
-      - name: Verify each published image holds exactly one binary
+      # check reads source, this pulls the pushed image and looks inside — one
+      # binary, an `ibv2` entrypoint, and no CMD that would default to a role.
+      - name: Verify the published image
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           IMAGE_TAG: ${{ github.sha }}
           RUNTIME_CHECK: "1"
-        run: scripts/verify_image_split.sh
+        run: scripts/verify_role_split.sh
 
-      # `latest` tracks main for the compose/self-host lane, as it did when this
-      # was one image. Retagged from the pushed digests — no second build.
+      # `latest` tracks main for the compose/self-host lane. Retagged from the
+      # pushed digest — no second build.
       - name: Tag latest
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
-          for svc in $(docker buildx bake --print all | jq -r '.group.all.targets[]'); do
-            docker buildx imagetools create \
-              --tag "$IMAGE_REGISTRY/$svc:latest" \
-              "$IMAGE_REGISTRY/$svc:$SHA"
-          done
+          docker buildx imagetools create \
+            --tag "$IMAGE_REPO:latest" \
+            "$IMAGE_REPO:$SHA"
 
   # needs build, so a docs-only push (build skipped) skips deploy too, while a
   # real deploy still waits for `check` to pass first.
@@ -118,13 +115,13 @@ jobs:
       - name: Deploy (pull images + restart every environment, then the edge)
         env:
           HOST: ${{ secrets.IBV2_HOST }}
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
           SHA: ${{ github.sha }}
         run: |
           ssh ubuntu@"$HOST" \
-            "IMAGE_REGISTRY='$IMAGE_REGISTRY' SHA='$SHA' TOKEN='$TOKEN' ACTOR='$ACTOR' bash -euo pipefail -s" \
+            "IMAGE_REPO='$IMAGE_REPO' SHA='$SHA' TOKEN='$TOKEN' ACTOR='$ACTOR' bash -euo pipefail -s" \
             <<'REMOTE'
           # Shared external networks, owned by no project: the edge meets every
           # environment on one, Prometheus scrapes them over the other. Created
@@ -148,11 +145,11 @@ jobs:
           # so this is roughly the old single-image transfer plus nine copies of
           # one small layer.
           compose_primary() {
-            sudo IMAGE_REGISTRY="$IMAGE_REGISTRY" IMAGE_TAG="$SHA" \
+            sudo IMAGE_REPO="$IMAGE_REPO" IMAGE_TAG="$SHA" \
               docker compose -p identity-backend-v2 "$@"
           }
           compose_preview() {
-            sudo IMAGE_REGISTRY="$IMAGE_REGISTRY" IMAGE_TAG="$SHA" \
+            sudo IMAGE_REPO="$IMAGE_REPO" IMAGE_TAG="$SHA" \
               docker compose -p identity-previewnet "$@"
           }
 

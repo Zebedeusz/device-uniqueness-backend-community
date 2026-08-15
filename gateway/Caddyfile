@@ -30,20 +30,21 @@
 #   0 identity  1 indexer  2 dim-tickets  3 invite-tickets
 #   4 turn      5 notify
 (routes) {
-	# Generated API reference (committed artifact; docs/api-reference).
+	# generated:route-table
+	# The committed API reference. Caddy file-serves it; the cluster serves it from a
+	# ConfigMap behind a static server, so the ownership map stays complete. The prefix is
+	# STRIPPED before the server sees it — without that the static server is handed
+	# /docs/openapi.json, looks for it under its document root and 404s, while its readiness
+	# probe stays green. Ownership parity is not path parity.
 	handle_path /docs* {
 		root * {$GATEWAY_DOCS_ROOT:/srv/docs}
 		file_server
 	}
 
-	# --- migrated routes: one handle per owning service -----------------
-	# Username reads (search + single lookup) are the indexer's; everything
-	# else on /api/v1/usernames — the POST write/availability surface, the
-	# collection-root CORS preflight (OPTIONS), and wrong-method 404s — falls
-	# through to identity-api below. The matcher lists the bare path
-	# explicitly: a `/*` pattern alone does not match it. The payment-status
-	# poll is identity-owned despite being a GET under /usernames — carved
-	# out so it falls through to identity-api instead of the indexer.
+	# GET username reads belong to the indexer — EXCEPT the payment-status poll, which is
+	# identity-api's, and except every non-GET method (the write and availability surface,
+	# and the collection-root CORS preflight). A plain path-prefix rule can express neither
+	# carve-out; this is why the chart renders a Traefik IngressRoute rather than an Ingress.
 	@username_reads {
 		method GET
 		path /api/v1/usernames /api/v1/usernames/*
@@ -52,30 +53,42 @@
 	handle @username_reads {
 		reverse_proxy {args[1]}
 	}
+
+	# The DIM ticket request and status surface.
 	handle /api/v1/dim-ticket* {
 		reverse_proxy {args[2]}
 	}
+
+	# The synchronous invitation-credential claim route.
 	handle /api/v1/invitation-ticket/* {
 		reverse_proxy {args[3]}
 	}
+
+	# shared: one instance serves every environment. Where the workload is not deployed the
+	# route still resolves — to global.sharedServiceNamespace.
 	handle /api/v1/turn/* {
 		reverse_proxy {args[4]}
 	}
+
+	# shared, like turn. NOTE: this service answers an EMPTY 404 for an unmatched path and
+	# 405 for a wrong method, where every sibling answers the frozen Hono text body. The
+	# whole prefix is routed here, so that is the live contract — see routes::fallback.
 	handle /api/v1/notify* {
 		reverse_proxy {args[5]}
 	}
-	# Proof-of-compute puzzle issuance belongs to the indexer: it gates the
-	# indexer's own public search read. With POC_ENABLED=false (the default)
-	# the service does not mount the route and answers its plain-text 404.
+
+	# Proof-of-compute gates the indexer's own public search, so it is the indexer's route.
+	# Off by default, in which case the service answers its plain-text 404.
 	handle /api/v1/poc* {
 		reverse_proxy {args[1]}
 	}
 
-	# --- everything else: identity-api (auth, attester, usernames write,
-	# JWKS discovery, root health) ---------------------------------------
+	# Everything else: auth, attester, username writes, JWKS, root health.
 	handle {
 		reverse_proxy {args[0]}
 	}
+
+	# /generated:route-table
 }
 
 # --- Paseo Next v2 -------------------------------------------------------

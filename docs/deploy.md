@@ -233,6 +233,49 @@ Rollback: `sudo docker compose -f gateway/docker-compose.yml -p edge down`,
 `sudo systemctl enable --now caddy`, and bring the services up with the debug
 overlay so the loopback ports host Caddy proxies to exist again.
 
+## Choosing a topology
+
+This backend deploys in one of two shapes. They serve an **identical** public API; they differ in
+how many processes hold how many secrets. The design reasoning and the full threat model are in
+[`architecture.md`](architecture.md#deployment-topologies) — read that before choosing, not after.
+
+| | standard | small |
+|---|---|---|
+| workloads | 10 | 5 |
+| HTTP tier | six services, one per surface | one `all-in-one` process |
+| workers | four singletons | the same four |
+| `JWT_ED25519_SECRET` reaches | `identity-api` only | the process that also serves public search |
+| `/readyz` on a dead dependency | that service leaves rotation | reports `degraded`, stays in rotation |
+| values file | `values-<env>.yaml` | see `helm/values-small.yaml` |
+
+**The standard topology is the default and is what `paseo-next-v2` and `previewnet` run.** Moving
+either of them to the small topology is a security decision, not a configuration change.
+
+Pick the small topology only when operating ten workloads is genuinely not worth it, and only with
+the trade understood: one process holds `JWT_ED25519_SECRET` (mint a token for any subject),
+`POC_HMAC_SECRET`, `TURN_SECRET` and all four database URLs, in the same address space that serves
+the unauthenticated public `GET /api/v1/usernames/search`.
+
+The chart will not let you reach it by accident:
+
+- the six per-service workloads and `all-in-one` are **mutually exclusive** — a mix fails to render;
+- `global.allInOne.acknowledgedSecretUnion: true` is **required**, and absent by default, so
+  copying another environment's values file does not get you here;
+- a per-service `secrets:` entry left behind fails to render — a credential nobody deploys is a
+  credential nobody rotates.
+
+### Moving between topologies
+
+It is a **full redeploy, not a scale operation**: different workloads, different Secrets, a
+different ingress target. Migrate by applying the other values file — the databases, the chain
+accounts and the vault entries are unchanged, since both shapes run the same code against the same
+four databases. Expect the API to be briefly unavailable while the workloads swap, and note that the
+small topology's first boot carries the username-indexer's finalized scan (`startupSeconds: 350`).
+
+There is no in-place path and there should not be one: the two shapes have different secret
+distributions, and a "gradual" migration would mean running both at once, which is exactly the mix
+the chart refuses.
+
 ## Adding an environment
 
 A second environment is another compose project on the same host with its own
@@ -361,7 +404,7 @@ Compose and the chart are **two renderings of one config contract**, and CI keep
 | Gate | What it holds | Where |
 |---|---|---|
 | `verify_compose_boundaries.sh` | no service reads another's secret (compose) | offline |
-| `verify_image_split.sh` | one service, one image, one binary, one tag; release exporter shape | offline (+ `RUNTIME_CHECK=1` against published images) |
+| `verify_role_split.sh` | one image, one tag; every compose service and chart workload names a role `ibv2 --list-roles` accepts, exactly once, and its name IS its role; no default role in the image; release exporter shape | offline (+ `RUNTIME_CHECK=1` against the published image) |
 | `verify_helm_render.sh` | same, on the rendered chart; env-key parity with compose; probe budgets cover compose's | offline |
 | `verify_route_parity_live.sh` | real Caddy and real Traefik answer every route class identically | its own job (needs docker) |
 
@@ -462,13 +505,13 @@ The ghcr packages inherit the repo's private visibility, so external consumers n
 token with `read:packages` (SSO-authorized for `paritytech`) to pull. Make the package
 public only as a deliberate decision — it publishes binaries of a private repo.
 
-To run released images rather than build them, set `IMAGE_REGISTRY` and `IMAGE_TAG` and pass
-`--no-build` (`IMAGE_REGISTRY=ghcr.io/paritytech/identity-backend-rust IMAGE_TAG=v0.2.0
-docker compose pull`). Each service resolves to its own repo —
-`$IMAGE_REGISTRY/<service>:$IMAGE_TAG` — and **all ten always carry the same tag**: a
-per-service pin makes "which build is this environment on?" unanswerable, and
-`scripts/verify_image_split.sh` fails the build if the compose file drifts that way. The
-services each fail fast on missing configuration:
+To run the released image rather than build it, set `IMAGE_REPO` and `IMAGE_TAG` and pass
+`--no-build` (`IMAGE_REPO=ghcr.io/paritytech/identity-backend-rust IMAGE_TAG=v0.2.0
+docker compose pull`). **Every service resolves to the same `$IMAGE_REPO:$IMAGE_TAG`** and
+becomes itself through its `command: ["--role", "<service>"]`; `ibv2 --list-roles` prints the
+set. A per-service image or tag pin makes "which build is this environment on?" unanswerable,
+and `scripts/verify_role_split.sh` fails the build if the compose file drifts that way. The
+roles each fail fast on missing configuration:
 
 | Service | Required |
 |---|---|

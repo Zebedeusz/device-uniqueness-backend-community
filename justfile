@@ -10,7 +10,7 @@ check: fmt-check lint test verify-config
 # All offline. `verify-routes` needs docker and runs separately.
 verify-config:
     scripts/verify_compose_boundaries.sh
-    scripts/verify_image_split.sh
+    scripts/verify_role_split.sh
     scripts/verify_helm_render.sh
 
 # Route parity: real Caddy vs real Traefik over stub upstreams. Needs docker, so
@@ -70,6 +70,14 @@ _coverage-offline:
 deny:
     cargo deny check
 
+# Regenerate the committed edge configs (the `(routes)` snippet in gateway/Caddyfile
+# and the `routes:` list in helm/values.yaml) from the ONE route table in
+# crates/ibv2/src/routes/table.rs. The `committed_artifacts_are_in_sync` test in
+# `just check` fails if either is stale, so run this after changing the table —
+# and never hand-edit between the `generated:route-table` markers.
+routes:
+    cargo run -p routegen
+
 # Regenerate the committed API reference (docs/api-reference/openapi.json + index.html)
 # from the `#[utoipa::path]` annotations. The `committed_artifacts_are_in_sync` test
 # in `just check` fails if these are stale, so run this after changing any route/DTO.
@@ -79,13 +87,13 @@ openapi:
 # Run the identity-api service natively (needs Postgres reachable on localhost:
 # `docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d postgres`).
 run:
-    cargo run -p identity-service --bin identity-api
+    cargo run -p ibv2 -- --role identity-api
 
 # Run the identity-chain-writer worker (drains the reservation outbox onto People
 # Chain). Needs Postgres reachable on localhost — same prerequisite as `run`.
 run-writer:
-    cargo run -p identity-service --bin identity-chain-writer
+    cargo run -p ibv2 -- --role identity-chain-writer
 
 # Run the notifications relay (stateless /api/v1/notify).
 run-notify:
-    cargo run -p notifications --bin notify-relay
+    cargo run -p ibv2 -- --role notify-relay

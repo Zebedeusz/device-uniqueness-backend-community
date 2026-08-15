@@ -163,8 +163,9 @@ impl Config {
     /// `JWT_ED25519_SECRET`; everything else has a safe local default.
     pub fn from_env() -> Result<Self, ConfigError> {
         let bind_addr = parse_var("BIND_ADDR", "0.0.0.0:8080")?;
-        let database_url =
-            std::env::var("DATABASE_URL").map_err(|_| ConfigError::Missing("DATABASE_URL"))?;
+        let database_url = http_common::config::renamed("IDENTITY_DATABASE_URL", "DATABASE_URL")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(ConfigError::Missing("IDENTITY_DATABASE_URL"))?;
         let jwt_secret = parse_jwt_secret()?;
 
         let auth_enabled = env_bool("AUTH_ENABLED", false)?;
@@ -846,6 +847,8 @@ mod tests {
         use base64::Engine as _;
 
         const VARS: &[&str] = &[
+            "IDENTITY_DATABASE_URL",
+            // The pre-namespacing name, still accepted for one release.
             "DATABASE_URL",
             "JWT_ED25519_SECRET",
             "ATTESTER_ACCOUNT",
@@ -870,7 +873,9 @@ mod tests {
         clear();
 
         // Required-with-no-default trio, in from_env's evaluation order.
-        missing("DATABASE_URL");
+        missing("IDENTITY_DATABASE_URL");
+        // The bare name still satisfies it, with a WARN — the dual-read that
+        // keeps a running deployment from breaking on this release.
         std::env::set_var("DATABASE_URL", "postgres://unused");
         missing("JWT_ED25519_SECRET");
         std::env::set_var("JWT_ED25519_SECRET", hex::encode([1u8; 32]));

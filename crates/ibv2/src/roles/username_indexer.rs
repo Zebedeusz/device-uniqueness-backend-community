@@ -9,15 +9,11 @@ use username_indexer::poc::{self, Poc};
 use username_indexer::sync::{self, Freshness, FreshnessSnapshot};
 use username_indexer::{db, ensure_seeded, routes, AppState, ChainClient, Config};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+pub async fn run() -> anyhow::Result<()> {
     http_common::telemetry::init("username-indexer");
     http_common::metrics::spawn("username-indexer");
 
     let config = Config::from_env().context("invalid configuration")?;
-    // Resolved before any I/O so a misconfigured gate fails at startup rather
-    // than after the finalized bootstrap scan (which can take minutes).
-    let poc = build_poc(&config)?;
     tracing::info!(
         bind = %config.bind_addr,
         people_rpc = %config.people_rpc_url,
@@ -28,6 +24,42 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::connect(&config.database_url).await?;
     let chain = ChainClient::connect(&config.people_rpc_url, config.storage_page_size).await?;
+
+    let bind_addr = config.bind_addr;
+    let state = build_state(&config, pool.clone(), chain).await?;
+
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .with_context(|| format!("binding {bind_addr}"))?;
+    tracing::info!(addr = %bind_addr, "username-indexer listening");
+
+    http_common::metrics::spawn_readiness_probe(
+        "username-indexer",
+        (pool, state.chain.clone()),
+        |(p, c)| username_indexer::http::health::probe(p, c),
+    );
+    axum::serve(listener, routes(state))
+        .with_graceful_shutdown(crate::shutdown::drain())
+        .await
+        .context("server error")?;
+    Ok(())
+}
+
+/// Everything between "connected" and "ready to serve": the proof-of-compute
+/// gate, the finalized bootstrap (or checkpoint resume), the incremental sync
+/// task, the puzzle pruner, and the rate limiter.
+///
+/// Shared with the `all-in-one` role, which needs the identical sequence —
+/// duplicating it there would be a second place for the bootstrap-vs-resume
+/// decision to drift.
+pub async fn build_state(
+    config: &Config,
+    pool: sqlx::PgPool,
+    chain: ChainClient,
+) -> anyhow::Result<AppState> {
+    // Resolved before any I/O so a misconfigured gate fails at startup rather
+    // than after the finalized bootstrap scan (which can take minutes).
+    let poc = build_poc(config)?;
 
     let freshness = Freshness::new();
     match ensure_seeded(&pool, &chain, config.storage_page_size).await? {
@@ -63,12 +95,6 @@ async fn main() -> anyhow::Result<()> {
         freshness.clone(),
     ));
 
-    let bind_addr = config.bind_addr;
-    let listener = tokio::net::TcpListener::bind(bind_addr)
-        .await
-        .with_context(|| format!("binding {bind_addr}"))?;
-    tracing::info!(addr = %bind_addr, "username-indexer listening");
-
     let limiter = RateLimiter::new(
         config.search_rate_limit,
         Duration::from_secs(config.search_rate_limit_window_secs.into()),
@@ -79,19 +105,10 @@ async fn main() -> anyhow::Result<()> {
             difficulty_bits = config.poc_difficulty_bits,
             "proof-of-compute gate enabled on public search (a valid JWT also satisfies it)"
         );
-        tokio::spawn(prune_spent_puzzles(pool.clone(), PRUNE_INTERVAL));
+        tokio::spawn(prune_spent_puzzles(pool, PRUNE_INTERVAL));
         state = state.with_poc(poc);
     }
-    http_common::metrics::spawn_readiness_probe(
-        "username-indexer",
-        (pool.clone(), state.chain.clone()),
-        |(p, c)| username_indexer::http::health::probe(p, c),
-    );
-    axum::serve(listener, routes(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("server error")?;
-    Ok(())
+    Ok(state)
 }
 
 /// Build the proof-of-compute gate when it is enabled.
@@ -129,28 +146,4 @@ async fn prune_spent_puzzles(pool: sqlx::PgPool, every: Duration) {
             Err(error) => tracing::warn!(%error, "pruning expired spent puzzles failed"),
         }
     }
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("install Ctrl-C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler")
-            .recv()
-            .await;
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-    tracing::info!("shutdown signal received; draining connections");
 }

@@ -35,19 +35,33 @@ use self::error::{AppError, AppResult, FieldError};
 use self::state::AppState;
 use crate::tickets::{self, Dim};
 
-/// Assemble the full router: health at root, the frozen `/api/v1/dim-ticket`
-/// surface below, wrapped in the production middleware stack.
-pub fn routes(state: AppState) -> Router {
+/// This service's own paths and nothing else: no health routes, no service-wide
+/// fallback, no middleware stack. That is what makes it mergeable with its
+/// siblings in the `all-in-one` role.
+///
+/// The per-route `fallback(hono_not_found)` calls stay here: they are this
+/// surface's own wrong-method dialect (Hono routes were method-specific, so a
+/// wrong method was a 404, never a 405) and must win inside
+/// `/api/v1/dim-ticket` however the router is assembled.
+pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/", post(create_ticket).fallback(hono_not_found))
         .route("/{who}", get(get_ticket).fallback(hono_not_found));
-
-    let router = Router::new()
-        .merge(health::router("dim-tickets", readiness))
+    Router::new()
         .nest("/api/v1/dim-ticket", api)
-        .fallback(hono_not_found)
-        .with_state(state);
-    layers::standard_layers(router)
+        .with_state(state)
+}
+
+/// Assemble the full standalone service: [`router`] plus health at root, the
+/// service-wide Hono 404, and the production middleware stack.
+pub fn routes(state: AppState) -> Router {
+    let health = health::router("dim-tickets", readiness).with_state(state.clone());
+    layers::standard_layers(
+        Router::new()
+            .merge(health)
+            .merge(router(state))
+            .fallback(hono_not_found),
+    )
 }
 
 /// Readiness gates on Postgres and the People Chain RPC — the create path

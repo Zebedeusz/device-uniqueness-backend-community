@@ -7,15 +7,12 @@ license.workspace = true
 publish.workspace = true
 autobins = false
 
-# turn is a library (domain: coturn REST-API ephemeral credential minting) plus
-# one deployable binary: the stateless N-replica `turn-api`. No database, no
-# chain — the only secret is the HMAC key shared with the TURN relay.
+# turn is a library (domain: coturn REST-API ephemeral credential minting). Its
+# one deployable service, the stateless N-replica `turn-api`, is a role of the
+# `ibv2` binary (`crates/ibv2`), entered through this crate's `routes()`. No
+# database, no chain — the only secret is the HMAC key shared with the TURN relay.
 [lib]
 path = "src/lib.rs"
-
-[[bin]]
-name = "turn-api"
-path = "src/bin/turn_api.rs"
 
 [dependencies]
 jwt-verify.workspace = true

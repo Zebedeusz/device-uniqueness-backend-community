@@ -13,14 +13,28 @@ use http_common::{health, layers};
 
 pub use self::state::AppState;
 
-/// Assemble the health endpoints and the authenticated notify route, wrapped in
-/// the standard production middleware stack.
-pub fn routes(state: AppState) -> Router {
-    let router = Router::new()
-        .merge(health::router("notifications", readiness))
+/// This service's own paths and nothing else: no health routes, no fallback, no
+/// middleware stack — that is what makes it mergeable with its siblings in the
+/// `all-in-one` role.
+///
+/// **This surface's 404 dialect is not the Hono one.** `routes()` deliberately
+/// attaches no `fallback`, so an unmatched path under this service answers
+/// axum's default *empty* 404 and a wrong method answers **405**, where every
+/// other service in the workspace answers the frozen Hono `404 Not Found` text
+/// body. That is the live contract for `/api/v1/notify*` — the edge routes the
+/// whole prefix here — so a merged router must reproduce it inside this prefix
+/// rather than letting a global Hono fallback swallow it.
+pub fn router(state: AppState) -> Router {
+    Router::new()
         .route("/api/v1/notify", post(crate::notify::handle))
-        .with_state(state);
-    layers::standard_layers(router)
+        .with_state(state)
+}
+
+/// Assemble the full standalone service: [`router`] plus health at root and the
+/// production middleware stack. No `fallback` — see [`router`].
+pub fn routes(state: AppState) -> Router {
+    let health = health::router("notifications", readiness).with_state(state.clone());
+    layers::standard_layers(Router::new().merge(health).merge(router(state)))
 }
 
 /// Stateless and DB-free: if the process serves, it is ready — no external probe.

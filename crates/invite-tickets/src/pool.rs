@@ -398,7 +398,11 @@ impl MaintainerConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         use std::str::FromStr as _;
 
-        let database_url = required_env("DATABASE_URL")?;
+        // Namespaced: this worker shares its sibling API's database, and a bare
+        // DATABASE_URL means four different instances across the workspace.
+        // The bare name is still accepted for one release, with a WARN.
+        let database_url =
+            http_common::config::required_renamed("INVITE_TICKETS_DATABASE_URL", "DATABASE_URL")?;
         let people_rpc_url = required_env("PEOPLE_RPC_URL")?;
         let network_raw = required_env("PEOPLE_NETWORK")?;
         let network = Network::from_str(&network_raw)

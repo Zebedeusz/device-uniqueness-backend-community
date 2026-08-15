@@ -32,6 +32,22 @@ use crate::search::{SearchQuery, SearchResponse};
 /// (`GET /api/v1/usernames/{username}`, deprecated in favour of paginated
 /// `search`).
 pub fn routes(state: AppState) -> Router {
+    let health = health::router().with_state(state.clone());
+    layers::standard_layers(
+        Router::new()
+            .merge(health)
+            .merge(router(state))
+            .fallback(hono_not_found),
+    )
+}
+
+/// This service's own paths and nothing else: no health routes, no service-wide
+/// fallback, no middleware stack. That is what makes it mergeable with its
+/// siblings in the `all-in-one` role.
+///
+/// The `route_layer` order and the trailing `fallback` are load-bearing and must
+/// not be disturbed by the split — see the comments inside.
+pub fn router(state: AppState) -> Router {
     // Layer order: the later `route_layer` is the outer one, so the cheap per-IP
     // rate limit runs before any signature or HMAC work.
     //
@@ -58,13 +74,7 @@ pub fn routes(state: AppState) -> Router {
     } else {
         Router::new()
     };
-    let router = Router::new()
-        .merge(health::router())
-        .merge(api)
-        .merge(poc_api)
-        .fallback(hono_not_found)
-        .with_state(state);
-    layers::standard_layers(router)
+    Router::new().merge(api).merge(poc_api).with_state(state)
 }
 
 /// Issue a proof-of-compute puzzle for an unauthenticated caller.

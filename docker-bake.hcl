@@ -1,22 +1,23 @@
-# Build graph for the ten service images.
+# Build graph for THE service image.
 #
-# One `bake` invocation builds every target in a single buildkit session, so the
-# shared `builder` stage in the Dockerfile is compiled ONCE and the ten runtime
-# stages fan out from it. Building the targets separately (a CI matrix, say)
-# would recompile the workspace ten times — see docs/plans/active/
-# kubernetes-helm-deploy.md, Phase 1.
+# One target, because there is one image: every service and worker is a role of
+# the single `ibv2` binary it holds (`--role <name>`, selected by the compose
+# `command:` / chart `args:`). This replaced ten targets that differed only in
+# which binary they copied — see docs/plans/active/one-image-one-binary.md.
 #
-#   docker buildx bake all                 # everything, local tags
-#   docker buildx bake identity-api        # one service
-#   IMAGE_REGISTRY=ghcr.io/paritytech/identity-backend-rust IMAGE_TAG=$(git rev-parse HEAD) \
+#   docker buildx bake all                 # the image, local tag
+#   IMAGE_REPO=ghcr.io/paritytech/identity-backend-rust IMAGE_TAG=$(git rev-parse HEAD) \
 #     docker buildx bake --push all
 #
-# Every image carries the SAME tag: "which SHA is this environment on?" must
-# have one answer. Do not tag services individually.
+# `IMAGE_REPO` is a full repository path, not a registry: the tag is appended
+# directly. Keeping it as one value is what lets a registry change be a variable
+# change — `ghcr.io/paritytech/identity-backend-rust`,
+# `docker.io/paritytech/identity-backend-rust`, or a GAR
+# `<location>-docker.pkg.dev/<project>/<repo>/identity-backend-rust` all fit.
 
-variable "IMAGE_REGISTRY" {
+variable "IMAGE_REPO" {
   # Local default keeps `docker buildx bake all` working with no environment.
-  default = "identity-backend-v2"
+  default = "identity-backend-rust"
 }
 
 variable "IMAGE_TAG" {
@@ -29,12 +30,9 @@ variable "CACHE_FROM" { default = "" }
 variable "CACHE_TO" { default = "" }
 
 # The release lane pushes by DIGEST and joins the digests into one tagged
-# manifest list per service afterwards. buildkit refuses to push a *tagged* ref
-# by digest ("can't push tagged ref ... by digest"), so digest mode must clear
-# `tags` and name the repo in the exporter instead. Expressing that here rather
-# than as a `--set` override on the command line is the whole point: the two
-# lanes want two exporter shapes out of one build graph, and only this file
-# knows every target's repo name.
+# manifest list afterwards. buildkit refuses to push a *tagged* ref by digest
+# ("can't push tagged ref ... by digest"), so digest mode must clear `tags` and
+# name the repo in the exporter instead.
 variable "PUSH_BY_DIGEST" { default = "" }
 
 function "digest_mode" {
@@ -43,18 +41,15 @@ function "digest_mode" {
 }
 
 function "tags_for" {
-  params = [svc]
-  result = digest_mode() ? [] : ["${IMAGE_REGISTRY}/${svc}:${IMAGE_TAG}"]
+  params = []
+  result = digest_mode() ? [] : ["${IMAGE_REPO}:${IMAGE_TAG}"]
 }
 
 function "output_for" {
-  params = [svc]
-  result = digest_mode() ? ["type=image,name=${IMAGE_REGISTRY}/${svc},push-by-digest=true,name-canonical=true,push=true"] : []
+  params = []
+  result = digest_mode() ? ["type=image,name=${IMAGE_REPO},push-by-digest=true,name-canonical=true,push=true"] : []
 }
 
-# All ten services share ONE cache ref on purpose: the layers worth caching are
-# the builder's, which are byte-identical across targets. Per-service scopes
-# would store the same compiled workspace ten times and evict each other.
 function "cache_from" {
   params = []
   result = CACHE_FROM == "" ? [] : ["type=registry,ref=${CACHE_FROM}"]
@@ -72,94 +67,19 @@ target "_common" {
   cache-to   = cache_to()
 }
 
-# One target per service. `target` is the Dockerfile stage; the stage name, the
-# bake target name, the compose service name, and the image repo are all the
-# same string — so a typo cannot silently ship the wrong binary.
-target "identity-api" {
+# The target name, the Dockerfile stage and the binary are all `ibv2`.
+target "ibv2" {
   inherits = ["_common"]
-  target   = "identity-api"
-  tags     = tags_for("identity-api")
-  output   = output_for("identity-api")
+  target   = "ibv2"
+  tags     = tags_for()
+  output   = output_for()
 }
 
-target "identity-chain-writer" {
-  inherits = ["_common"]
-  target   = "identity-chain-writer"
-  tags     = tags_for("identity-chain-writer")
-  output   = output_for("identity-chain-writer")
-}
-
-target "registration-queue" {
-  inherits = ["_common"]
-  target   = "registration-queue"
-  tags     = tags_for("registration-queue")
-  output   = output_for("registration-queue")
-}
-
-target "username-indexer" {
-  inherits = ["_common"]
-  target   = "username-indexer"
-  tags     = tags_for("username-indexer")
-  output   = output_for("username-indexer")
-}
-
-target "dim-tickets-api" {
-  inherits = ["_common"]
-  target   = "dim-tickets-api"
-  tags     = tags_for("dim-tickets-api")
-  output   = output_for("dim-tickets-api")
-}
-
-target "dim-tickets-writer" {
-  inherits = ["_common"]
-  target   = "dim-tickets-writer"
-  tags     = tags_for("dim-tickets-writer")
-  output   = output_for("dim-tickets-writer")
-}
-
-target "invite-tickets-api" {
-  inherits = ["_common"]
-  target   = "invite-tickets-api"
-  tags     = tags_for("invite-tickets-api")
-  output   = output_for("invite-tickets-api")
-}
-
-target "invite-tickets-pool" {
-  inherits = ["_common"]
-  target   = "invite-tickets-pool"
-  tags     = tags_for("invite-tickets-pool")
-  output   = output_for("invite-tickets-pool")
-}
-
-target "turn-api" {
-  inherits = ["_common"]
-  target   = "turn-api"
-  tags     = tags_for("turn-api")
-  output   = output_for("turn-api")
-}
-
-target "notify-relay" {
-  inherits = ["_common"]
-  target   = "notify-relay"
-  tags     = tags_for("notify-relay")
-  output   = output_for("notify-relay")
-}
-
-# The deployable set. Keep in step with the ten `command:`-less services in
-# docker-compose.yml; scripts/verify_image_split.sh fails if they diverge.
+# The deployable set. Every compose service and chart workload runs this image
+# with a different `--role`; scripts/verify_role_split.sh checks the roles they
+# name against `ibv2 --list-roles`.
 group "all" {
-  targets = [
-    "identity-api",
-    "identity-chain-writer",
-    "registration-queue",
-    "username-indexer",
-    "dim-tickets-api",
-    "dim-tickets-writer",
-    "invite-tickets-api",
-    "invite-tickets-pool",
-    "turn-api",
-    "notify-relay",
-  ]
+  targets = ["ibv2"]
 }
 
 # Default for a bare `docker buildx bake`.
