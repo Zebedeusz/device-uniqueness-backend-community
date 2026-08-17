@@ -25,7 +25,7 @@ jobs:
         image: registry:2
         ports: ["5000:5000"]
     env:
-      IMAGE_REPO: localhost:5000/rehearsal/identity-backend-rust
+      IMAGE_REPO: localhost:5000/rehearsal/device-uniqueness-backend
       IMAGE_TAG: 0.0.0-rehearsal
     steps:
       - uses: actions/checkout@v7

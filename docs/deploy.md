@@ -38,7 +38,7 @@ sudo docker network create ibv2-metrics
 ## 2. Code and config
 
 ```bash
-git clone git@github.com:paritytech/identity-backend-rust.git ~/identity-backend-v2
+git clone git@github.com:paritytech/device-uniqueness-backend.git ~/identity-backend-v2
 cd ~/identity-backend-v2
 ```
 
@@ -471,7 +471,7 @@ pre-release, and leaves `stable` pointing at the last stable images.
 
 Pushing a `v*` tag runs [`release.yml`](../.github/workflows/release.yml), publishing **one**
 multi-arch (`linux/amd64` + `linux/arm64`) image —
-`ghcr.io/paritytech/identity-backend-rust` — tagged `1.2.3`, `v1.2.3` and
+`ghcr.io/paritytech/device-uniqueness-backend` — tagged `1.2.3`, `v1.2.3` and
 (for a non-pre-release) `stable`. Each architecture builds on its own native runner, pushing
 by digest; the digests are then joined into one manifest list, so a single tag serves both
 architectures and every service, each of which is a `--role` of the one binary inside.
@@ -487,8 +487,8 @@ The same digests are published to two registries:
 
 | Registry | Tags | Who it is for |
 |---|---|---|
-| `ghcr.io/paritytech/identity-backend-rust` | `vX.Y.Z`, `X.Y.Z`, `stable`, `latest` | our own deploys — inherits the repo's **private** visibility |
-| `docker.io/paritytech/identity-backend-rust` | `vX.Y.Z`, `X.Y.Z`, `stable` | **public**, unauthenticated `docker pull` for external consumers |
+| `ghcr.io/paritytech/device-uniqueness-backend` | `vX.Y.Z`, `X.Y.Z`, `stable`, `latest` | our own deploys — inherits the repo's **private** visibility |
+| `docker.io/paritytech/device-uniqueness-backend` | `vX.Y.Z`, `X.Y.Z`, `stable` | **public**, unauthenticated `docker pull` for external consumers |
 
 Docker Hub namespaces are one level (`org/name`), which one image fits without a workaround —
 the per-service `ibv2-` prefix the ten-image layout needed is gone. Override the destination
@@ -517,7 +517,7 @@ token with `read:packages` (SSO-authorized for `paritytech`) to pull. Make the p
 public only as a deliberate decision — it publishes binaries of a private repo.
 
 To run the released image rather than build it, set `IMAGE_REPO` and `IMAGE_TAG` and pass
-`--no-build` (`IMAGE_REPO=ghcr.io/paritytech/identity-backend-rust IMAGE_TAG=v0.2.0
+`--no-build` (`IMAGE_REPO=ghcr.io/paritytech/device-uniqueness-backend IMAGE_TAG=v0.2.0
 docker compose pull`). **Every service resolves to the same `$IMAGE_REPO:$IMAGE_TAG`** and
 becomes itself through its `command: ["--role", "<service>"]`; `ibv2 --list-roles` prints the
 set. A per-service image or tag pin makes "which build is this environment on?" unanswerable,

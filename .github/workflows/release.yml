@@ -252,7 +252,7 @@ jobs:
             echo 'repo=' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "repo=${MIRROR:-docker.io/paritytech/identity-backend-rust}" >> "$GITHUB_OUTPUT"
+          echo "repo=${MIRROR:-docker.io/paritytech/device-uniqueness-backend}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v4
         if: steps.dockerhub.outputs.repo != ''
@@ -462,7 +462,7 @@ jobs:
           # of one variable each. `command: ["--role", ...]` is what still makes
           # each service itself, and it survives the rewrite untouched.
           sed -e '/^    build:$/,+2d' \
-              -e "s|\${IMAGE_REPO:-identity-backend-rust}|$repo|g" \
+              -e "s|\${IMAGE_REPO:-device-uniqueness-backend}|$repo|g" \
               -e "s|\${IMAGE_TAG:-local}|$TAG|g" \
               docker-compose.yml > bundle/docker-compose.yml
           cp .env.example bundle/.env.example

@@ -9,7 +9,7 @@ Two compose projects share the host: the environment (the project name declared 
 ## Deploys
 
 Push to `main` → CI tests, builds the one service image
-(`ghcr.io/paritytech/identity-backend-rust:<sha>`, holding the one `ibv2` binary; each
+(`ghcr.io/paritytech/device-uniqueness-backend:<sha>`, holding the one `ibv2` binary; each
 container is pinned to its role by its compose `command:` / chart `args:`), and the server
 pulls + restarts (health-gated). Watch with `gh run watch`.
 
@@ -17,7 +17,7 @@ Manual restart, on the images CI already built for this checkout:
 
 ```bash
 cd ~/identity-backend-v2 && git pull
-export IMAGE_REPO=ghcr.io/paritytech/identity-backend-rust
+export IMAGE_REPO=ghcr.io/paritytech/device-uniqueness-backend
 export IMAGE_TAG=$(git rev-parse HEAD)
 sudo -E docker compose pull
 sudo -E docker compose up -d --no-build

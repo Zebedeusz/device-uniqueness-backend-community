@@ -6,18 +6,18 @@
 # which binary they copied — see docs/plans/active/one-image-one-binary.md.
 #
 #   docker buildx bake all                 # the image, local tag
-#   IMAGE_REPO=ghcr.io/paritytech/identity-backend-rust IMAGE_TAG=$(git rev-parse HEAD) \
+#   IMAGE_REPO=ghcr.io/paritytech/device-uniqueness-backend IMAGE_TAG=$(git rev-parse HEAD) \
 #     docker buildx bake --push all
 #
 # `IMAGE_REPO` is a full repository path, not a registry: the tag is appended
 # directly. Keeping it as one value is what lets a registry change be a variable
-# change — `ghcr.io/paritytech/identity-backend-rust`,
-# `docker.io/paritytech/identity-backend-rust`, or a GAR
-# `<location>-docker.pkg.dev/<project>/<repo>/identity-backend-rust` all fit.
+# change — `ghcr.io/paritytech/device-uniqueness-backend`,
+# `docker.io/paritytech/device-uniqueness-backend`, or a GAR
+# `<location>-docker.pkg.dev/<project>/<repo>/device-uniqueness-backend` all fit.
 
 variable "IMAGE_REPO" {
   # Local default keeps `docker buildx bake all` working with no environment.
-  default = "identity-backend-rust"
+  default = "device-uniqueness-backend"
 }
 
 variable "IMAGE_TAG" {

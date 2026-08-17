@@ -54,14 +54,14 @@ Push to `main`. CI tests, builds the image, and updates the test server
 account, no token:
 
 ```bash
-docker pull paritytech/identity-backend-rust:stable
-docker run paritytech/identity-backend-rust:stable --role identity-api
+docker pull paritytech/device-uniqueness-backend:stable
+docker run paritytech/device-uniqueness-backend:stable --role identity-api
 ```
 
 Every service and worker is a `--role` of the single `ibv2` binary the image holds
 (`ibv2 --list-roles` prints the ten); what makes a container a given service is its
 role, not a different image. The same digests are on
-`ghcr.io/paritytech/identity-backend-rust` — `vX.Y.Z` and `stable` exist on both;
+`ghcr.io/paritytech/device-uniqueness-backend` — `vX.Y.Z` and `stable` exist on both;
 **`latest` is ghcr-only**, because it tracks `main` and unreleased work is not what an
 outside consumer should pick up by default. The ghcr package inherits this repo's
 private visibility, so pulling that needs a token.

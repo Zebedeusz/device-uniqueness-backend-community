@@ -31,7 +31,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "identity-api"]
@@ -106,7 +106,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "identity-chain-writer"]
@@ -179,7 +179,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "registration-queue"]
@@ -229,7 +229,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "username-indexer"]
@@ -303,7 +303,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "dim-tickets-api"]
@@ -352,7 +352,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "dim-tickets-writer"]
@@ -415,7 +415,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "invite-tickets-api"]
@@ -463,7 +463,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "invite-tickets-pool"]
@@ -508,7 +508,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "turn-api"]
@@ -565,7 +565,7 @@ services:
     build:
       context: .
       target: ibv2
-    image: ${IMAGE_REPO:-identity-backend-rust}:${IMAGE_TAG:-local}
+    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, ten roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "notify-relay"]

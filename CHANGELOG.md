@@ -1,7 +1,7 @@
 # Changelog
 
-Notable changes to the published image — `docker.io/paritytech/identity-backend-rust`
-publicly, `ghcr.io/paritytech/identity-backend-rust` for our own deploys. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+Notable changes to the published image — `docker.io/paritytech/device-uniqueness-backend`
+publicly, `ghcr.io/paritytech/device-uniqueness-backend` for our own deploys. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0, a breaking change bumps the **minor**. External consumers should pin an
@@ -83,7 +83,7 @@ proxy-signing and attester-account variables are removed or renamed — read
   and the input to a `TURN_SECRET`-keyed HMAC yielding one opaque credential id.
 
 - The released image is mirrored to **public Docker Hub** — `docker pull
-  paritytech/identity-backend-rust:stable` needs no account. `vX.Y.Z` and `stable` are on
+  paritytech/device-uniqueness-backend:stable` needs no account. `vX.Y.Z` and `stable` are on
   both registries; `latest` stays ghcr-only, since it tracks unreleased `main` ([#50],
   [#58]).
 - Every release attaches per-platform binaries (`ibv2-<version>-<target>.tar.gz` for
@@ -225,35 +225,35 @@ First release published as a multi-arch (amd64 + arm64) image.
 - Username registration is authorized by `candidateSignature` rather than the JWT
   subject ([#3]).
 
-[Unreleased]: https://github.com/paritytech/identity-backend-rust/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/paritytech/identity-backend-rust/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/paritytech/identity-backend-rust/releases/tag/v0.1.2
+[Unreleased]: https://github.com/paritytech/device-uniqueness-backend/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/paritytech/device-uniqueness-backend/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/paritytech/device-uniqueness-backend/releases/tag/v0.1.2
 
-[#1]: https://github.com/paritytech/identity-backend-rust/pull/1
-[#3]: https://github.com/paritytech/identity-backend-rust/pull/3
-[#4]: https://github.com/paritytech/identity-backend-rust/pull/4
-[#5]: https://github.com/paritytech/identity-backend-rust/pull/5
-[#7]: https://github.com/paritytech/identity-backend-rust/pull/7
-[#8]: https://github.com/paritytech/identity-backend-rust/pull/8
-[#9]: https://github.com/paritytech/identity-backend-rust/pull/9
-[#10]: https://github.com/paritytech/identity-backend-rust/pull/10
-[#12]: https://github.com/paritytech/identity-backend-rust/pull/12
-[#13]: https://github.com/paritytech/identity-backend-rust/pull/13
-[#14]: https://github.com/paritytech/identity-backend-rust/pull/14
-[#15]: https://github.com/paritytech/identity-backend-rust/pull/15
-[#16]: https://github.com/paritytech/identity-backend-rust/pull/16
-[#22]: https://github.com/paritytech/identity-backend-rust/pull/22
-[#23]: https://github.com/paritytech/identity-backend-rust/pull/23
-[#24]: https://github.com/paritytech/identity-backend-rust/pull/24
-[#26]: https://github.com/paritytech/identity-backend-rust/pull/26
-[#29]: https://github.com/paritytech/identity-backend-rust/pull/29
-[#31]: https://github.com/paritytech/identity-backend-rust/pull/31
-[#32]: https://github.com/paritytech/identity-backend-rust/pull/32
-[#33]: https://github.com/paritytech/identity-backend-rust/pull/33
-[#46]: https://github.com/paritytech/identity-backend-rust/pull/46
-[#50]: https://github.com/paritytech/identity-backend-rust/pull/50
-[#51]: https://github.com/paritytech/identity-backend-rust/pull/51
-[#53]: https://github.com/paritytech/identity-backend-rust/pull/53
-[#54]: https://github.com/paritytech/identity-backend-rust/pull/54
-[#55]: https://github.com/paritytech/identity-backend-rust/pull/55
-[#58]: https://github.com/paritytech/identity-backend-rust/pull/58
+[#1]: https://github.com/paritytech/device-uniqueness-backend/pull/1
+[#3]: https://github.com/paritytech/device-uniqueness-backend/pull/3
+[#4]: https://github.com/paritytech/device-uniqueness-backend/pull/4
+[#5]: https://github.com/paritytech/device-uniqueness-backend/pull/5
+[#7]: https://github.com/paritytech/device-uniqueness-backend/pull/7
+[#8]: https://github.com/paritytech/device-uniqueness-backend/pull/8
+[#9]: https://github.com/paritytech/device-uniqueness-backend/pull/9
+[#10]: https://github.com/paritytech/device-uniqueness-backend/pull/10
+[#12]: https://github.com/paritytech/device-uniqueness-backend/pull/12
+[#13]: https://github.com/paritytech/device-uniqueness-backend/pull/13
+[#14]: https://github.com/paritytech/device-uniqueness-backend/pull/14
+[#15]: https://github.com/paritytech/device-uniqueness-backend/pull/15
+[#16]: https://github.com/paritytech/device-uniqueness-backend/pull/16
+[#22]: https://github.com/paritytech/device-uniqueness-backend/pull/22
+[#23]: https://github.com/paritytech/device-uniqueness-backend/pull/23
+[#24]: https://github.com/paritytech/device-uniqueness-backend/pull/24
+[#26]: https://github.com/paritytech/device-uniqueness-backend/pull/26
+[#29]: https://github.com/paritytech/device-uniqueness-backend/pull/29
+[#31]: https://github.com/paritytech/device-uniqueness-backend/pull/31
+[#32]: https://github.com/paritytech/device-uniqueness-backend/pull/32
+[#33]: https://github.com/paritytech/device-uniqueness-backend/pull/33
+[#46]: https://github.com/paritytech/device-uniqueness-backend/pull/46
+[#50]: https://github.com/paritytech/device-uniqueness-backend/pull/50
+[#51]: https://github.com/paritytech/device-uniqueness-backend/pull/51
+[#53]: https://github.com/paritytech/device-uniqueness-backend/pull/53
+[#54]: https://github.com/paritytech/device-uniqueness-backend/pull/54
+[#55]: https://github.com/paritytech/device-uniqueness-backend/pull/55
+[#58]: https://github.com/paritytech/device-uniqueness-backend/pull/58

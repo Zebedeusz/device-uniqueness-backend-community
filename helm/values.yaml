@@ -17,7 +17,7 @@ global:
   # not a registry — the tag is appended directly, so moving registries is a
   # change to this one value. What makes a workload a given service is its
   # `--role` arg, never a per-workload image or tag (see the plan's Contracts).
-  imageRepo: ghcr.io/paritytech/identity-backend-rust
+  imageRepo: ghcr.io/paritytech/device-uniqueness-backend
   imageTag: ""
   imagePullPolicy: IfNotPresent
 
