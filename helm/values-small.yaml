@@ -1,7 +1,7 @@
-# The SMALL topology — five workloads instead of ten.
+# The SMALL topology — four workloads instead of eight.
 #
-# One `all-in-one` process serves all six HTTP surfaces on one port, with the
-# route table compiled in; the four single-instance workers stay separate,
+# One `all-in-one` process serves all five HTTP surfaces on one port, with the
+# route table compiled in; the three single-instance workers stay separate,
 # because each owns a Postgres lease and a nonce lane.
 #
 # READ THIS BEFORE USING IT. The trade is not "fewer moving parts" — it is the
@@ -11,7 +11,7 @@
 #   JWT_ED25519_SECRET            mint an access token for ANY subject
 #   POC_HMAC_SECRET               forge proof-of-compute solutions
 #   TURN_SECRET                   mint TURN relay credentials
-#   all four *_DATABASE_URLs      full read/write on every database
+#   all three *_DATABASE_URLs     full read/write on every database
 #
 # and reaches them from the same address space that serves the unauthenticated,
 # public `GET /api/v1/usernames/search`. In the standard topology a bug on that
@@ -43,22 +43,19 @@ global:
     ATTESTER_ACCOUNT: TODO
     JWT_ED25519_PUBLIC_KEY: TODO
   inviters:
-    dim: TODO-dim-inviter-ss58
-    invite: TODO-invite-inviter-ss58   # MUST differ from dim — separate nonce lanes
+    invite: TODO-invite-inviter-ss58   # owns its own nonce lane
 
 workloads:
   # The merged HTTP tier.
   all-in-one:
     enabled: true
 
-  # ...and the six per-service workloads OFF. The chart fails to render if any
+  # ...and the five per-service workloads OFF. The chart fails to render if any
   # of them is left enabled alongside the merged one: a mix would pay this
   # topology's secret union while still running the compartmentalised services.
   identity-api:
     enabled: false
   username-indexer:
-    enabled: false
-  dim-tickets-api:
     enabled: false
   invite-tickets-api:
     enabled: false
@@ -67,11 +64,11 @@ workloads:
   notify-relay:
     enabled: false
 
-  # The four workers are unchanged — they belong to BOTH topologies.
+  # The three workers are unchanged — they belong to BOTH topologies.
 
 # The merged process file-serves the committed API reference itself (the same
 # artifact, from GATEWAY_DOCS_ROOT), so the static docs workload is not needed —
-# which is what makes this five workloads rather than six.
+# which is what makes this four workloads rather than five.
 docs:
   enabled: false
 
@@ -83,22 +80,18 @@ secrets:
   all-in-one:
     IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#IDENTITY_DATABASE_URL
     INDEXER_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#INDEXER_DATABASE_URL
-    DIM_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#DIM_DATABASE_URL
     INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#INVITE_DATABASE_URL
     JWT_ED25519_SECRET: ref+vault://kv/TODO/identity-backend-v2/small#JWT_ED25519_SECRET
     POC_HMAC_SECRET: ref+vault://kv/TODO/identity-backend-v2/small#POC_HMAC_SECRET
     TURN_SECRET: ref+vault://kv/TODO/identity-backend-v2/small#TURN_SECRET
 
-  # The workers keep their own sets in both topologies: one signer each, and the
-  # two inviter keys stay distinct accounts.
+  # The workers keep their own sets in both topologies: one signer each, on its
+  # own account.
   identity-chain-writer:
     IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#IDENTITY_DATABASE_URL
     CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/small#CHAIN_WRITER_SIGNER_SURI
   registration-queue:
     IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#IDENTITY_DATABASE_URL
-  dim-tickets-writer:
-    DIM_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#DIM_DATABASE_URL
-    INVITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/small#DIM_INVITER_SIGNER_SURI
   invite-tickets-pool:
     INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#INVITE_DATABASE_URL
     INVITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/small#INVITE_INVITER_SIGNER_SURI

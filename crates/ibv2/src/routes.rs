@@ -67,15 +67,13 @@ fn notify_prefix() -> &'static str {
     }
 }
 
-/// The six services' routers, already stated.
+/// The five services' routers, already stated.
 pub struct Surfaces {
     /// Auth, attester, the usernames write surface, JWKS — and the global
     /// fallback owner: the edge's `handle { }` sends everything unclaimed here.
     pub identity: Router,
     /// Username reads (`/search`) and proof-of-compute issuance.
     pub indexer: Router,
-    /// `/api/v1/dim-ticket*`.
-    pub dim_tickets: Router,
     /// `/api/v1/invitation-ticket/*`.
     pub invite_tickets: Router,
     /// `/api/v1/turn/*`.
@@ -84,7 +82,7 @@ pub struct Surfaces {
     pub notifications: Router,
 }
 
-/// Merge the six surfaces into the public route table.
+/// Merge the five surfaces into the public route table.
 ///
 /// The caller adds health, `/docs` and the middleware stack; this function owns
 /// only who-answers-what.
@@ -92,7 +90,6 @@ pub fn merge(surfaces: Surfaces) -> Router {
     Router::new()
         .merge(surfaces.identity)
         .merge(surfaces.indexer)
-        .merge(surfaces.dim_tickets)
         .merge(surfaces.invite_tickets)
         .merge(surfaces.turn)
         .merge(surfaces.notifications)

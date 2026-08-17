@@ -115,19 +115,9 @@ pub const TABLE: &[Row] = &[
         ],
     },
     Row {
-        name: "dim-tickets",
-        owner: "dim-tickets-api",
-        caddy_arg: 2,
-        matches: Match::Prefix("/api/v1/dim-ticket"),
-        priority: 90,
-        strip_prefix: false,
-        shared: false,
-        why: &["The DIM ticket request and status surface."],
-    },
-    Row {
         name: "invite-tickets",
         owner: "invite-tickets-api",
-        caddy_arg: 3,
+        caddy_arg: 2,
         matches: Match::PrefixSlash("/api/v1/invitation-ticket/"),
         priority: 90,
         strip_prefix: false,
@@ -137,7 +127,7 @@ pub const TABLE: &[Row] = &[
     Row {
         name: "turn",
         owner: "turn-api",
-        caddy_arg: 4,
+        caddy_arg: 3,
         matches: Match::PrefixSlash("/api/v1/turn/"),
         priority: 90,
         strip_prefix: false,
@@ -150,7 +140,7 @@ pub const TABLE: &[Row] = &[
     Row {
         name: "notify",
         owner: "notify-relay",
-        caddy_arg: 5,
+        caddy_arg: 4,
         matches: Match::Prefix("/api/v1/notify"),
         priority: 90,
         strip_prefix: false,

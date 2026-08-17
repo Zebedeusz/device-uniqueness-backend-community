@@ -1,4 +1,4 @@
-# Paseo Next v2 — the primary environment. All ten services.
+# Paseo Next v2 — the primary environment. All eight services.
 #
 # Secrets are vault references, resolved at apply time; the chart refuses any
 # value that is not one. TODO: confirm the vault path with SRE — the legacy
@@ -21,8 +21,7 @@ global:
     ATTESTER_ACCOUNT: TODO
     JWT_ED25519_PUBLIC_KEY: TODO
   inviters:
-    dim: TODO-dim-inviter-ss58
-    invite: TODO-invite-inviter-ss58   # MUST differ from dim — separate nonce lanes
+    invite: TODO-invite-inviter-ss58   # owns its own nonce lane
 
 workloads:
   identity-api:
@@ -40,11 +39,6 @@ secrets:
     IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
   username-indexer:
     INDEXER_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INDEXER_DATABASE_URL
-  dim-tickets-api:
-    DIM_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_DATABASE_URL
-  dim-tickets-writer:
-    DIM_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_DATABASE_URL
-    INVITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#DIM_INVITER_SIGNER_SURI
   invite-tickets-api:
     INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_DATABASE_URL
   invite-tickets-pool:

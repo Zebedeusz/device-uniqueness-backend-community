@@ -38,10 +38,10 @@ Each substantial slice gets its own ship-first plan under `docs/plans/` (`active
 
 ## Workspace
 
-Twelve crates today (plans may add more independently-deployable service crates):
+Eleven crates today (plans may add more independently-deployable service crates):
 
 - `ibv2` — **the single deployable binary**. Every service and worker is a *role* of this one
-  process (`ibv2 --role identity-api`; `ibv2 --list-roles` prints the ten, `--list-merged-roles` the
+  process (`ibv2 --role identity-api`; `ibv2 --list-roles` prints the eight, `--list-merged-roles` the
   small topology's `all-in-one`). Process wiring only, no
   domain logic: each role module holds that service's former `main` body and enters the service
   crate through its library `routes()` / `run()`. Also serves `--healthcheck` (a GET on this
@@ -51,7 +51,7 @@ Twelve crates today (plans may add more independently-deployable service crates)
   `gateway/Caddyfile` proxies, in Rust, which `--role all-in-one` serves so a consumer can run the
   whole API with no edge. `all-in-one` is accepted by `--role` but deliberately **absent from
   `--list-roles`** (it holds every secret in one process), so the gate rejects it in any manifest.
-  **Two topologies**: standard (ten workloads) and small (`all-in-one` + the four workers). They are
+  **Two topologies**: standard (eight workloads) and small (`all-in-one` + the three workers). They are
   mutually exclusive, the small one needs `global.allInOne.acknowledgedSecretUnion: true`, and the
   real environments stay standard — `docs/architecture.md` "Deployment topologies" has the threat
   model, `docs/deploy.md` "Choosing a topology" the operator view.
@@ -59,10 +59,9 @@ Twelve crates today (plans may add more independently-deployable service crates)
 - `chain-types` — generated People Chain type surface (subxt codegen).
 - `chain-client` — reconnecting People Chain connection + the chain-writer signing key (`WriterSigner`); product-agnostic transport shared by the services.
 - `jwt-verify` — verify-only JWT validation (JWKS parsing, Ed25519 verification, claims); the cross-service auth contract consumed by every service that gates routes on identity-service tokens.
-- `http-common` — shared axum primitives for the frozen legacy wire dialects (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, fail-fast env helpers); consumed by dim-tickets and invite-tickets. The dialect bodies are golden-captured — change only with a fresh capture. Also holds the two things **every** process installs: the metrics exporter (`metrics::spawn`) and the log subscriber (`telemetry::init`).
+- `http-common` — shared axum primitives for the frozen legacy wire dialects (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, fail-fast env helpers); consumed by invite-tickets. The dialect bodies are golden-captured — change only with a fresh capture. Also holds the two things **every** process installs: the metrics exporter (`metrics::spawn`) and the log subscriber (`telemetry::init`).
 - `identity-service` — the identity service (lib + the `voucher-mint` CLI; roles `identity-api`, `identity-chain-writer`, and the `registration-queue` advancer — with `QUEUE_ENABLED` on, its promotion is the only queue exit: down, claims park as `QUEUED` and the writer raises a stranded-queue warning).
 - `username-indexer` — username indexer + search service.
-- `dim-tickets` — game/personhood invitation-credential service (lib; roles `dim-tickets-api` and `dim-tickets-writer`).
 - `invite-tickets` — synchronous invitation-credential claim service, the route the shipping apps call (lib; roles `invite-tickets-api` and `invite-tickets-pool`).
 - `turn` — stateless TURN credential issuer (coturn REST-API HMAC construction over a relay-shared secret; lib; role `turn-api`). No DB, no chain.
 - `notifications` — thin `/api/v1/notify` relay (verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited; role `notify-relay`) with optional iOS APNs + Android FCM providers.
@@ -74,7 +73,7 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 ## Commands
 
 - `just check` — the fast offline gate: fmt `--check` + `clippy -D warnings` + `cargo test --workspace`.
-- `just test-live-db` (also `just test-live`) — the deterministic Postgres gate: 14 suites / 38 ignored tests against a per-run isolated Compose project. CI runs it after `just check`; run both before declaring done.
+- `just test-live-db` (also `just test-live`) — the deterministic Postgres gate: 13 suites / 28 ignored tests against a per-run isolated Compose project. CI runs it after `just check`; run both before declaring done.
 - `just test-live-chain` — optional Postgres + live People Chain suites; external RPC availability keeps it outside the merge/release gate.
 - `just test-live-providers` — optional credentialed APNs/FCM smokes; runs only the providers configured in the environment and fails if neither is configured.
 - `just coverage-db` — canonical deterministic coverage (offline + Postgres). `just coverage-full` additionally merges the optional live-chain suites.
@@ -127,7 +126,7 @@ Each service's boundary, persistence, endpoints, and data-flow invariants are in
 - **sqlx is runtime-checked** — queries use `sqlx::query(...)` with bound `$n` params; there are **no** `query!`/`query_as!` macros and **no `.sqlx` cache**. Do not add compile-time SQL macros or `cargo sqlx prepare`; deterministic runtime database suites run separately in CI.
 - **Migrations auto-run** via `sqlx::migrate!("./migrations")` in `db::connect` on every boot (advisory-locked, safe across replicas). Don't run them by hand; add schema as new `crates/<service>/migrations/*.sql`.
 - **Config is fail-fast** (`Config::from_env`): required vars (e.g. `IDENTITY_DATABASE_URL`, `JWT_ED25519_SECRET`, `ATTESTER_ACCOUNT`) have no defaults and abort startup if missing/malformed. Don't add fallbacks for them.
-- **Per-service config keys are namespaced.** The database URLs are `IDENTITY_` / `INDEXER_` / `DIM_TICKETS_` / `INVITE_TICKETS_DATABASE_URL` and the rate limits `DIM_TICKETS_` / `INVITE_TICKETS_` / `TURN_RATE_LIMIT[_WINDOW_SECS]` — a bare `DATABASE_URL` used to name four different Postgres instances, so `all-in-one` would have wired services to each other's databases. The bare names are still read for one release with a `WARN` (`http_common::config::renamed*`); `verify_compose_boundaries.sh` asserts each credential reaches only its own services and that nothing is left on a bare name. `BIND_ADDR` and `PEOPLE_RPC_URL` stay shared — one listener, one chain.
+- **Per-service config keys are namespaced.** The database URLs are `IDENTITY_` / `INDEXER_` / `INVITE_TICKETS_DATABASE_URL` and the rate limits `INVITE_TICKETS_` / `TURN_RATE_LIMIT[_WINDOW_SECS]` — a bare `DATABASE_URL` used to name several different Postgres instances, so `all-in-one` would have wired services to each other's databases. The bare names are still read for one release with a `WARN` (`http_common::config::renamed*`); `verify_compose_boundaries.sh` asserts each credential reaches only its own services and that nothing is left on a bare name. `BIND_ADDR` and `PEOPLE_RPC_URL` stay shared — one listener, one chain.
 - Module layout: `foo.rs` + optional `foo/` children (no new `foo/mod.rs`); short `lib.rs` (docs + lints + `pub mod` + curated re-exports); doc every `pub` item.
 - **Every role starts the same two lines**: `http_common::telemetry::init("<service>")` then `http_common::metrics::spawn("<service>")`, as the first two lines of its `run()`, with its OWN service name — both are process-global and `metrics::spawn` sets `service` as a global label, so hoisting either into `main` would relabel every scrape target. Don't build a subscriber in a role. Logs are aggregated, so prefer structured fields (`tracing::warn!(reservation_id, %error, "…")`) over interpolated message text — the field is queryable, the sentence is not. Don't add the service/environment name as a field: the log shipper labels those.
 

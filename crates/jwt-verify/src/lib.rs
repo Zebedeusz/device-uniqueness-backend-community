@@ -2,7 +2,7 @@
 //!
 //! identity-service is the **sole issuer** of asymmetric (EdDSA/Ed25519) access
 //! tokens and publishes its public key as JWKS at `/.well-known/jwks.json`.
-//! Sibling services (notifications, dim-tickets, …) gate their authenticated
+//! Sibling services (notifications, invite-tickets, …) gate their authenticated
 //! routes with this crate: JWKS/public-key loading, Ed25519 signature
 //! verification, and claims validation. No signing key ever enters this crate —
 //! a consumer can verify tokens but can never mint them.

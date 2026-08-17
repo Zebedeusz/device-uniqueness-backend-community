@@ -27,8 +27,8 @@
 # the ownership map.
 #
 # Arguments, in order (Caddy snippet args are positional):
-#   0 identity  1 indexer  2 dim-tickets  3 invite-tickets
-#   4 turn      5 notify
+#   0 identity  1 indexer  2 invite-tickets  3 turn
+#   4 notify
 (routes) {
 	# generated:route-table
 	# The committed API reference. Caddy file-serves it; the cluster serves it from a
@@ -54,27 +54,22 @@
 		reverse_proxy {args[1]}
 	}
 
-	# The DIM ticket request and status surface.
-	handle /api/v1/dim-ticket* {
-		reverse_proxy {args[2]}
-	}
-
 	# The synchronous invitation-credential claim route.
 	handle /api/v1/invitation-ticket/* {
-		reverse_proxy {args[3]}
+		reverse_proxy {args[2]}
 	}
 
 	# shared: one instance serves every environment. Where the workload is not deployed the
 	# route still resolves — to global.sharedServiceNamespace.
 	handle /api/v1/turn/* {
-		reverse_proxy {args[4]}
+		reverse_proxy {args[3]}
 	}
 
 	# shared, like turn. NOTE: this service answers an EMPTY 404 for an unmatched path and
 	# 405 for a wrong method, where every sibling answers the frozen Hono text body. The
 	# whole prefix is routed here, so that is the live contract — see routes::fallback.
 	handle /api/v1/notify* {
-		reverse_proxy {args[5]}
+		reverse_proxy {args[4]}
 	}
 
 	# Proof-of-compute gates the indexer's own public search, so it is the indexer's route.
@@ -96,7 +91,6 @@
 	import routes \
  {$IDENTITY_UPSTREAM:identity-api-paseo-next-v2:8080} \
  {$USERNAME_INDEXER_UPSTREAM:username-indexer-paseo-next-v2:8080} \
- {$DIM_TICKETS_UPSTREAM:dim-tickets-api-paseo-next-v2:8080} \
  {$INVITE_TICKETS_UPSTREAM:invite-tickets-api-paseo-next-v2:8080} \
  {$TURN_UPSTREAM:turn-api-paseo-next-v2:8080} \
  {$NOTIFY_UPSTREAM:notify-relay-paseo-next-v2:8080}
@@ -105,9 +99,9 @@
 # --- PreviewNet ----------------------------------------------------------
 # Same routes, this environment's upstreams. turn/notify are shared services
 # and deliberately point at the same instances as above: they hold no chain
-# state and verify both environments' tokens from a merged JWKS. dim-tickets
-# and invite-tickets are not deployed here, so their routes point at this
-# environment's identity-api and answer its 404 rather than a 502.
+# state and verify both environments' tokens from a merged JWKS. invite-tickets
+# is not deployed here, so its route points at this environment's identity-api
+# and answers its 404 rather than a 502.
 #
 # This environment's own upstreams are literals: they follow from ENV_ID, and
 # nothing sets a per-environment override — only the hostname is a variable.
@@ -115,7 +109,6 @@
 	import routes \
  identity-api-previewnet:8080 \
  username-indexer-previewnet:8080 \
- identity-api-previewnet:8080 \
  identity-api-previewnet:8080 \
  {$TURN_UPSTREAM:turn-api-paseo-next-v2:8080} \
  {$NOTIFY_UPSTREAM:notify-relay-paseo-next-v2:8080}

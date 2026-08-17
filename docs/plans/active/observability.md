@@ -116,7 +116,7 @@ provisioning directory already exists at
 ✅ **Demo**: stop `identity-chain-writer` with rows in the outbox. Phone buzzes. Start it. Get the resolved message.
 
 # Later
-- Per-service metrics for DIM/invite/notify (fold in the deferrals already noted in those plans)
+- Per-service metrics for invite/notify (fold in the deferrals already noted in those plans)
 - Sentry, once we have an unexplained 500
 - Log-based recording rules (error rate per service) once the alert set exists
 

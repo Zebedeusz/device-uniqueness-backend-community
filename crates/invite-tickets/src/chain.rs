@@ -36,7 +36,7 @@ impl ChainClient {
     }
 
     /// Wrap an already-constructed client — the mock seam the offline tests
-    /// use (same shape as dim-tickets and username-indexer).
+    /// use (same shape as username-indexer).
     pub fn from_online(client: OnlineClient<PeopleConfig>) -> Self {
         Self { client }
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One image, ten roles — checked statically.
+# One image, eight roles — checked statically.
 #
 # This replaces verify_image_split.sh. That gate existed because a service whose
 # build target pointed at another service's stage "still starts, still passes
@@ -57,7 +57,7 @@ grep -qE '^ENTRYPOINT \["ibv2"\]$' Dockerfile ||
 #    artifact so this stays offline and needs no prior `docker build`.
 mapfile -t roles < <(cargo run --quiet -p ibv2 -- --list-roles | sort) ||
   fail "ibv2 --list-roles failed"
-[ "${#roles[@]}" -eq 10 ] ||
+[ "${#roles[@]}" -eq 8 ] ||
   fail "ibv2 accepts ${#roles[@]} roles, expected 10"
 
 # 4. Compose: every service that runs the image names a role, exactly once, and
@@ -105,7 +105,7 @@ mapfile -t refs < <(jq -r '.services | to_entries[]
 
 # 6. The chart declares exactly the roles the binary accepts — both topologies.
 #
-#    The chart carries workloads for BOTH shapes (the ten per-service ones and
+#    The chart carries workloads for BOTH shapes (the eight per-service ones and
 #    the merged `all-in-one`), enabling one set or the other. So the declared
 #    workloads are the union; which of them may be enabled TOGETHER is the
 #    chart's own `ibv2.validate` exclusivity assertion, which fails to render a

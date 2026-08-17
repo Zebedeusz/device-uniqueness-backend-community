@@ -1,8 +1,8 @@
 //! People Chain connection + chain-writer signing key — the product-agnostic
 //! transport layer shared by the services that talk to People Chain.
 //!
-//! Owns exactly two concerns (extracted when dim-tickets became the second
-//! consumer, per the lazy-extraction rule in `docs/architecture.md`):
+//! Owns exactly two concerns (extracted once a second service needed them, per
+//! the lazy-extraction rule in `docs/architecture.md`):
 //! - [`connect`] / [`connect_asset_hub`]: an auto-reconnecting subxt
 //!   [`OnlineClient`] over the [`chain_types::PeopleConfig`] or
 //!   [`chain_types::AssetHubConfig`] transaction-extension pipeline.

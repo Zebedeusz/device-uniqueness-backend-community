@@ -4,8 +4,9 @@
 //! Static [`subxt`] codegen generated from vendored People Chain metadata. It is
 //! the single canonical chain-facing type surface for the workspace: the read
 //! path (`Resources::UsernameOwnerOf`, the reservation queue, `PeopleLite::AttestationAllowance`),
-//! the identity-chain-writer's registration/attestation calls, and the dim-tickets
-//! service's `Game`/`ProofOfInk` invite-ticket calls all build against it.
+//! the identity-chain-writer's registration/attestation calls, and the
+//! invite-tickets service's `Game`/`ProofOfInk` invite-ticket calls all build
+//! against it.
 //! The online transport and signing live in adapter crates, never here.
 //!
 //! Two subxt configs live here, one per chain family: [`PeopleConfig`] and
@@ -662,7 +663,7 @@ mod tests {
         assert_eq!(call.call_name(), "register_lite_person");
     }
 
-    /// The dim-tickets writer can construct both DIM variants of `set_invite_ticket`.
+    /// The invite-tickets pool can construct both DIM variants of `set_invite_ticket`.
     #[test]
     fn builds_set_invite_ticket_calls() {
         let ticket = subxt::utils::AccountId32([0u8; 32]);
@@ -675,7 +676,7 @@ mod tests {
         assert_eq!(poi.call_name(), "set_invite_ticket");
     }
 
-    /// The dim-tickets API can construct both DIM variants of the
+    /// The invite-tickets pool can construct both DIM variants of the
     /// `AvailableInvites` quota lookup (keyed by inviter at fetch time).
     #[test]
     fn builds_available_invites_queries() {

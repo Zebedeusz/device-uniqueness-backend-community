@@ -32,7 +32,7 @@ services:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "identity-api"]
     restart: unless-stopped
@@ -107,7 +107,7 @@ services:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "identity-chain-writer"]
     restart: unless-stopped
@@ -180,7 +180,7 @@ services:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "registration-queue"]
     restart: unless-stopped
@@ -230,7 +230,7 @@ services:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "username-indexer"]
     restart: unless-stopped
@@ -280,117 +280,6 @@ services:
       # a health failure during it would restart the scan from the beginning.
       start_period: 300s
 
-  # dim-tickets owns its persistence independently of the identity DB: the game
-  # ticket state machine can be wiped or rebuilt without touching auth state.
-  dim-tickets-postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${DIM_TICKETS_POSTGRES_USER:-dim_tickets}
-      POSTGRES_PASSWORD: ${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}
-      POSTGRES_DB: ${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
-    volumes:
-      - dim_tickets_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  # N-replica HTTP API for the frozen /api/v1/dim-ticket surface. Verify-only:
-  # holds the identity JWT PUBLIC key only, never a signing secret. Runs on
-  dim-tickets-api:
-    build:
-      context: .
-      target: ibv2
-    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
-    command: ["--role", "dim-tickets-api"]
-    restart: unless-stopped
-    depends_on:
-      dim-tickets-postgres:
-        condition: service_healthy
-    environment:
-      BIND_ADDR: 0.0.0.0:8080
-      DIM_TICKETS_DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
-      PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
-      INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
-      # Dev default = the public key of identity-api's dev JWT_ED25519_SECRET,
-      # so tokens issued by the local identity-api verify here.
-      JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
-      JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
-      QUOTA_TIMEOUT_SECS: ${QUOTA_TIMEOUT_SECS:-15}
-      DIM_TICKETS_RATE_LIMIT: ${DIM_TICKETS_RATE_LIMIT:-30}
-      DIM_TICKETS_RATE_LIMIT_WINDOW_SECS: ${DIM_TICKETS_RATE_LIMIT_WINDOW_SECS:-60}
-      # Prometheus exporter, scraped on the private metrics network only.
-      METRICS_ENABLED: ${METRICS_ENABLED:-true}
-      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
-      RUST_LOG: ${RUST_LOG:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-    networks:
-      default: {}
-      edge:
-        aliases: ["dim-tickets-api-${ENV_ID:-paseo-next-v2}"]
-      metrics:
-        aliases: ["dim-tickets-api-${ENV_ID:-paseo-next-v2}"]
-    healthcheck:
-      test: ["CMD", "ibv2", "--healthcheck"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      # Covers migrations + the blocking People Chain connect at startup.
-      start_period: 40s
-
-  # Single-instance worker: registers pending DIM tickets on People Chain.
-  # Owns the `dim-tickets-writer` image (one binary). MUST stay at exactly one replica — one
-  # inviter key = one nonce lane. Do not `--scale` this service. The inviter
-  # signing secret lives ONLY here: not in dim-tickets-api, not in any
-  # identity service.
-  dim-tickets-writer:
-    build:
-      context: .
-      target: ibv2
-    image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
-    command: ["--role", "dim-tickets-writer"]
-    restart: unless-stopped
-    depends_on:
-      dim-tickets-postgres:
-        condition: service_healthy
-      dim-tickets-api:
-        condition: service_started
-    environment:
-      DIM_TICKETS_DATABASE_URL: postgres://${DIM_TICKETS_POSTGRES_USER:-dim_tickets}:${DIM_TICKETS_POSTGRES_PASSWORD:-dim_tickets}@dim-tickets-postgres:5432/${DIM_TICKETS_POSTGRES_DB:-dim_tickets}
-      PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
-      PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
-      INVITER_ADDRESS: ${INVITER_ADDRESS:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
-      # Dev signer. In prod this is the hot inviter key, or a delegate that
-      # proxies for INVITER_ADDRESS — the wrap is derived from the two.
-      INVITER_SIGNER_SURI: ${INVITER_SIGNER_SURI:-//Alice}
-      WRITER_LEASE_NAME: ${WRITER_LEASE_NAME:-dim-tickets-writer}
-      WRITER_LEASE_TTL_SECS: ${WRITER_LEASE_TTL_SECS:-30}
-      WRITER_POLL_SECS: ${WRITER_POLL_SECS:-6}
-      WRITER_BATCH_SIZE: ${WRITER_BATCH_SIZE:-10}
-      WRITER_MAX_RETRIES: ${WRITER_MAX_RETRIES:-5}
-      WRITER_RETRY_BASE_MS: ${WRITER_RETRY_BASE_MS:-1000}
-      WRITER_RETRY_MAX_MS: ${WRITER_RETRY_MAX_MS:-60000}
-      WRITER_RETRY_MAX_EXPONENT: ${WRITER_RETRY_MAX_EXPONENT:-10}
-      WRITER_FINALIZE_SECS: ${WRITER_FINALIZE_SECS:-120}
-      # Prometheus exporter, scraped on the private metrics network only.
-      METRICS_ENABLED: ${METRICS_ENABLED:-true}
-      METRICS_ADDR: ${METRICS_ADDR:-0.0.0.0:9090}
-      RUST_LOG: ${RUST_LOG:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-    networks:
-      default: {}
-      metrics:
-        aliases: ["dim-tickets-writer-${ENV_ID:-paseo-next-v2}"]
-    deploy:
-      replicas: 1
-
   # invite-tickets owns its persistence independently: the ticket-pool table
   # holds private keys and must share nothing with the identity DB.
   invite-tickets-postgres:
@@ -416,7 +305,7 @@ services:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "invite-tickets-api"]
     restart: unless-stopped
@@ -456,15 +345,15 @@ services:
   # Single-instance pool maintainer: registers generated keypairs on People
   # Chain as the inviter. MUST stay at exactly one replica — one inviter = one
   # nonce lane (a Postgres advisory lock guards deploy overlaps). The inviter
-  # secret lives only in this service's environment; NOTE it must NOT be the
-  # same signing account as dim-tickets-writer (nonce lane conflict — see
+  # secret lives only in this service's environment; NOTE it must NOT share a
+  # signing account with any other chain writer (nonce lane conflict — see
   # docs/deploy.md). Do not `--scale` this.
   invite-tickets-pool:
     build:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "invite-tickets-pool"]
     restart: unless-stopped
@@ -478,9 +367,9 @@ services:
       # Dev signer (unfunded: batches finalize with ItemFailed and no tickets
       # insert). In prod: the hot invite-inviter key, or a delegate that
       # proxies for …ADDRESS (the wrap is derived from the two).
-      # Interpolated from INVITE_INVITER_* so the invite pool can never share
-      # the dim writer's signing account by default (nonce lanes — deploy.md).
-      # Dev default = //Bob (dim's writer defaults to //Alice).
+      # Interpolated from INVITE_INVITER_* so the invite pool keeps its own
+      # signing account, distinct from every other writer (nonce lanes — see
+      # docs/deploy.md). Dev default = //Bob.
       INVITER_ADDRESS: ${INVITE_INVITER_ADDRESS:-5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty}
       INVITER_SIGNER_SURI: ${INVITE_INVITER_SIGNER_SURI:-//Bob}
       POOL_DIMS: ${POOL_DIMS:-Game,ProofOfInk}
@@ -509,7 +398,7 @@ services:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "turn-api"]
     restart: unless-stopped
@@ -566,7 +455,7 @@ services:
       context: .
       target: ibv2
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
-    # One image, ten roles: this line is what makes the container this
+    # One image, eight roles: this line is what makes the container this
     # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
     command: ["--role", "notify-relay"]
     restart: unless-stopped
@@ -628,5 +517,4 @@ networks:
 volumes:
   pgdata:
   username_indexer_pgdata:
-  dim_tickets_pgdata:
   invite_tickets_pgdata:

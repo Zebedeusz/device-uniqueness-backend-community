@@ -9,7 +9,7 @@
 # is handed, which is how a stripped-prefix bug survived it.
 #
 # This runs the real thing: real Caddy on the committed gateway/Caddyfile, real
-# Traefik on config generated from the chart's rendered IngressRoute, ten stub
+# Traefik on config generated from the chart's rendered IngressRoute, eight stub
 # upstreams that echo their own name. For each request both edges are asked and
 # must agree on WHO answered and WITH WHAT.
 #
@@ -60,7 +60,7 @@ docker network create "$NET" >/dev/null
 # Caddyfile uses (`<svc>-paseo-next-v2`, `<svc>-previewnet`) and the plain
 # service names the chart's IngressRoute uses — so Caddy runs on its committed
 # DEFAULT upstreams, with no environment overrides to get wrong.
-SERVICES=(identity-api username-indexer dim-tickets-api invite-tickets-api turn-api notify-relay)
+SERVICES=(identity-api username-indexer invite-tickets-api turn-api notify-relay)
 for svc in "${SERVICES[@]}"; do
   docker run -d --rm --label ibv2-parity=1 --name "ibv2-stub-$svc" \
     --network "$NET" \
@@ -214,14 +214,12 @@ CASES = [
     ("GET", "/api/v1/usernames/alice"), ("GET", "/api/v1/usernames/payment-status"),
     ("POST", "/api/v1/usernames"), ("OPTIONS", "/api/v1/usernames"),
     ("PUT", "/api/v1/usernames/alice"),
-    ("GET", "/api/v1/dim-ticket"), ("POST", "/api/v1/dim-ticket/claim"),
     ("POST", "/api/v1/invitation-ticket/claim"),
     ("POST", "/api/v1/turn/issue"), ("POST", "/api/v1/notify"),
     ("POST", "/api/v1/poc/issue"),
     ("GET", "/readyz"), ("GET", "/.well-known/jwks.json"),
     ("GET", "/api/v1/attester"), ("GET", "/api/v1/schemas"),
     ("HEAD", "/api/v1/usernames/alice"),
-    ("GET", "/api/v1/dim-ticketing"),        # prefix, not segment — both must agree
     ("GET", "/api/v1/usernames/payment-status/"),
 ]
 

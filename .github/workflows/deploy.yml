@@ -166,7 +166,7 @@ jobs:
           compose_primary pull --quiet
           compose_primary up -d --wait --wait-timeout 420 --no-build
 
-          # PreviewNet runs a deliberate subset: no dim/invite tickets (they
+          # PreviewNet runs a deliberate subset: no invite tickets (its pool
           # would share the chain-writer's nonce lane on one account and chain)
           # and no turn/notify, which exist once for every environment. Its
           # checkout does not exist until the environment is stood up by hand.

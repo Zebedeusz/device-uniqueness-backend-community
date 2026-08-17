@@ -1,8 +1,8 @@
 //! Shared axum primitives for services that speak the frozen legacy wire
-//! contract (dim-tickets, invite-tickets).
+//! contract (invite-tickets, turn, notifications).
 //!
-//! Extracted when invite-tickets became the second consumer of dim-tickets'
-//! HTTP scaffolding — the same second-consumer rule that produced
+//! Extracted once a second service needed the same HTTP scaffolding — the same
+//! second-consumer rule that produced
 //! `jwt-verify` and `chain-client`. The shapes here are **frozen legacy
 //! bytes**, golden-captured from the real TypeScript backend (see each
 //! service's `tests/fixtures/`): change them only with a fresh capture in

@@ -1,7 +1,7 @@
 //! Renders the committed API reference from the service crates' OpenAPI docs.
 //!
 //! The merged OpenAPI document (identity-service + username-indexer +
-//! invite-tickets + dim-tickets + turn + notifications, all built
+//! invite-tickets + turn + notifications, all built
 //! from `#[utoipa::path]` annotations) is the single source of truth. This crate
 //! serializes it to `openapi.json` and renders `index.html` by filling the
 //! `<!--@NAV-->` and `<!--@ENDPOINTS-->` placeholders in `template.html` with the
@@ -30,7 +30,7 @@ pub fn index_html_path() -> String {
 }
 
 /// Build the merged OpenAPI document (identity-service + username-indexer +
-/// invite-tickets + dim-tickets + turn + notifications).
+/// invite-tickets + turn + notifications).
 pub fn merged_doc() -> Value {
     let mut base =
         serde_json::to_value(identity_service::openapi::ApiDoc::openapi()).expect("identity doc");
@@ -38,12 +38,11 @@ pub fn merged_doc() -> Value {
         serde_json::to_value(username_indexer::openapi::ApiDoc::openapi()).expect("indexer doc");
     let invites =
         serde_json::to_value(invite_tickets::openapi::ApiDoc::openapi()).expect("invites doc");
-    let dims = serde_json::to_value(dim_tickets::openapi::ApiDoc::openapi()).expect("dims doc");
     let turn = serde_json::to_value(turn::openapi::ApiDoc::openapi()).expect("turn doc");
     let notify =
         serde_json::to_value(notifications::openapi::ApiDoc::openapi()).expect("notify doc");
 
-    for other in [&indexer, &invites, &dims, &turn, &notify] {
+    for other in [&indexer, &invites, &turn, &notify] {
         merge_object(&mut base, other, "/paths");
         merge_object(&mut base, other, "/components/schemas");
         merge_array(&mut base, other, "/tags");
@@ -762,8 +761,6 @@ mod tests {
             "/api/v1/usernames/available",
             "/api/v1/usernames/search",
             "/api/v1/invitation-ticket/claim",
-            "/api/v1/dim-ticket",
-            "/api/v1/dim-ticket/{who}",
             "/api/v1/turn/issue",
             "/api/v1/notify",
         ] {

@@ -50,13 +50,13 @@ create now. See "How the workspace grows" below.
 
 | Concept | Name | Where it lives |
 |---|---|---|
-| generated People Chain (subxt) typed surface | `chain-types` | crate; consumed by identity-service, username-indexer, dim-tickets, invite-tickets |
+| generated People Chain (subxt) typed surface | `chain-types` | crate; consumed by identity-service, username-indexer, invite-tickets |
 | chain connection / RPC transport + writer signing key | `chain-client` | crate (reconnecting connect + `WriterSigner` + `proxy_target`) |
 | Postgres connection + bootstrap | `postgres` | still a module inside identity-service / username-indexer |
 | config loading + fail-fast validation | `config` | still a module per service |
 | telemetry (logs / metrics / tracing) | `telemetry` | `http-common` (`telemetry::init` installs the log subscriber, `metrics::spawn` the Prometheus exporter); every process calls both. Logs go to stdout only — labelling, shipping, storage, and retention belong to the host's monitoring project, not to a service |
-| JWT + JWKS verification (for verify-only services) | `jwt-verify` | crate; the cross-service auth contract — identity-service delegates its own verification to it; dim-tickets, invite-tickets, turn, notifications, and username-indexer (for the proof-of-compute bypass) consume it |
-| frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | crate; consumed by dim-tickets, invite-tickets, turn, notifications. The dialect bodies are golden-captured — change only with a fresh capture |
+| JWT + JWKS verification (for verify-only services) | `jwt-verify` | crate; the cross-service auth contract — identity-service delegates its own verification to it; invite-tickets, turn, notifications, and username-indexer (for the proof-of-compute bypass) consume it |
+| frozen legacy HTTP dialects + axum scaffolding (problem details / Hono text bodies / zod v4 messages, JWT extractor, rate limiter, health, middleware stack, env helpers) | `http-common` | crate; consumed by invite-tickets, turn, notifications. The dialect bodies are golden-captured — change only with a fresh capture |
 
 ### Deployable services (plain domain word)
 
@@ -67,8 +67,7 @@ create now. See "How the workspace grows" below.
 | `notifications` | Thin `/api/v1/notify` relay. Verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited. No `depends_on`. iOS APNs (token auth, HTTP/2) + Android FCM (v1, OAuth2) providers, each optional. `APNS_ENVIRONMENT` picks the APNs host tried first; a `BadDeviceToken` rejection is retried once against the sibling host, so one relay serves both production and sandbox device tokens. | `notify-relay` |
 | `turn` | Stateless coturn REST-API credential issuer (username = expiry:id, password = HMAC over the username, secret shared with the relay; the relay itself = SRE infra). Two authorization paths: JWT-gated `POST /api/v1/turn/issue` (frozen legacy contract), and — behind `TURN_PROOF_ENABLED` — proof-authorized `POST /api/v1/turn/issue-with-proof`, where a proven Lite/Full person redeems a ring-VRF membership proof instead of presenting a JWT. Redemption is a single request with no challenge round trip: the client supplies a timestamp, the server derives the proved message itself as `blake2b256(label ‖ timestamp)` and accepts it only inside a bounded clock skew, so nothing about the request is minted or stored. There is deliberately no client-chosen nonce and no genesis in the digest: the product builds this message and only needs a clock; chain identity is the ring root the server verifies against. Ring-VRF proofs are deterministic, so a person's proof for one second is one fixed value. The request repeats the collection id from TrUAPI's `ringLocation`; the server accepts only the canonical `pop:polkadot.network/people-lite` and `pop:polkadot.network/people` ids, selects that collection's independently refreshed root cache, and never falls through to the other. Required `ringIndex` and `ringRevision` name the single server-held root verification runs against, so every request costs at most one ring verification and a pair the server no longer holds is refused before admission. Proof bytes are the host's raw ring-VRF signature, with no SCALE length prefix. Each request names the `productId` it proves for, and the server verifies under the context it derives itself for that product (`blake2b256("product/" ‖ productId ‖ "/" ‖ indexBytes(suffix))`, the derivation the hosts use); an unlisted product is refused before verification. One context per product rather than one shared context is what keeps hosts from prompting the user — they prompt only when the proof context is not the calling product's own — at the cost of a per-person budget that is also per product. Requests never read the chain, verification concurrency defaults to available CPUs minus one (floor one), up to 64 saturated requests wait 50ms before returning 503, and a dead RPC never blocks boot or `/turn/issue`. The contextual alias recovered from a proof remains private: it is an in-memory throttle key and an input to a domain-separated, `TURN_SECRET`-keyed HMAC that yields one opaque 16-byte credential id per person and product, expiring `TURN_TTL_SECS` after issuance. The response reports the configured TTL. The JWT route retains a random id and fresh configured TTL. No DB; N replicas need no coordination for credentials (rate limits and root caches remain per replica). | `turn-api` |
 | `invite-tickets` | JWT-gated `POST /api/v1/invitation-ticket/claim` — synchronous invitation-credential claims from a pre-staged, on-chain-registered sr25519 keypair pool (its own Postgres). This is the route the shipping apps call for Game / ProofOfInk DIM claims. | `invite-tickets-api` (N replicas, DB-only, no signing secret) + `invite-tickets-pool` (single-instance keypair generator + on-chain registrar) |
-| `dim-tickets` | JWT-gated `/api/v1/dim-ticket` — DIM (Game / ProofOfInk) invitation-credential issuance + status. Own Postgres state machine. No known client consumer — the apps use the `invite-tickets` claim route. | `dim-tickets-api` + `dim-tickets-writer` (single-instance: `Utility.force_batch` of `set_invite_ticket`, per-item event split, retry/orphan recovery, `writer_lease`) |
-| `gateway` (edge) | Public-URL routing via **Caddy**, one site block per environment. The route table is the committed `gateway/Caddyfile`: the `(routes)` snippet is imported once per environment with that environment's upstreams — username GET reads + `/api/v1/poc*` → its `username-indexer`, DIM tickets → its `dim-tickets-api`, invitation tickets → its `invite-tickets-api`, TURN → `turn-api`, notify → `notify-relay`, everything else (identity-owned writes/availability/root preflight, JWKS, health) → its `identity-api`. Upstreams are container aliases suffixed with `ENV_ID` (`identity-api-paseo-next-v2`), resolved over the shared external `ibv2-edge` network; an environment that does not run a service points that route at its own `identity-api` so it 404s. Shared services (`turn`, `notify`) exist once and verify every environment's tokens from a merged JWKS. This is the **only** container publishing host ports (80/443, plus 443/udp); holds no secrets (both enforced by the compose boundary script). | `caddy` in its own compose project (`-p edge`) |
+| `gateway` (edge) | Public-URL routing via **Caddy**, one site block per environment. The route table is the committed `gateway/Caddyfile`: the `(routes)` snippet is imported once per environment with that environment's upstreams — username GET reads + `/api/v1/poc*` → its `username-indexer`, invitation tickets → its `invite-tickets-api`, TURN → `turn-api`, notify → `notify-relay`, everything else (identity-owned writes/availability/root preflight, JWKS, health) → its `identity-api`. Upstreams are container aliases suffixed with `ENV_ID` (`identity-api-paseo-next-v2`), resolved over the shared external `ibv2-edge` network; an environment that does not run a service points that route at its own `identity-api` so it 404s. Shared services (`turn`, `notify`) exist once and verify every environment's tokens from a merged JWKS. This is the **only** container publishing host ports (80/443, plus 443/udp); holds no secrets (both enforced by the compose boundary script). | `caddy` in its own compose project (`-p edge`) |
 
 
 ## How the workspace grows (lazy extraction)
@@ -101,9 +100,10 @@ The vocabulary above is **not** "make 11 folders." Folders appear incrementally:
 - **chain-writer** → worker (`identity-chain-writer`) *inside* the `identity-service` boundary.
 - **notifications / turn / invites** → independent thin services, each outside the identity
   boundary.
-- **DIM tickets (game/personhood)** → the `/api/v1/dim-ticket` routes live in the `dim-tickets`
-  service — not `identity-service`. But the apps' game/personhood **claims** go through
-  `/api/v1/invitation-ticket/claim`, which is the `invite-tickets` service.
+- **DIM tickets (game/personhood)** → the apps' game/personhood **claims** go through
+  `/api/v1/invitation-ticket/claim`, which is the `invite-tickets` service. The legacy
+  `/api/v1/dim-ticket` request/status pair is **out of V2 scope** — see "Remaining scope & legacy
+  retirement".
 - **gateway** → Caddy path routing (infra).
 
 ### Guardrails — do NOT create these as separate crates/services
@@ -130,6 +130,13 @@ Remaining slices. Each gets its own ship-first plan under `docs/plans/` when wor
 4. iOS and Android release-device validation.
 5. Data migration, rollback, per-route client cutover, and legacy shutdown.
 
+**Out of V2 scope.** The legacy `/api/v1/dim-ticket` request/status pair is deliberately not
+rebuilt here. Auditing the shipping iOS and Android clients showed neither has ever called it — both
+obtain Game / ProofOfInk credentials through `POST /api/v1/invitation-ticket/claim`, which
+`invite-tickets` owns — so it is not a required route, and V1 shutdown simply removes it rather than
+handing it to a V2 owner. A request to that path resolves to `identity-api` as the edge catch-all and
+answers its frozen 404.
+
 The legacy backend is retired only after every required route has an owner, the gateway is validated, parity gates pass, rollback is proven, and release-device smokes succeed.
 
 ## Deployment topologies
@@ -137,26 +144,26 @@ The legacy backend is retired only after every required route has an owner, the 
 The system runs in one of **two** shapes. They serve an identical public API — a client cannot tell
 them apart — and differ only in how many processes hold how many secrets.
 
-### Standard: ten workloads (the default)
+### Standard: eight workloads (the default)
 
-Six HTTP services and four single-instance workers, each its own process with its own environment.
+Five HTTP services and three single-instance workers, each its own process with its own environment.
 This is what `paseo-next-v2` and `previewnet` run, and the only shape either of them may run.
 
 Its defining property is **secret compartmentalisation**, enforced rather than intended:
 `identity-api` is the one process holding `JWT_ED25519_SECRET`, so it is the one process that can
-mint a token; the other five hold only `JWT_ED25519_PUBLIC_KEY` and can verify. `POC_HMAC_SECRET`
-reaches `username-indexer` and nothing else. The two inviter signing keys are separate accounts on
-separate workloads. Each of the four databases is reachable by only the services that own it.
+mint a token; the other four hold only `JWT_ED25519_PUBLIC_KEY` and can verify. `POC_HMAC_SECRET`
+reaches `username-indexer` and nothing else. The inviter signing key lives only on
+`invite-tickets-pool`. Each of the three databases is reachable by only the services that own it.
 `scripts/verify_compose_boundaries.sh` and the chart's per-workload `Secret` assert every one of
 those, and a change that widens them fails CI.
 
-### Small: five workloads (`--role all-in-one` + the four workers)
+### Small: four workloads (`--role all-in-one` + the three workers)
 
-One process serves all six HTTP surfaces on one port, with the route table compiled in; the four
+One process serves all five HTTP surfaces on one port, with the route table compiled in; the three
 single-instance workers stay separate, because each owns a Postgres lease and a nonce lane and can
 never be collapsed into anything.
 
-This exists for deployments where operating ten workloads is not worth it. **It is a deliberate
+This exists for deployments where operating eight workloads is not worth it. **It is a deliberate
 trade, not a simplification**, and the thing being traded is the compartmentalisation above.
 
 #### What the small topology gives up
@@ -167,31 +174,31 @@ In `all-in-one`, a single process holds, simultaneously:
 |---|---|
 | `JWT_ED25519_SECRET` | mint an access token for **any** subject |
 | `POC_HMAC_SECRET` | forge proof-of-compute solutions, defeating the anti-scraping gate |
-| four `*_DATABASE_URL`s | full read/write on identity, the username projection, and both ticket pools |
+| three `*_DATABASE_URL`s | full read/write on identity, the username projection, and the ticket pool |
 | `TURN_SECRET` | mint TURN relay credentials |
 
 and it reaches them from the same address space that serves `GET /api/v1/usernames/search` — an
 **unauthenticated, public, internet-facing** endpoint.
 
 So the difference is concrete: a memory-disclosure or RCE bug reachable from the search path reaches
-a read-only username projection and a verify-only public key in the ten-workload topology, and
+a read-only username projection and a verify-only public key in the eight-workload topology, and
 reaches token minting for the entire system in the small one. Nothing else about the two topologies
 differs in this respect — same code, same handlers, same dependencies. The boundary is the process.
 
-Secondary consequences, all of which follow from one process rather than six:
+Secondary consequences, all of which follow from one process rather than five:
 
-- **Blast radius.** Six surfaces share one Tokio runtime, one `standard_layers` timeout, and four
+- **Blast radius.** Five surfaces share one Tokio runtime, one `standard_layers` timeout, and three
   connection-pool budgets. `standard_layers` has a timeout but no bulkhead, so a saturated search
   path and the auth handshake compete for the same resources.
-- **Boot coupling.** Four migration sets run against four databases before anything serves, and
+- **Boot coupling.** Three migration sets run against three databases before anything serves, and
   `identity-api`'s blocking People Chain connect gates the whole API — so with no reachable RPC
   there is no TURN, no notifications and no ticket claims either, where today there would be.
 - **Deploy coupling.** Every deploy of any surface restarts all of them.
 
 #### The rules that make it reviewable
 
-- **Topologies are mutually exclusive.** A deployment renders ten per-service workloads *or*
-  `all-in-one` plus the four workers — never a mix, which would pay the cost of the union while
+- **Topologies are mutually exclusive.** A deployment renders eight per-service workloads *or*
+  `all-in-one` plus the three workers — never a mix, which would pay the cost of the union while
   still running the compartmentalised services. The chart refuses to render a mix.
 - **It cannot be reached by accident.** Selecting it requires an explicit acknowledgement value in
   the values file; the chart fails to render without it. Copying an existing values file does not
@@ -199,7 +206,7 @@ Secondary consequences, all of which follow from one process rather than six:
 - **The union is written out by hand.** `all-in-one`'s `secretKeys` enumerates every key it
   receives rather than computing it, so the list growing is a visible diff in review.
 - **The real environments are excluded by contract.** `values-paseo-next-v2.yaml` and
-  `values-previewnet.yaml` stay on the ten-workload topology; moving either is a security decision,
+  `values-previewnet.yaml` stay on the eight-workload topology; moving either is a security decision,
   not a configuration tweak.
 - **Nothing is relaxed for the standard topology.** Every per-service `require_key`/`forbid_key`
   assertion still holds; the small topology adds rules rather than loosening any.
@@ -350,21 +357,12 @@ Operational invariants an agent must respect when touching the code.
   the address string. Pools are keyed `(dim, network)`; FIFO by `created_at`. The api bin never
   touches the People Chain and holds no signing secret besides the pool rows it serves — chain
   RPC and the inviter secret belong only to the single-instance `invite-tickets-pool` bin.
-  **`invite-tickets-pool` and `dim-tickets-writer` must not sign as the same account** — two
+  **`invite-tickets-pool` must not share a signing account with any other submitter** — two
   independent submitters on one account race nonces; give each its own inviter (e.g. separate
-  proxy delegates of one cold primary) before deploying both. As for the attester, proxying is
+  proxy delegates of one cold primary). As for the attester, proxying is
   **derived, not configured**: `INVITER_ADDRESS` names the account holding the invites, and a
   signing key whose own account differs from it wraps the batch in
   `Proxy.proxy(real = INVITER_ADDRESS, force_proxy_type = Any)`.
-- **DIM tickets are a per-row state machine, not an outbox copy.** `POST /api/v1/dim-ticket`
-  quota-checks the inviter's on-chain `AvailableInvites` synchronously, then inserts a `PENDING`
-  row (200); `dim-tickets-writer` batches due rows into one `Utility.force_batch` of
-  `set_invite_ticket` calls and splits the ordered `ItemCompleted`/`ItemFailed` events into
-  `REGISTERED` vs `PENDING` retries (backoff, cap → `FAILED`). The `retry_at` written at
-  `SUBMITTING` doubles as the in-flight lease: a crashed writer's rows come back as orphans and
-  are re-batched. `dim-tickets-writer` is **single-instance** (one inviter key = one nonce lane;
-  `writer_lease` is the deploy-overlap guard) — never scale it. The internal `SUBMITTING` status
-  is reported as `SUBMITTED` on the frozen wire.
 - **`username-indexer` serializes projection writes on one Postgres advisory lock.** Bootstrap and
   the incremental sync loop share one lock id; a full snapshot bootstrap runs **only when there is no
   usable `sync_state` checkpoint**, and each sync pass takes the lock with `pg_try_advisory_lock`

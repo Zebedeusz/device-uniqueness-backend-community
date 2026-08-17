@@ -7,10 +7,6 @@
 # Targets are static: this host runs a fixed set of containers, and Docker
 # service discovery would need the daemon socket mounted into Prometheus.
 #
-# `dim-tickets` is deliberately absent: it has no client consumer (the shipping
-# apps claim through `invite-tickets`) and is not being released, so scraping it
-# would only add tiles that say nothing. Restore its two targets here if it is
-# ever deployed for real.
 
 global:
   scrape_interval: 30s

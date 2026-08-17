@@ -2,8 +2,8 @@
 # identity-api, identity-chain-writer, username-indexer and their databases.
 #
 # Not deployed here, and why:
-#   - dim-tickets-*, invite-tickets-*  — their writers would share a nonce lane
-#     with the primary environment's inviter accounts
+#   - invite-tickets-*                 — its pool would share a nonce lane
+#     with the primary environment's inviter account
 #   - turn-api, notify-relay           — one instance of each serves every
 #                                        environment
 #   - registration-queue               — QUEUE_ENABLED is off here
@@ -26,7 +26,6 @@ global:
     ATTESTER_ACCOUNT: TODO
     JWT_ED25519_PUBLIC_KEY: TODO
   inviters:
-    dim: ""
     invite: ""
 
 # turn-api and notify-relay are NOT deployed here — one instance of each serves
@@ -49,8 +48,6 @@ workloads:
     env:
       AUTH_ENABLED: "false"
   registration-queue: { enabled: false }
-  dim-tickets-api: { enabled: false }
-  dim-tickets-writer: { enabled: false }
   invite-tickets-api: { enabled: false }
   invite-tickets-pool: { enabled: false }
   turn-api: { enabled: false }

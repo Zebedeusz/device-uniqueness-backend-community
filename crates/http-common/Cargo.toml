@@ -1,6 +1,6 @@
-# Shared axum primitives for the frozen legacy wire dialects, extracted when
-# invite-tickets became the second consumer of dim-tickets' HTTP scaffolding
-# (the same lazy-extraction rule that produced `jwt-verify`/`chain-client`).
+# Shared axum primitives for the frozen legacy wire dialects, extracted once a
+# second service needed the same HTTP scaffolding (the same lazy-extraction rule
+# that produced `jwt-verify`/`chain-client`).
 # Transport-shape only: no domain logic, no DB schema, no chain types.
 [package]
 name = "http-common"

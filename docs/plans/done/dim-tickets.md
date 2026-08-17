@@ -1,6 +1,22 @@
-> Stage: **active**. Keep this plan current while working: when a scope item is finished, check its
-> box `[ ]`→`[x]`; when a phase's ✅ demo passes, mark the phase done (with date). The plan file is
-> the source of truth, not memory.
+> Stage: **abandoned — the service was removed (2026-08-17)**. This slice was built and wired, but
+> never had a client: the 2026-07-22 correction below established that neither shipping app has ever
+> called `/api/v1/dim-ticket`, and both obtain Game / ProofOfInk credentials through
+> `POST /api/v1/invitation-ticket/claim`, which `invite-tickets` owns. Rather than keep two workloads,
+> a Postgres, an inviter signing key and a nonce lane alive for a route with no consumer, the
+> `dim-tickets` crate, both roles (`dim-tickets-api`, `dim-tickets-writer`), its database, its edge
+> route and its OpenAPI surface were deleted, taking the standard topology from ten workloads to
+> eight.
+>
+> **The route is now out of V2 scope**, recorded in `docs/architecture.md` under "Remaining scope &
+> legacy retirement": it is not a required route, so V1 shutdown removes it rather than handing it to
+> a V2 owner. `/api/v1/dim-ticket*` resolves to `identity-api` as the edge catch-all and answers its
+> frozen 404.
+>
+> **Operator cleanup is out of band:** drop the external `dim-tickets` database and the local
+> `dim_tickets_pgdata` volume, and retire the `DIM_DATABASE_URL` / `DIM_INVITER_SIGNER_SURI` vault
+> entries. The DIM inviter account's remaining `AvailableInvites` are untouched by the removal.
+>
+> Everything below is the historical record of the slice as built. Do not treat it as current design.
 
 # DIM tickets — game / personhood invitation-credential service
 

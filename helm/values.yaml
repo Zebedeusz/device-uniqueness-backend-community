@@ -73,10 +73,9 @@ global:
   # allInOne:
   #   acknowledgedSecretUnion: true
 
-  # The two inviters MUST be different accounts — one account is one nonce
-  # lane, and two submitters on it race. Asserted at template time.
+  # An inviter owns a nonce lane: never point two submitters at one account.
+  # Resolved per workload via its `inviter:` key, asserted at template time.
   inviters:
-    dim: ""
     invite: ""
 
 # Secret VALUES never appear here: each entry is a vault reference resolved at
@@ -88,7 +87,7 @@ secrets: {}
 workloads:
   # ── The SMALL topology ──────────────────────────────────────────────────
   #
-  # Disabled here. Enabling it is mutually exclusive with the six per-service
+  # Disabled here. Enabling it is mutually exclusive with the five per-service
   # HTTP workloads below and additionally requires
   # `global.allInOne.acknowledgedSecretUnion: true`; the chart refuses to render
   # otherwise. See helm/values-small.yaml for a complete example, and
@@ -97,23 +96,21 @@ workloads:
     enabled: false
     kind: http
     # NEVER more than one: not for correctness (the surfaces are stateless and
-    # the leases live on the four workers) but because this is the topology for
-    # deployments that did not want ten workloads — scale by moving to the
+    # the leases live on the three workers) but because this is the topology for
+    # deployments that did not want eight workloads — scale by moving to the
     # standard topology, which is what horizontal scale is actually for.
     replicas: 1
-    # The longest of the six, plus the four migration sets and the blocking
+    # The longest of the five, plus the three migration sets and the blocking
     # People Chain connect: username-indexer's finalized scan dominates.
     startupSeconds: 350
     globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, PEOPLE_NETWORK, ASSET_HUB_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    inviter: dim
-    # THE UNION, enumerated by hand rather than computed from the six services.
+    # THE UNION, enumerated by hand rather than computed from the five services.
     # The list growing must be a visible diff in review — that is the whole
     # control. One process holding all of these is the trade this topology
     # makes; see docs/architecture.md "Deployment topologies".
     secretKeys:
       - IDENTITY_DATABASE_URL      # identity: full read/write
       - INDEXER_DATABASE_URL       # the username projection
-      - DIM_TICKETS_DATABASE_URL   # ticket pool
       - INVITE_TICKETS_DATABASE_URL
       - JWT_ED25519_SECRET         # mint an access token for ANY subject
       - POC_HMAC_SECRET            # forge proof-of-compute solutions
@@ -145,9 +142,6 @@ workloads:
       POC_DIFFICULTY_BITS: "16"
       STORAGE_PAGE_SIZE: "1000"
       SYNC_INTERVAL_SECS: "30"
-      QUOTA_TIMEOUT_SECS: "15"
-      DIM_TICKETS_RATE_LIMIT: "30"
-      DIM_TICKETS_RATE_LIMIT_WINDOW_SECS: "60"
       INVITE_TICKETS_RATE_LIMIT: "30"
       INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS: "60"
       TURN_RATE_LIMIT: "30"
@@ -164,44 +158,6 @@ workloads:
       ICE_SERVERS: "stun:stun.example.com:3478,turn:turn.example.com:3478?transport=udp"
       NOTIFY_RATE_LIMIT: "60"
       NOTIFY_RATE_LIMIT_WINDOW_SECS: "60"
-
-  dim-tickets-api:
-    enabled: true
-    kind: http
-    replicas: 2
-    inviter: dim   # which global.inviters entry funds this workload
-    # Startup grace. NOT `start_period` alone — that is the window before
-    # failures COUNT; compose then allows retries x interval on top. Using only
-    # start_period gave turn-api (which has none) a budget of 10s, which the
-    # template rounded to failureThreshold: 1 — one refused connection at boot
-    # and the kubelet kills the container. Total = start_period + retries x interval.
-    startupSeconds: 90
-    globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, PEOPLE_NETWORK, JWT_ED25519_PUBLIC_KEY, JWT_JWKS_JSON, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DIM_TICKETS_DATABASE_URL]
-    env:
-      QUOTA_TIMEOUT_SECS: "15"
-      DIM_TICKETS_RATE_LIMIT: "30"
-      DIM_TICKETS_RATE_LIMIT_WINDOW_SECS: "60"
-
-  dim-tickets-writer:
-    enabled: true
-    kind: worker
-    # Single-instance: one signer/advancer = one lane. Never scale.
-    singleton: true
-    replicas: 1
-    inviter: dim   # which global.inviters entry funds this workload
-    globalEnv: [PEOPLE_RPC_URL, PEOPLE_NETWORK, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [DIM_TICKETS_DATABASE_URL, INVITER_SIGNER_SURI]
-    env:
-      WRITER_BATCH_SIZE: "10"
-      WRITER_FINALIZE_SECS: "120"
-      WRITER_LEASE_NAME: "dim-tickets-writer"
-      WRITER_LEASE_TTL_SECS: "30"
-      WRITER_MAX_RETRIES: "5"
-      WRITER_POLL_SECS: "6"
-      WRITER_RETRY_BASE_MS: "1000"
-      WRITER_RETRY_MAX_EXPONENT: "10"
-      WRITER_RETRY_MAX_MS: "60000"
 
   identity-api:
     enabled: true
@@ -415,11 +371,6 @@ routes:
     match: Method(`GET`) && PathPrefix(`/api/v1/usernames`) && !Path(`/api/v1/usernames/payment-status`)
     service: username-indexer
     priority: 100
-  # The DIM ticket request and status surface.
-  - name: dim-tickets
-    match: PathPrefix(`/api/v1/dim-ticket`)
-    service: dim-tickets-api
-    priority: 90
   # The synchronous invitation-credential claim route.
   - name: invite-tickets
     match: PathPrefix(`/api/v1/invitation-ticket/`)

@@ -118,17 +118,17 @@ compose_env = {
 # deployed. api-docs has no compose counterpart (Caddy mounts the files).
 SUBSET = {
     "helm/values-previewnet.yaml": {
-        "registration-queue", "dim-tickets-api", "dim-tickets-writer",
+        "registration-queue",
         "invite-tickets-api", "invite-tickets-pool", "turn-api", "notify-relay",
     },
-    # The SMALL topology: all six per-service HTTP workloads are absent by
+    # The SMALL topology: all five per-service HTTP workloads are absent by
     # design, because one `all-in-one` process serves their surfaces. This is a
     # different KIND of omission from previewnet's — not "we don't run that
     # service here" but "that service runs inside another workload" — which is
-    # why MERGED below re-checks the union rather than letting the six vanish
+    # why MERGED below re-checks the union rather than letting the five vanish
     # unaccounted for.
     "helm/values-small.yaml": {
-        "identity-api", "username-indexer", "dim-tickets-api",
+        "identity-api", "username-indexer",
         "invite-tickets-api", "turn-api", "notify-relay",
     },
 }
@@ -138,7 +138,7 @@ SUBSET = {
 # would deploy a process missing a surface's configuration and only find out at
 # runtime.
 MERGED = {"all-in-one": {
-    "identity-api", "username-indexer", "dim-tickets-api",
+    "identity-api", "username-indexer",
     "invite-tickets-api", "turn-api", "notify-relay",
 }}
 expected_absent = SUBSET.get(os.environ["CHART_VALUES"], set())

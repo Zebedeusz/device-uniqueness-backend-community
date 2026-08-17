@@ -257,7 +257,7 @@ Legacy sources: `apps/identity-backend/src/routes/v1/invitation-ticket.{routes,s
 - **Risks**: release-device validation is a separate later slice (roadmap item); do not gate this
   phase on physical devices.
 
-# Post-merge cleanup (blocked until dim-tickets and this slice are both on main)
+# Post-merge cleanup (done)
 
 The axum scaffolding in `invite-tickets` deliberately mirrors the dim-tickets crate, which lives on
 a sibling branch and could not be imported: `http/extract.rs` is byte-identical, and the rate

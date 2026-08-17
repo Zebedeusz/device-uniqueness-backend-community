@@ -88,7 +88,7 @@ fn parse_args() -> anyhow::Result<Command> {
 
 fn usage() -> String {
     format!(
-        "usage: ibv2 --role <ROLE>\n       ibv2 --list-roles | --list-merged-roles\n       ibv2 --healthcheck [--url URL]\n\nstandard topology (ten workloads):\n  {}\n\nsmall topology (this, plus the four workers above; holds every secret in one\nprocess — see docs/architecture.md, Deployment topologies):\n  {}",
+        "usage: ibv2 --role <ROLE>\n       ibv2 --list-roles | --list-merged-roles\n       ibv2 --healthcheck [--url URL]\n\nstandard topology (eight workloads):\n  {}\n\nsmall topology (this, plus the three workers above; holds every secret in one\nprocess — see docs/architecture.md, Deployment topologies):\n  {}",
         roles::ROLES.join("\n  "),
         roles::MERGED_ROLES.join("\n  ")
     )

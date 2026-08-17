@@ -8,14 +8,14 @@
 //! **Not a deployed workload.** `scripts/verify_role_split.sh` rejects any
 //! compose service or chart workload naming this role, because it holds the
 //! union of every secret in the system — `JWT_ED25519_SECRET`,
-//! `POC_HMAC_SECRET`, and four database URLs — in one address space with the
+//! `POC_HMAC_SECRET`, and three database URLs — in one address space with the
 //! unauthenticated search path. Phase 5 of
 //! `docs/plans/active/one-image-one-binary.md` is where that becomes a
 //! supported deployment, with the threat model and topology rules that need.
 //!
-//! The four single-instance workers are **not** part of this role: they hold
+//! The three single-instance workers are **not** part of this role: they hold
 //! Postgres leases and nonce lanes and stay separate processes in every
-//! topology, so the smallest deployment is this plus those four.
+//! topology, so the smallest deployment is this plus those three.
 
 use anyhow::Context as _;
 use axum::extract::State;
@@ -41,7 +41,6 @@ const DEFAULT_DOCS_ROOT: &str = "/srv/docs";
 struct Health {
     identity: (sqlx::PgPool, identity_service::ChainClient),
     indexer: (sqlx::PgPool, username_indexer::ChainClient),
-    dim_tickets: dim_tickets::AppState,
     invite_tickets: invite_tickets::AppState,
     turn: turn::AppState,
     notifications: notifications::AppState,
@@ -52,27 +51,25 @@ pub async fn run() -> anyhow::Result<()> {
     http_common::metrics::spawn("all-in-one");
 
     // Each service's own config, read independently. This is the role the
-    // config namespacing exists for: before it, four of these read the same
-    // `DATABASE_URL` naming four different Postgres instances, so this process
+    // config namespacing exists for: before it, three of these read the same
+    // `DATABASE_URL` naming three different Postgres instances, so this process
     // would have connected every one of them to whichever database happened to
     // be set.
     let identity_config = identity_service::Config::from_env().context("identity-api config")?;
     let indexer_config = username_indexer::Config::from_env().context("username-indexer config")?;
-    let dim_config = dim_tickets::Config::from_env().context("dim-tickets-api config")?;
     let invite_config = invite_tickets::Config::from_env().context("invite-tickets-api config")?;
     let turn_config = turn::Config::from_env().context("turn-api config")?;
     let notify_config = notifications::Config::from_env().context("notify-relay config")?;
 
     let bind_addr = identity_config.bind_addr;
-    tracing::info!(bind = %bind_addr, "starting all-in-one: six surfaces, one port");
+    tracing::info!(bind = %bind_addr, "starting all-in-one: five surfaces, one port");
 
-    // Four migration sets against four databases, before anything serves. One
-    // bad migration blocks the whole API here, where in the ten-workload
+    // Three migration sets against three databases, before anything serves. One
+    // bad migration blocks the whole API here, where in the eight-workload
     // topology it blocks one service — the demo asserts it fails loudly.
     let identity_pool =
         identity_service::db::connect(identity_config.database_url.expose_secret()).await?;
     let indexer_pool = username_indexer::db::connect(&indexer_config.database_url).await?;
-    let dim_pool = dim_tickets::db::connect(&dim_config.database_url).await?;
     let invite_pool = invite_tickets::db::connect(&invite_config.database_url).await?;
 
     let identity_chain =
@@ -82,7 +79,6 @@ pub async fn run() -> anyhow::Result<()> {
         indexer_config.storage_page_size,
     )
     .await?;
-    let dim_chain = dim_tickets::ChainClient::connect(&dim_config.people_rpc_url).await?;
     tracing::info!("connected to People Chain");
 
     // identity
@@ -106,7 +102,6 @@ pub async fn run() -> anyhow::Result<()> {
     )
     .await?;
 
-    let dim_state = dim_tickets::AppState::new(dim_pool, dim_chain, dim_config);
     let invite_state = invite_tickets::AppState::new(invite_pool, invite_config);
     let turn_state = turn::AppState::new(turn_config);
     let notify_state = crate::roles::notify_relay::build_state(notify_config)?;
@@ -114,7 +109,6 @@ pub async fn run() -> anyhow::Result<()> {
     let health = Health {
         identity: (identity_pool, identity_chain),
         indexer: (indexer_pool, indexer_chain),
-        dim_tickets: dim_state.clone(),
         invite_tickets: invite_state.clone(),
         turn: turn_state.clone(),
         notifications: notify_state.clone(),
@@ -123,7 +117,6 @@ pub async fn run() -> anyhow::Result<()> {
     let app = routes::merge(Surfaces {
         identity: identity_service::http::router(identity_state),
         indexer: username_indexer::http::router(indexer_state),
-        dim_tickets: dim_tickets::http::router(dim_state),
         invite_tickets: invite_tickets::http::router(invite_state),
         turn: turn::http::router(turn_state),
         notifications: notifications::http::router(notify_state),
@@ -154,7 +147,7 @@ fn docs_root() -> String {
     std::env::var(DOCS_ROOT_VAR).unwrap_or_else(|_| DEFAULT_DOCS_ROOT.to_string())
 }
 
-/// Health for the merged process. Six services' probes behind one `/readyz`, so
+/// Health for the merged process. Five services' probes behind one `/readyz`, so
 /// a dead dependency is visible in one response rather than only on a port
 /// nobody polls.
 fn health_router() -> Router<Health> {
@@ -176,7 +169,7 @@ fn health_router() -> Router<Health> {
 /// This is the decision Phase 5 of `docs/plans/active/one-image-one-binary.md`
 /// owed, and it is deliberately the opposite of the per-service behaviour.
 ///
-/// Readiness controls whether the instance receives traffic **at all**. With six
+/// Readiness controls whether the instance receives traffic **at all**. With five
 /// surfaces behind one probe, a strict aggregate turns "the ticket service's
 /// database is down" into "the whole API is out of rotation, auth included" — a
 /// partial outage promoted to a total one. And in this topology there is a
@@ -192,7 +185,7 @@ async fn readyz(State(health): State<Health>) -> Response {
     let (identity_pool, identity_chain) = &health.identity;
     let (indexer_pool, indexer_chain) = &health.indexer;
 
-    let results: [(&str, http_common::health::Readiness); 6] = [
+    let results: [(&str, http_common::health::Readiness); 5] = [
         (
             "identity-api",
             identity_service::http::health::probe(identity_pool.clone(), identity_chain.clone())
@@ -202,10 +195,6 @@ async fn readyz(State(health): State<Health>) -> Response {
             "username-indexer",
             username_indexer::http::health::probe(indexer_pool.clone(), indexer_chain.clone())
                 .await,
-        ),
-        (
-            "dim-tickets-api",
-            dim_tickets::http::readiness(health.dim_tickets.clone()).await,
         ),
         (
             "invite-tickets-api",

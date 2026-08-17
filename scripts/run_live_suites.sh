@@ -49,11 +49,9 @@ esac
 
 identity_port="${IDENTITY_TEST_POSTGRES_PORT:-56432}"
 indexer_port="${INDEXER_TEST_POSTGRES_PORT:-56433}"
-dim_port="${DIM_TICKETS_TEST_POSTGRES_PORT:-56434}"
 invite_port="${INVITE_TICKETS_TEST_POSTGRES_PORT:-56435}"
 export IDENTITY_POSTGRES_PORT="$identity_port"
 export INDEXER_POSTGRES_PORT="$indexer_port"
-export DIM_TICKETS_POSTGRES_PORT="$dim_port"
 export INVITE_POSTGRES_PORT="$invite_port"
 
 compose=(
@@ -66,7 +64,6 @@ databases=(
   postgres
   username-indexer-postgres
   invite-tickets-postgres
-  dim-tickets-postgres
 )
 
 cleanup() {
@@ -81,7 +78,6 @@ trap 'exit 143' TERM
 identity_url="postgres://identity:identity@localhost:${identity_port}/identity"
 indexer_url="postgres://username_indexer:username_indexer@localhost:${indexer_port}/username_indexer"
 invite_url="postgres://invite_tickets:invite_tickets@localhost:${invite_port}/invite_tickets"
-dim_url="postgres://dim_tickets:dim_tickets@localhost:${dim_port}/dim_tickets"
 
 if [ "$mode" = "chain" ]; then
   # These production-router suites also require PEOPLE_RPC_URL, or use their
@@ -94,7 +90,7 @@ if [ "$mode" = "chain" ]; then
   exit 0
 fi
 
-# Deterministic database-only gate: 14 suites / 38 ignored tests. Keep this
+# Deterministic database-only gate: 13 suites / 28 ignored tests. Keep this
 # list here so local tests, CI, and coverage all execute the same catalog.
 for suite in allocation_live auth_live outbox_live dotns_live queue_live voucher_live payment_live; do
   IDENTITY_TEST_DATABASE_URL="$identity_url" \
@@ -115,5 +111,3 @@ INVITE_TICKETS_TEST_DATABASE_URL="$invite_url" \
 INVITE_TICKETS_TEST_DATABASE_URL="$invite_url" \
   "${cargo_cmd[@]}" -p invite-tickets --test pool_live_pg -- --ignored
 
-DIM_TICKETS_TEST_DATABASE_URL="$dim_url" \
-  "${cargo_cmd[@]}" -p dim-tickets --test tickets_live_pg -- --ignored

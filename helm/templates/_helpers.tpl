@@ -33,8 +33,8 @@ The env block for a workload, assembled from three disjoint sources:
      there so two workloads cannot disagree)
   2. env       — this workload's own literals
   3. secretKeys — pulled from this workload's Secret, never inlined
-plus INVITER_ADDRESS, which is per-workload because the two inviters must be
-different accounts.
+plus INVITER_ADDRESS, which is per-workload because an inviter owns a nonce
+lane and must not be shared with another submitter.
 */}}
 {{- define "ibv2.env" -}}
 {{- $root := .root -}}
@@ -96,28 +96,28 @@ chart every time, so a `fail` here is the last check that always runs.
 {{- if $w.enabled }}{{ $_ := set $enabled $name $w }}{{ end }}
 {{- end }}
 
-{{/* The four processes that submit to a chain or advance a chain-facing queue.
+{{/* The three processes that submit to a chain or advance a chain-facing queue.
      A LIST, not a per-workload flag: a flag can be unset in an overlay, and
      `{singleton: false, replicas: 3}` would then render three writers on one
      signing account with nothing to stop it. Membership is asserted in both
      directions below, so neither a missing flag nor a spurious one passes. */}}
-{{- $singletons := list "identity-chain-writer" "registration-queue" "dim-tickets-writer" "invite-tickets-pool" -}}
+{{- $singletons := list "identity-chain-writer" "registration-queue" "invite-tickets-pool" -}}
 
 {{/* ── Topology ─────────────────────────────────────────────────────────────
 
-     A deployment renders the STANDARD topology (six per-service HTTP workloads)
-     or the SMALL one (`all-in-one`, which serves all six surfaces in one
-     process) — plus the four workers above, which belong to both. Never a mix.
+     A deployment renders the STANDARD topology (five per-service HTTP workloads)
+     or the SMALL one (`all-in-one`, which serves all five surfaces in one
+     process) — plus the three workers above, which belong to both. Never a mix.
 
      The small topology collapses the secret compartmentalisation the standard
      one enforces: one process holds JWT_ED25519_SECRET (mint any token),
-     POC_HMAC_SECRET, TURN_SECRET and all four database URLs, in the same address
+     POC_HMAC_SECRET, TURN_SECRET and all three database URLs, in the same address
      space that serves the unauthenticated public search. That is a legitimate
      trade for a small deployment and a bad accident for anyone else, so it is
      gated on an explicit acknowledgement rather than on a workload being
      enabled. See "Deployment topologies" in docs/architecture.md. */}}
 {{- $merged := list "all-in-one" -}}
-{{- $perService := list "identity-api" "username-indexer" "dim-tickets-api" "invite-tickets-api" "turn-api" "notify-relay" -}}
+{{- $perService := list "identity-api" "username-indexer" "invite-tickets-api" "turn-api" "notify-relay" -}}
 {{- $mergedOn := list -}}
 {{- $perServiceOn := list -}}
 {{- range $name, $w := $enabled }}
@@ -195,7 +195,7 @@ chart every time, so a `fail` here is the last check that always runs.
   {{- end }}
 
   {{/* Only where the workload runs: an environment that does not deploy the
-       ticket services has no inviter to configure. */}}
+       ticket service has no inviter to configure. */}}
   {{- if and $w.inviter $w.enabled }}
   {{- if not (index $g.inviters $w.inviter) }}
   {{- fail (printf "%s draws its inviter from global.inviters.%s, which is empty" $name $w.inviter) }}
@@ -203,24 +203,8 @@ chart every time, so a `fail` here is the last check that always runs.
   {{- end }}
 {{- end }}
 
-{{/* The two inviters submit as separate accounts or they race each other.
-     The ADDRESS is the authority; the account that actually owns the nonce lane
-     is the SIGNER (a delegate proxying for that address, or the address itself).
-     docker-compose.yml keeps the two signers apart structurally — the chart must
-     too, or a shared delegate key passes an address-only check. */}}
-{{- if and $g.inviters.dim $g.inviters.invite }}
-{{- if eq $g.inviters.dim $g.inviters.invite }}
-{{- fail "global.inviters.dim and .invite are the same account — two inviters on one account is one nonce lane with two submitters" }}
-{{- end }}
-{{- end }}
-{{- $dimSigner := dig "dim-tickets-writer" "INVITER_SIGNER_SURI" "" .Values.secrets }}
-{{- $inviteSigner := dig "invite-tickets-pool" "INVITER_SIGNER_SURI" "" .Values.secrets }}
-{{- if and $dimSigner $inviteSigner (eq $dimSigner $inviteSigner) }}
-{{- fail "dim-tickets-writer and invite-tickets-pool resolve INVITER_SIGNER_SURI from the SAME vault reference — one signing account, two submitters, one nonce lane" }}
-{{- end }}
-
 {{/* The dev keypair is committed in docker-compose.yml. Defaulting to it means an
-     environment file that merely OMITS the key gets five services verifying
+     environment file that merely OMITS the key gets four services verifying
      tokens anyone with this repo can mint. An omission must fail, not degrade. */}}
 {{- $devPub := "0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c" }}
 {{- $devAlice := "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" }}

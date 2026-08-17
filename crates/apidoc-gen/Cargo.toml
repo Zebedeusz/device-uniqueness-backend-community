@@ -16,7 +16,6 @@ path = "src/main.rs"
 identity-service = { path = "../identity-service" }
 username-indexer = { path = "../username-indexer" }
 invite-tickets = { path = "../invite-tickets" }
-dim-tickets = { path = "../dim-tickets" }
 turn = { path = "../turn" }
 notifications = { path = "../notifications" }
 utoipa.workspace = true

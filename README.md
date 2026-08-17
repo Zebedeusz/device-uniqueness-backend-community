@@ -6,7 +6,6 @@ Rust backend that proves a device and registers a username on Polkadot's People 
 - **`identity-chain-writer`** — single-instance worker that drains the reservation outbox onto the chain.
 - **`registration-queue`** — single-instance queue advancer; while `QUEUE_ENABLED` is on, it is the only path out of the registration queue.
 - **`username-indexer`** — finalized-chain username projection and public prefix search, plus the optional proof-of-compute gate.
-- **`dim-tickets-api`** / **`dim-tickets-writer`** — DIM (Game / ProofOfInk) invitation-credential service.
 - **`invite-tickets-api`** / **`invite-tickets-pool`** — synchronous invitation-ticket claim and its keypair-pool maintainer.
 - **`turn-api`** — stateless TURN (coturn REST API) credential issuer.
 - **`notify-relay`** — stateless APNs / FCM push relay.
@@ -22,7 +21,7 @@ docker compose up                 # nothing is published — the edge does that
 
 # to reach a service directly, layer the loopback-only debug overlay:
 docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
-#   identity 127.0.0.1:8080 · indexer :8081 · dim-tickets :8082
+#   identity 127.0.0.1:8080 · indexer :8081
 #   invite-tickets :8083 · turn :8084 · notify :8085
 ```
 
@@ -50,7 +49,7 @@ Push to `main`. CI tests, builds the image, and updates the test server
 
 ## Releases
 
-**One image, ten roles.** The released image is mirrored to public Docker Hub — no
+**One image, eight roles.** The released image is mirrored to public Docker Hub — no
 account, no token:
 
 ```bash
@@ -59,7 +58,7 @@ docker run paritytech/device-uniqueness-backend:stable --role identity-api
 ```
 
 Every service and worker is a `--role` of the single `ibv2` binary the image holds
-(`ibv2 --list-roles` prints the ten); what makes a container a given service is its
+(`ibv2 --list-roles` prints the eight); what makes a container a given service is its
 role, not a different image. The same digests are on
 `ghcr.io/paritytech/device-uniqueness-backend` — `vX.Y.Z` and `stable` exist on both;
 **`latest` is ghcr-only**, because it tracks `main` and unreleased work is not what an

@@ -1,6 +1,6 @@
 apiVersion: v2
 name: identity-backend-v2
-description: Identity Backend V2 — ten services from one image, one tag
+description: Identity Backend V2 — eight services from one image, one tag
 type: application
 # Chart version. The app version is not pinned here: `global.imageTag` is the
 # single source of "which build is this environment on", and it is set by the
@@ -8,6 +8,6 @@ type: application
 version: 0.1.0
 
 # No dependencies on purpose. The legacy chart pulls Parity's `common` chart,
-# which models ONE workload; this chart's whole job is ten. A dependency would
+# which models ONE workload; this chart's whole job is eight. A dependency would
 # also mean `helm dependency update` — a network fetch — inside the offline CI
 # gate that renders this chart.

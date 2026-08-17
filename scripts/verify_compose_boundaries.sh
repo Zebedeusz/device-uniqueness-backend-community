@@ -10,7 +10,6 @@ set -euo pipefail
 DB_URL_KEYS=(
   IDENTITY_DATABASE_URL
   INDEXER_DATABASE_URL
-  DIM_TICKETS_DATABASE_URL
   INVITE_TICKETS_DATABASE_URL
   DATABASE_URL
 )
@@ -102,16 +101,16 @@ done
 # therefore REQUIRED on both and forbidden everywhere else.
 require_key identity-api DOTNS_GATEWAY_ENABLED
 require_key identity-chain-writer DOTNS_GATEWAY_ENABLED
-for service in registration-queue username-indexer dim-tickets-api \
-               dim-tickets-writer invite-tickets-api invite-tickets-pool turn-api; do
+for service in registration-queue username-indexer \
+               invite-tickets-api invite-tickets-pool turn-api; do
   forbid_key "$service" DOTNS_GATEWAY_ENABLED
 done
 
 # Request-validation bounds are intake-only. They shape 400s, not extrinsics.
 for key in DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS DOTNS_MAX_FUTURE_SKEW_SECS; do
   require_key identity-api "$key"
-  for service in identity-chain-writer registration-queue username-indexer dim-tickets-api \
-                 dim-tickets-writer invite-tickets-api invite-tickets-pool turn-api; do
+  for service in identity-chain-writer registration-queue username-indexer \
+                 invite-tickets-api invite-tickets-pool turn-api; do
     forbid_key "$service" "$key"
   done
 done
@@ -124,8 +123,8 @@ done
 require_key identity-chain-writer ASSET_HUB_RPC_URL
 require_key identity-chain-writer ATTESTER_ACCOUNT
 require_key identity-api ATTESTER_ACCOUNT
-for service in registration-queue username-indexer dim-tickets-api \
-               dim-tickets-writer invite-tickets-api invite-tickets-pool turn-api \
+for service in registration-queue username-indexer \
+               invite-tickets-api invite-tickets-pool turn-api \
                notify-relay; do
   forbid_key "$service" ASSET_HUB_RPC_URL
 done
@@ -165,32 +164,10 @@ require_key username-indexer JWT_ED25519_PUBLIC_KEY
 require_key username-indexer POC_HMAC_SECRET
 # Every other service in the compose file, application and database alike.
 for service in identity-api identity-chain-writer registration-queue \
-               dim-tickets-api dim-tickets-writer invite-tickets-api \
-               invite-tickets-pool turn-api notify-relay \
-               postgres username-indexer-postgres dim-tickets-postgres \
+               invite-tickets-api invite-tickets-pool turn-api notify-relay \
+               postgres username-indexer-postgres \
                invite-tickets-postgres; do
   forbid_key "$service" POC_HMAC_SECRET
-done
-
-for service in dim-tickets-api dim-tickets-writer; do
-  forbid_key "$service" JWT_ED25519_SECRET
-  forbid_key "$service" CHAIN_WRITER_SIGNER_SURI
-done
-forbid_key dim-tickets-api INVITER_SIGNER_SURI
-
-require_key dim-tickets-writer PEOPLE_NETWORK
-require_key dim-tickets-writer INVITER_ADDRESS
-require_key dim-tickets-writer INVITER_SIGNER_SURI
-
-# Namespaced per service: three services read a bare RATE_LIMIT, so tuning one
-# retuned all three.
-for key in JWT_JWKS_JSON JWT_ED25519_PUBLIC_KEY QUOTA_TIMEOUT_SECS \
-           DIM_TICKETS_RATE_LIMIT DIM_TICKETS_RATE_LIMIT_WINDOW_SECS; do
-  require_key dim-tickets-api "$key"
-done
-
-for key in WRITER_LEASE_TTL_SECS WRITER_POLL_SECS WRITER_BATCH_SIZE WRITER_MAX_RETRIES WRITER_RETRY_BASE_MS WRITER_RETRY_MAX_MS WRITER_RETRY_MAX_EXPONENT WRITER_FINALIZE_SECS; do
-  require_key dim-tickets-writer "$key"
 done
 
 # Only the edge publishes. The base file must expose nothing on the host, so a
@@ -208,8 +185,8 @@ debug_mappings="$(port_mappings <<<"$rendered_debug")"
 debug_count="$(grep -c . <<<"$debug_mappings" || true)"
 debug_public="$(grep -vc '^127\.0\.0\.1|' <<<"$debug_mappings" || true)"
 debug_unique="$(cut -d'|' -f2 <<<"$debug_mappings" | cut -d'-' -f1 | sort -u | grep -c . || true)"
-if [ "$debug_count" -ne 10 ]; then
-  echo "docker-compose.debug.yml must republish all 10 service/Postgres ports ($debug_count found)" >&2
+if [ "$debug_count" -ne 8 ]; then
+  echo "docker-compose.debug.yml must republish all 8 service/Postgres ports ($debug_count found)" >&2
   echo "$debug_mappings" >&2
   exit 1
 fi
@@ -227,20 +204,18 @@ fi
 # Each database credential reaches ONLY the services that own that database.
 #
 # This is the invariant the namespacing exists to make checkable. Before it,
-# eight services read the same key name — `DATABASE_URL` — pointing at four
+# six services read the same key name — `DATABASE_URL` — pointing at three
 # different Postgres instances, so "is this service wired to the right database?"
 # was not expressible here at all. A misrouted URL starts cleanly and runs the
 # wrong migrations against someone else's schema.
 declare -A DB_OWNERS=(
   [IDENTITY_DATABASE_URL]="identity-api identity-chain-writer registration-queue"
   [INDEXER_DATABASE_URL]="username-indexer"
-  [DIM_TICKETS_DATABASE_URL]="dim-tickets-api dim-tickets-writer"
   [INVITE_TICKETS_DATABASE_URL]="invite-tickets-api invite-tickets-pool"
 )
 APP_SERVICES=(
   identity-api identity-chain-writer registration-queue username-indexer
-  dim-tickets-api dim-tickets-writer invite-tickets-api invite-tickets-pool
-  turn-api notify-relay
+  invite-tickets-api invite-tickets-pool turn-api notify-relay
 )
 for key in "${!DB_OWNERS[@]}"; do
   for service in "${APP_SERVICES[@]}"; do

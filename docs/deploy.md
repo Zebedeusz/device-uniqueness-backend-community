@@ -2,15 +2,15 @@
 
 From-zero setup of a server. Day-2 operations: [runbook.md](runbook.md).
 
-Topology: `identity-api`, `identity-chain-writer`, and the single-instance `registration-queue` advancer (no signing secret; with `QUEUE_ENABLED` on it is the queue's only drain — down, claims park as `QUEUED` and the writer warns about stranded rows) share the identity Postgres; `username-indexer` owns a separate projection Postgres; `dim-tickets-api` and `dim-tickets-writer` share a third, dim-tickets-owned Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a fourth, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). `turn-api` and `notify-relay` are stateless (no Postgres). Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+Topology: `identity-api`, `identity-chain-writer`, and the single-instance `registration-queue` advancer (no signing secret; with `QUEUE_ENABLED` on it is the queue's only drain — down, claims park as `QUEUED` and the writer warns about stranded rows) share the identity Postgres; `username-indexer` owns a separate projection Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a third, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). `turn-api` and `notify-relay` are stateless (no Postgres). Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
 
 **Two compose projects, one host.** The services live in an *environment* project started from [`docker-compose.yml`](../docker-compose.yml); the public edge is a separate project started from [`gateway/docker-compose.yml`](../gateway/docker-compose.yml). They meet on a shared external docker network (`ibv2-edge`) that neither owns, where each environment registers its services under `ENV_ID`-suffixed aliases (`identity-api-paseo-next-v2`, …). The edge resolves those aliases by docker DNS and is **the only container that publishes a host port** (80/443): nothing else is reachable from outside the machine, and a second environment collides with nothing. Route table: the committed [`gateway/Caddyfile`](../gateway/Caddyfile), loaded by the edge container. Ports for local debugging come from the opt-in [`docker-compose.debug.yml`](../docker-compose.debug.yml) overlay, which binds to `127.0.0.1` only.
 
-Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `dim-tickets-api`, `invite-tickets-api`, `turn-api`, and `notify-relay` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the dim inviter SURI lives only in `dim-tickets-writer`, the invite inviter SURI only in `invite-tickets-pool`. `turn-api` additionally holds `TURN_SECRET` — the HMAC key shared with the TURN relay (coturn `--use-auth-secret`); relay and issuer must be rotated together, and no other service sees it. Push credentials (`APNS_*`/`FCM_*`) live only in `notify-relay`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
+Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `invite-tickets-api`, `turn-api`, and `notify-relay` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the invite inviter SURI lives only in `invite-tickets-pool`. `turn-api` additionally holds `TURN_SECRET` — the HMAC key shared with the TURN relay (coturn `--use-auth-secret`); relay and issuer must be rotated together, and no other service sees it. Push credentials (`APNS_*`/`FCM_*`) live only in `notify-relay`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
 
-**Nonce lanes**: `dim-tickets-writer` and `invite-tickets-pool` each submit as "an inviter" and MUST NOT sign as the same account — two independent submitters on one account race nonces. Give each its own account (e.g. separate proxy delegates of one cold inviter primary); compose interpolates them from distinct `INVITER_*` (dim) and `INVITE_INVITER_*` (invite) host variables.
+**Nonce lanes**: `invite-tickets-pool` submits as "an inviter" and `identity-chain-writer` as the attester authority; no two submitters may sign as the same account — two independent submitters on one account race nonces. Give each its own account (e.g. separate proxy delegates of one cold primary); compose interpolates the pool's from `INVITE_INVITER_*` host variables.
 
-Postgres is reachable by sibling containers on the internal Compose network and publishes no host port at all; set a URL-safe random `DIM_TICKETS_POSTGRES_PASSWORD` on deployments.
+Postgres is reachable by sibling containers on the internal Compose network and publishes no host port at all.
 
 ## Prerequisites
 
@@ -63,15 +63,11 @@ RUST_LOG=info
 CHAIN_WRITER_SIGNER_SURI=<secret>        # mnemonic, 0x+64-hex seed, or 0x+128-hex raw sr25519
                                          # its account == ATTESTER_ACCOUNT -> direct signing,
                                          # otherwise the writer proxies for the authority
-# dim-tickets (see .env.example for tunables and dev defaults)
-DIM_TICKETS_POSTGRES_PASSWORD=<URL-safe random password>
+# shared by the verify-only services (see .env.example for tunables and dev defaults)
 PEOPLE_NETWORK=<westend2|paseo|polkadot>
-INVITER_ADDRESS=<dim inviter SS58>        # its on-chain AvailableInvites funds dim tickets
 JWT_ED25519_PUBLIC_KEY=0x<64-hex>         # PUBLIC half of JWT_ED25519_SECRET (or set JWT_JWKS_JSON)
-INVITER_SIGNER_SURI=<secret>              # same accepted formats as the chain writer
-                                          # its account == INVITER_ADDRESS -> direct signing,
-                                          # otherwise it proxies for the inviter
-# invite-tickets (distinct account from the dim inviter — see Nonce lanes above)
+
+# invite-tickets (its own account — see Nonce lanes above)
 INVITE_INVITER_ADDRESS=<invite inviter SS58>   # funds set_invite_ticket; stamped into ticket rows
 INVITE_INVITER_SIGNER_SURI=<secret>            # hot invite inviter key, or a delegate proxying for it
 
@@ -184,10 +180,8 @@ ports exist, then `systemctl enable --now caddy`.
 curl -fsS https://<domain>/readyz                          # {"chain":"up","db":"up",...}
 curl -fsS https://<domain>/api/v1/attester
 curl -fsS 'https://<domain>/api/v1/usernames/search?prefix=alice'   # routed to the indexer
-curl -sS https://<domain>/api/v1/dim-ticket/x              # 401 problem+json = routed + auth gate live
 curl -fsS https://<domain>/docs/ -o /dev/null              # committed API reference
 sudo docker compose logs identity-chain-writer | tail -5   # "connected signer=…", "acquired writer lease"
-sudo docker compose logs dim-tickets-writer | tail -5      # "connected signer=…", "acquired writer lease"
 ```
 
 Confirm the host exposes nothing else:
@@ -261,9 +255,9 @@ how many processes hold how many secrets. The design reasoning and the full thre
 **The standard topology is the default and is what `paseo-next-v2` and `previewnet` run.** Moving
 either of them to the small topology is a security decision, not a configuration change.
 
-Pick the small topology only when operating ten workloads is genuinely not worth it, and only with
+Pick the small topology only when operating eight workloads is genuinely not worth it, and only with
 the trade understood: one process holds `JWT_ED25519_SECRET` (mint a token for any subject),
-`POC_HMAC_SECRET`, `TURN_SECRET` and all four database URLs, in the same address space that serves
+`POC_HMAC_SECRET`, `TURN_SECRET` and all three database URLs, in the same address space that serves
 the unauthenticated public `GET /api/v1/usernames/search`.
 
 The chart will not let you reach it by accident:
@@ -395,7 +389,7 @@ been provisioned. Provisioning is SRE's — see [`sre-deployment-request.md`](sr
 — and the sequencing lives in [`plans/active/kubernetes-helm-deploy.md`](plans/active/kubernetes-helm-deploy.md).
 Everything above (the single host, compose, the Caddy edge) is what actually serves traffic today.
 
-The chart is [`helm/`](../helm): one loop over ten workloads, plus a static server for the API
+The chart is [`helm/`](../helm): one loop over eight workloads, plus a static server for the API
 reference. One values file per environment.
 
 ```bash
@@ -491,7 +485,7 @@ The same digests are published to two registries:
 | `docker.io/paritytech/device-uniqueness-backend` | `vX.Y.Z`, `X.Y.Z`, `stable` | **public**, unauthenticated `docker pull` for external consumers |
 
 Docker Hub namespaces are one level (`org/name`), which one image fits without a workaround —
-the per-service `ibv2-` prefix the ten-image layout needed is gone. Override the destination
+the per-service `ibv2-` prefix the multi-image layout needed is gone. Override the destination
 with the `DOCKERHUB_REPO` repository variable; the credentials are the `DOCKERHUB_USER` /
 `DOCKERHUB_PASSWORD` secrets.
 
@@ -541,8 +535,6 @@ defaults for every variable are in `.env.example`.
 | `migration N was previously applied but has been modified` | Volume holds an older schema. `sudo docker compose down && sudo docker volume rm identity-backend-v2_pgdata && sudo docker compose up -d` — destroys DB state, back up first ([runbook](runbook.md#database-backup-manual)). |
 | writer: `Cannot parse hex string` | Malformed `CHAIN_WRITER_SIGNER_SURI` (see accepted formats above). |
 | `identity-api` never healthy | It blocks on the People Chain RPC at startup — check connectivity to `PEOPLE_RPC_URL`. |
-| `dim-tickets-api` never healthy | Same startup shape as `identity-api` (Postgres + People RPC); also requires `INVITER_ADDRESS` + JWT public-key material — a missing var aborts boot loudly. |
-| dim tickets stuck `PENDING` | `dim-tickets-writer` down or inviter out of `AvailableInvites` — `sudo docker compose logs dim-tickets-writer`; the read path keeps serving either way. |
 | `username-indexer` never healthy | Check its Postgres, People Chain RPC, and bootstrap logs with `sudo docker compose logs username-indexer`. |
 | No TLS certificate | DNS not propagated, 80/443 blocked, or a host Caddy still holding the ports. `dig +short <domain>`, `sudo ss -ltnp '( sport = :443 )'`, `sudo docker compose -f gateway/docker-compose.yml -p edge logs caddy`. |
 | Edge answers 502 | The upstream alias does not resolve: the environment project is down, or its `ENV_ID` does not match the Caddyfile's upstream suffix. `sudo docker network inspect ibv2-edge`. |
