@@ -15,7 +15,7 @@ jobs:
   # allow-list). Markdown-only pushes (docs, plans, README) match nothing, so
   # build+deploy below are skipped for them.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: parity-int-ubuntu
     outputs:
       deployable: ${{ steps.filter.outputs.deployable }}
     steps:
@@ -45,7 +45,8 @@ jobs:
   build:
     needs: [check, changes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.deployable == 'true'
-    runs-on: ubuntu-latest
+    # A full workspace compile inside bake — the largest internal runner.
+    runs-on: parity-int-ubuntu-xl
     permissions:
       contents: read
       packages: write

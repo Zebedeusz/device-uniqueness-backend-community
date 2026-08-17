@@ -181,14 +181,23 @@ docker run -d --rm --label ibv2-parity=1 --name ibv2-edge-traefik \
   --log.level=ERROR >/dev/null
 
 # --- wait for both edges --------------------------------------------------
+# The gate is the route TABLE being live, not the port merely answering.
+# Traefik's file provider loads dynamic.yml asynchronously AFTER it starts
+# listening, so a request that arrives in between gets Traefik's own
+# `404 page not found`. A `!= 000` gate accepts that as ready, which let the
+# leading CASES race the config load: the first one or two requests came back
+# 404 from an edge with no routers yet, against a Caddy that was serving them.
+# Non-deterministic in both how many requests it ate and which environment it
+# hit, and invisible on a runner that happened to win the race every time.
+# /readyz is itself one of the compared cases and answers 200 on both edges.
 for port in "$CADDY_PORT" "$TRAEFIK_PORT"; do
   for _ in $(seq 1 40); do
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
       -H "Host: $HOST" "http://127.0.0.1:$port/readyz" || true)
-    [ "$code" != "000" ] && break
+    [ "$code" = "200" ] && break
     sleep 0.5
   done
-  [ "$code" != "000" ] || { echo "edge on $port never answered" >&2; exit 1; }
+  [ "$code" = "200" ] || { echo "edge on $port never routed /readyz (last=$code)" >&2; exit 1; }
 done
 
 CADDY_PORT="$CADDY_PORT" TRAEFIK_PORT="$TRAEFIK_PORT" HOST="$HOST" \

@@ -34,7 +34,7 @@ jobs:
   # binaries report a different version. Releasing is therefore: bump
   # [workspace.package] version + write the changelog entry, merge, then tag.
   version:
-    runs-on: ubuntu-latest
+    runs-on: parity-int-ubuntu
     outputs:
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
@@ -79,8 +79,11 @@ jobs:
         include:
           - platform: linux/amd64
             arch: amd64
-            runner: ubuntu-latest
+            runner: parity-int-ubuntu-xl
             target: x86_64-unknown-linux-gnu
+          # GitHub-hosted, deliberately: every Parity self-hosted tray is x86_64,
+          # so there is no internal runner to move this leg to. The alternative
+          # is QEMU on an amd64 runner, which is what native runners replaced.
           - platform: linux/arm64
             arch: arm64
             runner: ubuntu-24.04-arm
@@ -165,6 +168,9 @@ jobs:
 
   # macOS has no image lane, so it compiles natively — the same single binary
   # the Dockerfile builds. Apple Silicon only: `macos-latest` is arm64.
+  # GitHub-hosted, deliberately: `parity-macos` is not in the runner group
+  # private repos get by default, and its 6 GB of RAM is thin for a release
+  # build. Moving this off GitHub means an SRE request for the tray first.
   macos-binaries:
     needs: [check, version]
     runs-on: macos-latest
@@ -198,7 +204,7 @@ jobs:
   # per host. Ten services in, ten manifest lists out — all at the same tags.
   manifest:
     needs: [version, build]
-    runs-on: ubuntu-latest
+    runs-on: parity-int-ubuntu
     permissions:
       packages: write
     outputs:
@@ -379,7 +385,7 @@ jobs:
   # publish.
   release:
     needs: [version, manifest, macos-binaries]
-    runs-on: ubuntu-latest
+    runs-on: parity-int-ubuntu
     permissions:
       contents: write
     steps:

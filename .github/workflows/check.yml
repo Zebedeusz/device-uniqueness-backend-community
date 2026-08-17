@@ -17,7 +17,10 @@ on:
 
 jobs:
   offline:
-    runs-on: ubuntu-latest
+    # The long pole on every PR — clippy plus the whole workspace's tests — so it
+    # gets the largest internal runner. `parity-int-*` is the runner group that
+    # private paritytech repos get by default; going public would strand these.
+    runs-on: parity-int-ubuntu-xl
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -65,7 +68,7 @@ jobs:
   # stripped-prefix bug and every Caddyfile-side edit.
   routes:
     needs: offline
-    runs-on: ubuntu-latest
+    runs-on: parity-int-ubuntu
     steps:
       - uses: actions/checkout@v7
         with:
@@ -80,7 +83,7 @@ jobs:
 
   database:
     needs: offline
-    runs-on: ubuntu-latest
+    runs-on: parity-int-ubuntu-l
     steps:
       - uses: actions/checkout@v7
         with:

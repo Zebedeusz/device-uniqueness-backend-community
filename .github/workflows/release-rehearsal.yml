@@ -18,7 +18,8 @@ on:
 
 jobs:
   rehearse:
-    runs-on: ubuntu-latest
+    # Recompiles the workspace, hence the largest internal runner.
+    runs-on: parity-int-ubuntu-xl
     services:
       registry:
         image: registry:2
