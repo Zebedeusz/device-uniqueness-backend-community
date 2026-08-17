@@ -13,7 +13,7 @@ they summarise each release rather than list every change.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-08-15
+## [0.2.0] - 2026-08-17
 
 Breaking on three fronts: the image's ten binaries become one `ibv2` binary
 picked with `--role`, per-service config keys are namespaced, and the
@@ -60,6 +60,28 @@ proxy-signing and attester-account variables are removed or renamed — read
   drifts. Both regenerate byte-identically to the previous hand-written files,
   so there is no behaviour change; what changed is that there is one copy of the
   ownership map instead of three ([#58]).
+- **`POST /api/v1/turn/issue-with-proof`**: TURN credentials for a proven Lite or
+  Full person holding no identity-service JWT — a game or a standalone hosted
+  product redeems a Bandersnatch ring-VRF membership proof against a People Chain
+  root instead, and gets the same 201 body as `/turn/issue` ([#51]).
+
+  **Off by default** (`TURN_PROOF_ENABLED=false`): the route is not mounted, and
+  `/turn/issue` and its JWT contract are untouched. Enabling it requires
+  `TURN_PROOF_RPC_URL`, `TURN_PROOF_GENESIS` and `TURN_PROOF_PRODUCTS`, each
+  failing closed with no default.
+
+  Redemption is one request with no challenge round trip: the client sends a
+  timestamp, the server derives the proved message itself, and accepts it only
+  inside a bounded clock skew — nothing is minted or stored. Each request names
+  the `productId` it proves for and is verified under the context the server
+  derives for that product, so a host does not prompt the user; an unlisted
+  product is refused before any verification work. Both canonical collections
+  (`people-lite` and `people`) are accepted, each root cache refreshed
+  independently in the background — a dead RPC blocks neither boot nor
+  `/turn/issue`, and a stale root fails closed. The contextual alias never
+  leaves the process: it is the in-memory per-person, per-product throttle key
+  and the input to a `TURN_SECRET`-keyed HMAC yielding one opaque credential id.
+
 - The released image is mirrored to **public Docker Hub** — `docker pull
   paritytech/identity-backend-rust:stable` needs no account. `vX.Y.Z` and `stable` are on
   both registries; `latest` stays ghcr-only, since it tracks unreleased `main` ([#50],
@@ -230,6 +252,7 @@ First release published as a multi-arch (amd64 + arm64) image.
 [#33]: https://github.com/paritytech/identity-backend-rust/pull/33
 [#46]: https://github.com/paritytech/identity-backend-rust/pull/46
 [#50]: https://github.com/paritytech/identity-backend-rust/pull/50
+[#51]: https://github.com/paritytech/identity-backend-rust/pull/51
 [#53]: https://github.com/paritytech/identity-backend-rust/pull/53
 [#54]: https://github.com/paritytech/identity-backend-rust/pull/54
 [#55]: https://github.com/paritytech/identity-backend-rust/pull/55
