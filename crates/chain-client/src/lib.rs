@@ -6,6 +6,8 @@
 //! - [`connect`] / [`connect_asset_hub`]: an auto-reconnecting subxt
 //!   [`OnlineClient`] over the [`chain_types::PeopleConfig`] or
 //!   [`chain_types::AssetHubConfig`] transaction-extension pipeline.
+//!   [`connect_with_rpc`] additionally returns the underlying [`RpcClient`] for
+//!   callers that need raw RPC over the same connection.
 //! - [`WriterSigner`]: the sr25519 signing key a single-instance chain writer
 //!   submits with. It signs for either chain, both being Polkadot-shaped.
 //!   Nonces are per chain. One account can therefore hold a lane on each.
@@ -23,32 +25,96 @@ use subxt::utils::{AccountId32, MultiSignature};
 use subxt::OnlineClient;
 use subxt_rpcs::client::{ReconnectingRpcClient, RpcClient};
 
+/// Failure to open a chain connection or build a client over it.
+///
+/// Typed so a caller can tell "endpoint unreachable" from "node answered but
+/// the client could not be built over it" without parsing a message.
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectError {
+    /// The RPC transport could not be established.
+    #[error("connecting to {chain} at {url}")]
+    Transport {
+        /// Human-readable chain name, for the message.
+        chain: &'static str,
+        /// The configured endpoint.
+        url: String,
+        /// The underlying transport error, boxed so this crate's error surface
+        /// does not name the transport implementation.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    /// The transport came up but the client could not be built over it.
+    #[error("building the {chain} client at {url}")]
+    Client {
+        /// Human-readable chain name, for the message.
+        chain: &'static str,
+        /// The configured endpoint.
+        url: String,
+        /// The underlying subxt error.
+        #[source]
+        source: subxt::error::OnlineClientError,
+    },
+}
+
 /// Connects to a People Chain RPC with an auto-reconnecting transport. Loads
 /// its metadata.
-pub async fn connect(url: &str) -> anyhow::Result<OnlineClient<PeopleConfig>> {
+pub async fn connect(url: &str) -> Result<OnlineClient<PeopleConfig>, ConnectError> {
     connect_as::<PeopleConfig>(url, "People Chain").await
+}
+
+/// Connects to a People Chain RPC and also hands back the [`RpcClient`] the
+/// [`OnlineClient`] was built on, so a caller can issue raw RPC calls over the
+/// same connection.
+///
+/// Needed because subxt's public storage API fetches one key per request, so a
+/// caller reading many known keys goes through `subxt_rpcs` to ask for them in
+/// one. The returned client is a clone of the same transport: no second
+/// connection, and both handles always address the same endpoint.
+pub async fn connect_with_rpc(
+    url: &str,
+) -> Result<(OnlineClient<PeopleConfig>, RpcClient), ConnectError> {
+    let rpc = reconnecting_rpc_client(url, "People Chain").await?;
+    let client = OnlineClient::<PeopleConfig>::from_rpc_client(rpc.clone())
+        .await
+        .map_err(|source| ConnectError::Client {
+            chain: "People Chain",
+            url: url.to_string(),
+            source,
+        })?;
+    Ok((client, rpc))
 }
 
 /// Connects to an Asset Hub RPC with an auto-reconnecting transport. Loads its
 /// metadata.
-pub async fn connect_asset_hub(url: &str) -> anyhow::Result<OnlineClient<AssetHubConfig>> {
+pub async fn connect_asset_hub(url: &str) -> Result<OnlineClient<AssetHubConfig>, ConnectError> {
     connect_as::<AssetHubConfig>(url, "Asset Hub").await
 }
 
 async fn connect_as<T: subxt::Config + Default>(
     url: &str,
-    chain: &str,
-) -> anyhow::Result<OnlineClient<T>> {
+    chain: &'static str,
+) -> Result<OnlineClient<T>, ConnectError> {
     OnlineClient::<T>::from_rpc_client(reconnecting_rpc_client(url, chain).await?)
         .await
-        .with_context(|| format!("connecting to {chain} at {url}"))
+        .map_err(|source| ConnectError::Client {
+            chain,
+            url: url.to_string(),
+            source,
+        })
 }
 
-async fn reconnecting_rpc_client(url: &str, chain: &str) -> anyhow::Result<RpcClient> {
+async fn reconnecting_rpc_client(
+    url: &str,
+    chain: &'static str,
+) -> Result<RpcClient, ConnectError> {
     let rpc_client = ReconnectingRpcClient::builder()
         .build(url)
         .await
-        .with_context(|| format!("connecting to {chain} at {url}"))?;
+        .map_err(|source| ConnectError::Transport {
+            chain,
+            url: url.to_string(),
+            source: Box::new(source),
+        })?;
     Ok(RpcClient::new(rpc_client))
 }
 

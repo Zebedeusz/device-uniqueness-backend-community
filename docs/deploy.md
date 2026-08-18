@@ -119,6 +119,13 @@ Each primary must already hold its on-chain privilege: `ATTESTER_ACCOUNT` a regi
 
 The `notify-relay` provider secrets are optional: with none set the relay still boots and reports per-request provider failure for the unconfigured platform. `JWT_ED25519_PUBLIC_KEY` must be the public half of `device-attestation-api`'s `JWT_ED25519_SECRET`.
 
+**`PEOPLE_RPC_URL` must serve the legacy `state_queryStorageAt` method.** Username
+availability reads all 100 `{base}.{NN}` keys in one such request instead of 100
+single-key requests, so an endpoint exposing only the newer `chainHead` JSON-RPC API
+would boot, pass `/readyz`, and then fail every availability check. Nothing else in
+the service depends on it. Any public Substrate node exposes it today; the constraint
+matters only when repointing at a trimmed or proxied RPC.
+
 The `turn-api` variables have compose dev defaults (placeholder secret, `example.org` realm, `example.com` ICE URLs), so leaving them unset boots a service that mints credentials **no real relay accepts**. `TURN_SECRET` is the base64 encoding of the relay's raw `static-auth-secret` string — base64-encoding a hex-decoded form produces different HMAC keys and the relay answers 401 to every Allocate.
 
 ## 3. Run

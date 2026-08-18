@@ -83,7 +83,12 @@ if [ "$mode" = "chain" ]; then
   # These production-router suites also require PEOPLE_RPC_URL, or use their
   # public Paseo default. They stay opt-in because external chain availability
   # is not a deterministic merge/release prerequisite.
-  for suite in voucher_http_live payment_http_live payment_watch_live; do
+  #
+  # batched_read_live proves the batched availability read agrees with the typed
+  # one-key-per-request path against real chain state. Its latency probe stays
+  # skipped unless BATCH_PROBE_CONCURRENCY is set, so this stays a correctness
+  # gate rather than a benchmark.
+  for suite in voucher_http_live payment_http_live payment_watch_live batched_read_live; do
     DEVICE_ATTESTATION_TEST_DATABASE_URL="$device_attestation_url" \
       "${cargo_cmd[@]}" -p device-attestation --test "$suite" -- --ignored
   done

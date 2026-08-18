@@ -33,6 +33,8 @@ jwt-verify.workspace = true
 http-common.workspace = true
 metrics.workspace = true
 subxt = { workspace = true, features = ["jsonrpsee"] }
+# Raw RPC for the multi-key storage read (subxt's typed API is one key per request).
+subxt-rpcs.workspace = true
 subxt-signer = { workspace = true, features = ["subxt"] }
 
 tokio.workspace = true
