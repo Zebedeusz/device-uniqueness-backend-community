@@ -9,6 +9,15 @@
 //!   rate limit (429) → mint → **201** (not 200).
 //! - Unmatched paths and wrong methods: the JSON `404`.
 //!
+//! `/issue-with-proof` is the browser-callable route: every response the route
+//! itself produces carries `access-control-allow-origin: *` and `OPTIONS`
+//! answers the preflight, so a web product can read the credentials it just
+//! minted. (The outer timeout in `http_common::layers` synthesizes its 408
+//! above this route and so carries none.) It is not origin-authorized — the
+//! proof is the authorization — so a wildcard grants a browser exactly what
+//! curl already had. `/issue` carries no CORS headers: it is called by the apps
+//! with a JWT, not from a page.
+//!
 //! Credential shape (the coturn REST-API construction) lives in
 //! [`crate::credentials`]; the `servers` array echoes `ICE_SERVERS` verbatim.
 
@@ -16,8 +25,11 @@ pub mod error;
 pub mod proof_routes;
 pub mod state;
 
-use axum::extract::State;
+use axum::extract::{Request, State};
+use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use http_common::error::not_found;
@@ -37,6 +49,14 @@ use self::state::AppState;
 ///
 /// The proof routes are present only when proof-authorized issuance is enabled.
 /// A hex proof is ~1.6 KB, so an 8 KB cap bounds every legitimate proof request.
+///
+/// Only `/issue-with-proof` is browser-callable: it answers the preflight and
+/// carries `access-control-allow-origin: *`. `/issue` gets none — it is called
+/// by the apps with a JWT, not from a page.
+///
+/// Layer order is load-bearing: the body cap goes on while `post` is the only
+/// endpoint, so it caps that handler alone, and the CORS layer goes on last, so
+/// it covers the POST, the preflight, and the wrong-method fallback alike.
 pub fn router(state: AppState) -> Router {
     let mut api = Router::new().route("/issue", post(issue_credentials).fallback(not_found));
     if state.proof.is_some() {
@@ -44,10 +64,46 @@ pub fn router(state: AppState) -> Router {
             "/issue-with-proof",
             post(proof_routes::issue_with_proof)
                 .layer(axum::extract::DefaultBodyLimit::max(8 * 1024))
-                .fallback(not_found),
+                .options(preflight)
+                .fallback(not_found)
+                .layer(axum::middleware::from_fn(allow_any_origin)),
         );
     }
     Router::new().nest("/api/v1/turn", api).with_state(state)
+}
+
+/// Stamp `access-control-allow-origin: *` on every proof-route response,
+/// Origin header or not.
+async fn allow_any_origin(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    response
+}
+
+/// The preflight: `204` with the allowed methods and whatever headers the
+/// browser asked for (the allow-origin header is stamped by
+/// [`allow_any_origin`]).
+async fn preflight(headers: HeaderMap) -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    let out = response.headers_mut();
+    out.insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("POST,OPTIONS"),
+    );
+    if let Some(requested) = headers.get(axum::http::header::ACCESS_CONTROL_REQUEST_HEADERS) {
+        out.insert(
+            axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+            requested.clone(),
+        );
+    }
+    out.insert(
+        axum::http::header::VARY,
+        HeaderValue::from_static("Access-Control-Request-Headers"),
+    );
+    response
 }
 
 /// Assemble the full standalone service: [`router`] plus health at root, the
