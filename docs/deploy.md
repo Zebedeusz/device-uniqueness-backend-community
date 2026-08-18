@@ -349,7 +349,7 @@ and the edge; it shares no database, no signing key, and no chain.
    ```bash
    sudo docker compose -p dub-previewnet up -d \
      postgres device-attestation-api device-attestation-chain-writer \
-     username-indexer-postgres username-indexer
+     username-indexer-postgres username-indexer turn-api
    ```
 
    `invite-tickets` is deliberately excluded on PreviewNet: its inviter would have
@@ -357,12 +357,21 @@ and the edge; it shares no database, no signing key, and no chain.
    account and chain race nonces. Its route falls through to that environment's
    `device-attestation-api`, which 404s.
 
+   `turn-api` is deliberately included. Proof verification pins one People Chain
+   RPC and genesis hash per process, so PreviewNet cannot use Paseo's issuer. Set
+   `TURN_PROOF_RPC_URL`, `TURN_PROOF_GENESIS`, and `TURN_PROOF_PRODUCTS` in this
+   checkout's `.env`; the product list remains changeable without a rebuild.
+
 4. **DNS**: an A record for the hostname at the server IP, unproxied. The edge
    acquires the certificate on its next start once DNS resolves.
-5. **Teach the shared services about the new issuer.** `turn-api` and
-   `notify-relay` are shared across environments: set `JWT_JWKS_JSON` on them to
-   a JWKS holding **both** environments' public keys. Tokens carry a `kid`
-   derived from the signing key, so each is verified against the right one.
+5. **Teach the shared notification relay about the new issuer.** `notify-relay`
+   is shared across environments: set `JWT_JWKS_JSON` on it to a JWKS holding
+   **both** environments' public keys. Tokens carry a `kid` derived from the
+   signing key, so each is verified against the right one. Each `turn-api` uses
+   its checkout's verifier material and proof-chain pin. The established primary
+   checkout deliberately retains the merged JWKS for compatibility, so its JWT
+   `/turn/issue` route accepts either environment's token; PreviewNet accepts its
+   own issuer only. Proof issuance remains chain-isolated by the RPC/genesis pin.
 6. **Reload the edge** so it picks up the site block. The Caddyfile is a
    read-only bind mount, so a `git pull` already put the new block inside the
    running container: validate it in a throwaway container, then reload in
@@ -428,8 +437,9 @@ Differences from the compose topology, and why:
   otherwise never touches.
 - **`/docs`** is a ConfigMap behind a static server, with a `stripPrefix` middleware standing in
   for Caddy's `handle_path`.
-- **turn-api and notify-relay are shared**: an environment that does not deploy them still routes
-  to the instances that do, via `global.sharedServiceNamespace`.
+- **notify-relay is shared**: an environment that does not deploy it still routes
+  to the instance that does, via `global.sharedServiceNamespace`. `turn-api` is
+  per environment because its proof verifier pins one People Chain and genesis.
 - **The APNs key** is a Secret volume at mode `0440` with `fsGroup: 10001`, not a host path.
 
 ## Cutting a release

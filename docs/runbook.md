@@ -69,9 +69,10 @@ environment selector uses), `project` (the compose project it is derived from),
 `service`, `container`, and `level`. They come from Docker metadata plus the JSON
 `level` field, not from the log text. Two consequences: containers outside the two
 environments (the edge, the observability project) carry no `env_id`, and the
-**shared** services — `turn-api`, `notify-relay`, one instance serving both
-environments — are labelled with the primary deployment, because a container log
-has no per-request environment to read. Prometheus scrapes them the same way.
+shared `notify-relay` is labelled with the primary deployment, because a
+container log has no per-request environment to read. `turn-api` runs once per
+environment, so its proof root cache, logs, and metrics carry that environment's
+label.
 Retention is **14 days** (`observability/loki-config.yaml`); older logs are gone.
 
 Docker's own logs still work, and remain the fallback when Loki or Alloy is the thing that
@@ -253,7 +254,9 @@ proxy delegation, signer funding, invite pools. That sequence is in
 - Rotating `JWT_ED25519_SECRET` invalidates outstanding JWTs (clients re-authenticate).
 - A new writer key must be an authorized attester (or proxy) with funds.
 - Rotating `TURN_SECRET` invalidates outstanding TURN credentials (≤ `TURN_TTL_SECS` old): update
-  the relay (coturn `--use-auth-secret`) and `turn-api` together, then `sudo docker compose up -d`.
+  the relay (coturn `--use-auth-secret`) and both `turn-api` deployments together, then recreate
+  each environment's service. Each checkout also pins its own `TURN_PROOF_RPC_URL` and
+  `TURN_PROOF_GENESIS`; never copy one environment's pair into the other.
 - Rotating `POC_HMAC_SECRET` invalidates outstanding puzzles (≤ 90s old): in-flight solvers get
   `402` "checksum does not match" and simply request a new puzzle. Safe to rotate at any time.
 

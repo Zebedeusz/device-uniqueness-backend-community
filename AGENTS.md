@@ -64,7 +64,7 @@ Eleven crates today (plans may add more independently-deployable service crates)
 - `device-attestation` — the device attestation service (lib + the `voucher-mint` CLI; roles `device-attestation-api`, `device-attestation-chain-writer`, and the `registration-queue` advancer — with `QUEUE_ENABLED` on, its promotion is the only queue exit: down, claims park as `QUEUED` and the writer raises a stranded-queue warning).
 - `username-indexer` — username indexer + search service.
 - `invite-tickets` — synchronous invitation-credential claim service, the route the shipping apps call (lib; roles `invite-tickets-api` and `invite-tickets-pool`).
-- `turn` — stateless TURN credential issuer (coturn REST-API HMAC construction over a relay-shared secret; lib; role `turn-api`). No DB, no chain.
+- `turn` — stateless TURN credential issuer (coturn REST-API HMAC construction over a relay-shared secret; lib; role `turn-api`). No DB; when proof issuance is enabled, each environment's process maintains a read-only root cache from its own People Chain.
 - `notifications` — thin `/api/v1/notify` relay (verify-only Ed25519 JWT, stateless, DB-free, per-subject rate limited; role `notify-relay`) with optional iOS APNs + Android FCM providers.
 - `apidoc-gen` — dev-only tool (not deployed) that renders the committed API reference from the service crates' `#[utoipa::path]` annotations. Run via `just openapi`.
 - `routegen` — dev-only tool (not deployed) that renders the committed edge configs from `dub`'s route table. Run via `just routes`.

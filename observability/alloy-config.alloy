@@ -31,9 +31,10 @@ discovery.relabel "containers" {
   // thing in Loki as it does in Prometheus — the ecosystem's network id, which
   // the compose project carries in meaning but not in spelling. Containers
   // outside the two environments (the edge, this project) get no `env_id` and
-  // stay queryable by `project`. Shared services — `turn-api`, `notify-relay` —
-  // run in the primary project and are labelled with it: a container log has no
-  // per-request environment to read.
+  // stay queryable by `project`. The shared `notify-relay` runs in the primary
+  // project and is labelled with it: a container log has no per-request
+  // environment to read. TURN runs once per environment because its proof root
+  // cache is pinned to that environment's People Chain.
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
     regex         = "dub-paseo-next-v2"

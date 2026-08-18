@@ -401,10 +401,11 @@ services:
     deploy:
       replicas: 1
 
-  # TURN credential issuer: stateless (no DB, no chain) — the only secret is
-  # the HMAC key shared with the TURN relay (coturn `--use-auth-secret` mode
-  # must be configured with the SAME secret and algorithm, or minted
-  # credentials will not authenticate). Safe to scale.
+  # TURN credential issuer: stateless (no DB; read-only People Chain root cache
+  # when proof issuance is enabled). The only secret is the HMAC key shared
+  # with the TURN relay (coturn `--use-auth-secret` mode must use the SAME
+  # secret and algorithm, or minted credentials will not authenticate). Safe
+  # to scale within one environment; each environment pins its own RPC/genesis.
   turn-api:
     build:
       context: .

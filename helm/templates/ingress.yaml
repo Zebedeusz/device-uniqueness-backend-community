@@ -69,9 +69,9 @@ spec:
     {{- $svc := index $root.Values.workloads $r.service }}
     {{- if not $svc }}{{ fail (printf "route %s names unknown service %s" $r.name $r.service) }}{{ end }}
     {{/* A route to a SHARED service stays live even though this environment does
-         not deploy it — turn-api and notify-relay exist once and serve every
-         environment (gateway/Caddyfile does the same with an upstream that
-         names the other environment's instance). Disabling the workload and
+         not deploy it — notify-relay exists once and serves every environment
+         (gateway/Caddyfile does the same with an upstream that names the other
+         environment's instance). Disabling the workload and
          dropping the route are different things: conflating them 404s a route
          that works today. */}}
     {{- $shared := and $r.shared $root.Values.global.sharedServiceNamespace }}

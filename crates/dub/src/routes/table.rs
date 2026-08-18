@@ -69,8 +69,8 @@ pub struct Row {
     pub priority: u16,
     /// The prefix is stripped before the upstream sees the request.
     pub strip_prefix: bool,
-    /// One instance serves every environment (turn, notify), so the chart keeps
-    /// the route live even where the workload is not deployed.
+    /// One instance serves every environment, so the chart keeps the route live
+    /// even where the workload is not deployed.
     pub shared: bool,
     /// Why this row exists. Rendered into both artifacts, because a route table
     /// without its reasons is the thing people edit wrongly.
@@ -131,10 +131,10 @@ pub const TABLE: &[Row] = &[
         matches: Match::PrefixSlash("/api/v1/turn/"),
         priority: 90,
         strip_prefix: false,
-        shared: true,
+        shared: false,
         why: &[
-            "shared: one instance serves every environment. Where the workload is not deployed the",
-            "route still resolves — to global.sharedServiceNamespace.",
+            "Each environment runs its own issuer because proof verification pins one People Chain",
+            "RPC and genesis hash; routing to another environment would verify against the wrong ring.",
         ],
     },
     Row {
@@ -146,7 +146,7 @@ pub const TABLE: &[Row] = &[
         strip_prefix: false,
         shared: true,
         why: &[
-            "shared, like turn. NOTE: this service answers an EMPTY 404 for an unmatched path and",
+            "Shared across environments. NOTE: this service answers an EMPTY 404 for an unmatched path and",
             "405 for a wrong method, where every sibling answers the JSON 404 body. The",
             "whole prefix is routed here, so that is the live contract — see routes::fallback.",
         ],

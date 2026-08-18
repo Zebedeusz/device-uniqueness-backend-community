@@ -58,6 +58,11 @@ they summarise each release rather than list every change.
 
 ### Changed
 
+- TURN is deployed once per environment instead of shared when personhood-proof
+  issuance is enabled. Each issuer pins its own People Chain RPC and genesis,
+  so PreviewNet proofs cannot be checked against Paseo roots (or vice versa);
+  `dim2.paseo` is enabled at context suffix `0` in both environment values.
+
 - **BREAKING (deployment): the identity service is renamed device-attestation,
   including its Postgres role and database.** `POSTGRES_USER`/`POSTGRES_DB` and
   every service's `DEVICE_ATTESTATION_DATABASE_URL` now default to

@@ -170,14 +170,15 @@ jobs:
 
           # PreviewNet runs a deliberate subset: no invite tickets (its pool
           # would share the chain-writer's nonce lane on one account and chain)
-          # and no turn/notify, which exist once for every environment. Its
+          # and no notify, which exists once for every environment. TURN runs
+          # here because proof verification pins one People Chain + genesis. Its
           # checkout does not exist until the environment is stood up by hand.
           if [ -d "$preview" ]; then
             cd "$preview"
             git fetch --no-tags "$primary" HEAD
             git reset --hard "$SHA"
             preview_services="postgres device-attestation-api device-attestation-chain-writer
-              username-indexer-postgres username-indexer"
+              username-indexer-postgres username-indexer turn-api"
             # shellcheck disable=SC2086
             compose_preview pull --quiet $preview_services
             # shellcheck disable=SC2086
