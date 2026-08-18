@@ -271,7 +271,7 @@ mod tests {
         let signer =
             WriterSigner::from_secret(&format!("0x{}", hex::encode(raw64))).expect("valid raw");
 
-        let message = b"identity-backend-v2";
+        let message = b"dub";
         let sig = signer.sign_bytes(message);
         let public = schnorrkel::PublicKey::from_bytes(&signer.public_bytes()).unwrap();
         let signature = schnorrkel::Signature::from_bytes(&sig).unwrap();

@@ -72,7 +72,7 @@ jobs:
         run: docker buildx bake --push all
       # What was actually published, not what the Dockerfile says: the static
       # check reads source, this pulls the pushed image and looks inside — one
-      # binary, an `ibv2` entrypoint, and no CMD that would default to a role.
+      # binary, a `dub` entrypoint, and no CMD that would default to a role.
       - name: Verify the published image
         env:
           IMAGE_REPO: ghcr.io/${{ github.repository }}
@@ -100,7 +100,7 @@ jobs:
     permissions:
       packages: read
     concurrency:
-      group: deploy-ibv2
+      group: deploy-dub
       cancel-in-progress: false
     steps:
       - name: Set up SSH
@@ -128,16 +128,16 @@ jobs:
           # environment on one, Prometheus scrapes them over the other. Created
           # here as well as in docs/deploy.md so adding a network to compose
           # cannot fail the deploy on an already-running host.
-          sudo docker network inspect ibv2-edge >/dev/null 2>&1 ||
-            sudo docker network create ibv2-edge
-          sudo docker network inspect ibv2-metrics >/dev/null 2>&1 ||
-            sudo docker network create ibv2-metrics
+          sudo docker network inspect dub-edge >/dev/null 2>&1 ||
+            sudo docker network create dub-edge
+          sudo docker network inspect dub-metrics >/dev/null 2>&1 ||
+            sudo docker network create dub-metrics
 
           trap 'sudo docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
           echo "$TOKEN" | sudo docker login ghcr.io -u "$ACTOR" --password-stdin
 
-          primary="$HOME/identity-backend-v2"
-          preview="$HOME/identity-backend-previewnet"
+          primary="$HOME/dub-paseo-next-v2"
+          preview="$HOME/dub-previewnet"
 
           # One image, and every service resolves to it. `compose pull` reads
           # the service list out of the compose file, so the set stays right
@@ -146,17 +146,19 @@ jobs:
           # services the project runs.
           compose_primary() {
             sudo IMAGE_REPO="$IMAGE_REPO" IMAGE_TAG="$SHA" \
-              docker compose -p identity-backend-v2 "$@"
+              docker compose -p dub-paseo-next-v2 "$@"
           }
           compose_preview() {
             sudo IMAGE_REPO="$IMAGE_REPO" IMAGE_TAG="$SHA" \
-              docker compose -p identity-previewnet "$@"
+              docker compose -p dub-previewnet "$@"
           }
 
           # Paseo Next v2 first, so a broken newer environment can neither block
-          # nor revert it. `identity-backend-v2` is the project name the running
-          # deployment already uses — changing it would orphan its volumes and
-          # start a second writer on the same chain.
+          # nor revert it. One project per environment, named for it:
+          # `dub-paseo-next-v2` and `dub-previewnet`. Once a host is live, do
+          # not rename either — compose keys named volumes on the project, so a
+          # new name would orphan the existing volumes and bring a second writer
+          # up on the same chain alongside the first.
           # The 420s wait clears the slowest health start_period plus its retries
           # (username-indexer: 300s + 5×10s), so a first boot that is merely slow
           # to bootstrap is not reported as a failed deploy.
@@ -174,14 +176,14 @@ jobs:
             cd "$preview"
             git fetch --no-tags "$primary" HEAD
             git reset --hard "$SHA"
-            preview_services="postgres identity-api identity-chain-writer
+            preview_services="postgres device-attestation-api device-attestation-chain-writer
               username-indexer-postgres username-indexer"
             # shellcheck disable=SC2086
             compose_preview pull --quiet $preview_services
             # shellcheck disable=SC2086
             compose_preview up -d --wait --wait-timeout 420 --no-build $preview_services
           else
-            echo "skip identity-previewnet — no checkout at $preview"
+            echo "skip dub-previewnet — no checkout at $preview"
           fi
 
           # The edge serves every environment, so it is updated last and only

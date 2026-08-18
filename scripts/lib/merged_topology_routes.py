@@ -27,7 +27,7 @@ def main() -> int:
     deployed = {d["metadata"]["name"] for d in docs if d["kind"] == "Deployment"}
 
     merged_roles = subprocess.run(
-        ["cargo", "run", "--quiet", "-p", "ibv2", "--", "--list-merged-roles"],
+        ["cargo", "run", "--quiet", "-p", "dub", "--", "--list-merged-roles"],
         capture_output=True, text=True, check=True,
     ).stdout.split()
     active = sorted(role for role in merged_roles if role in deployed)

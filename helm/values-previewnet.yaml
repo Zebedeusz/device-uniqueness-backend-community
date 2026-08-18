@@ -1,5 +1,5 @@
 # PreviewNet — a deliberate SUBSET, matching what the host deploy already runs:
-# identity-api, identity-chain-writer, username-indexer and their databases.
+# device-attestation-api, device-attestation-chain-writer, username-indexer and their databases.
 #
 # Not deployed here, and why:
 #   - invite-tickets-*                 — its pool would share a nonce lane
@@ -44,7 +44,7 @@ global:
 # need a NetworkPolicy admitting this namespace.
 
 workloads:
-  identity-api:
+  device-attestation-api:
     env:
       AUTH_ENABLED: "false"
   registration-queue: { enabled: false }
@@ -54,11 +54,11 @@ workloads:
   notify-relay: { enabled: false }
 
 secrets:
-  identity-api:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/previewnet#IDENTITY_DATABASE_URL
-    JWT_ED25519_SECRET: ref+vault://kv/TODO/identity-backend-v2/previewnet#JWT_ED25519_SECRET
-  identity-chain-writer:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/previewnet#IDENTITY_DATABASE_URL
-    CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/previewnet#CHAIN_WRITER_SIGNER_SURI
+  device-attestation-api:
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/previewnet#DEVICE_ATTESTATION_DATABASE_URL
+    JWT_ED25519_SECRET: ref+vault://kv/TODO/dub/previewnet#JWT_ED25519_SECRET
+  device-attestation-chain-writer:
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/previewnet#DEVICE_ATTESTATION_DATABASE_URL
+    CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/dub/previewnet#CHAIN_WRITER_SIGNER_SURI
   username-indexer:
-    INDEXER_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/previewnet#INDEXER_DATABASE_URL
+    INDEXER_DATABASE_URL: ref+vault://kv/TODO/dub/previewnet#INDEXER_DATABASE_URL

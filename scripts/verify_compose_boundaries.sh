@@ -8,7 +8,7 @@ set -euo pipefail
 # it. The bare name is still honoured by the dual-read for one release, so it is
 # forbidden alongside the four.
 DB_URL_KEYS=(
-  IDENTITY_DATABASE_URL
+  DEVICE_ATTESTATION_DATABASE_URL
   INDEXER_DATABASE_URL
   INVITE_TICKETS_DATABASE_URL
   DATABASE_URL
@@ -90,17 +90,17 @@ forbid_key() {
   fi
 }
 
-for service in identity-api identity-chain-writer username-indexer; do
+for service in device-attestation-api device-attestation-chain-writer username-indexer; do
   forbid_key "$service" INVITER_SIGNER_SURI
 done
 
 # The dotNS gateway lane has two halves that must agree, exactly like
-# QUEUE_ENABLED. identity-api gates intake on the flag. identity-chain-writer
+# QUEUE_ENABLED. device-attestation-api gates intake on the flag. device-attestation-chain-writer
 # submits DotnsGateway::reserve_name behind the same flag. A split value is the
 # intake-accepts-but-nothing-submits gap the lane exists to close. The flag is
 # therefore REQUIRED on both and forbidden everywhere else.
-require_key identity-api DOTNS_GATEWAY_ENABLED
-require_key identity-chain-writer DOTNS_GATEWAY_ENABLED
+require_key device-attestation-api DOTNS_GATEWAY_ENABLED
+require_key device-attestation-chain-writer DOTNS_GATEWAY_ENABLED
 for service in registration-queue username-indexer \
                invite-tickets-api invite-tickets-pool turn-api; do
   forbid_key "$service" DOTNS_GATEWAY_ENABLED
@@ -108,8 +108,8 @@ done
 
 # Request-validation bounds are intake-only. They shape 400s, not extrinsics.
 for key in DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS DOTNS_MAX_FUTURE_SKEW_SECS; do
-  require_key identity-api "$key"
-  for service in identity-chain-writer registration-queue username-indexer \
+  require_key device-attestation-api "$key"
+  for service in device-attestation-chain-writer registration-queue username-indexer \
                  invite-tickets-api invite-tickets-pool turn-api; do
     forbid_key "$service" "$key"
   done
@@ -118,11 +118,11 @@ done
 # The Asset Hub connection and the attester identity belong to the writer. It is
 # the only process that submits there. ATTESTER_ACCOUNT names the authority on
 # both chains and the writer derives proxying from it, so the two must be one
-# value. identity-api needs it too, since it serves GET /api/v1/attester.
+# value. device-attestation-api needs it too, since it serves GET /api/v1/attester.
 # Nothing else does, and no other service opens an Asset Hub connection.
-require_key identity-chain-writer ASSET_HUB_RPC_URL
-require_key identity-chain-writer ATTESTER_ACCOUNT
-require_key identity-api ATTESTER_ACCOUNT
+require_key device-attestation-chain-writer ASSET_HUB_RPC_URL
+require_key device-attestation-chain-writer ATTESTER_ACCOUNT
+require_key device-attestation-api ATTESTER_ACCOUNT
 for service in registration-queue username-indexer \
                invite-tickets-api invite-tickets-pool turn-api \
                notify-relay; do
@@ -130,7 +130,7 @@ for service in registration-queue username-indexer \
 done
 
 # registration-queue only reads chain balances and flips queue rows in the
-# identity DB — never signing secrets or JWT material. Its lease is the queue
+# device-attestation DB — never signing secrets or JWT material. Its lease is the queue
 # liveness signal, so it needs its cadence knobs.
 for key in JWT_ED25519_SECRET JWT_ED25519_PUBLIC_KEY JWT_JWKS_JSON \
            CHAIN_WRITER_SIGNER_SURI INVITER_SIGNER_SURI INVITE_INVITER_SIGNER_SURI \
@@ -143,9 +143,9 @@ require_key registration-queue QUEUE_LEASE_TTL_SECS
 # and the SAME flag on the writer (on = hold the throttle, warn about
 # stranded rows; off = janitor drain after the grace window). Split values
 # would strand-or-unthrottle depending on which side is on.
-require_key identity-api QUEUE_ENABLED
-require_key identity-chain-writer QUEUE_ENABLED
-require_key identity-chain-writer QUEUE_FALLBACK_AFTER_SECS
+require_key device-attestation-api QUEUE_ENABLED
+require_key device-attestation-chain-writer QUEUE_ENABLED
+require_key device-attestation-chain-writer QUEUE_FALLBACK_AFTER_SECS
 
 # username-indexer serves public reads and holds VERIFY-ONLY JWT material: the
 # public key admits authenticated callers past the proof-of-compute gate, but the
@@ -163,7 +163,7 @@ require_key username-indexer POC_ENABLED
 require_key username-indexer JWT_ED25519_PUBLIC_KEY
 require_key username-indexer POC_HMAC_SECRET
 # Every other service in the compose file, application and database alike.
-for service in identity-api identity-chain-writer registration-queue \
+for service in device-attestation-api device-attestation-chain-writer registration-queue \
                invite-tickets-api invite-tickets-pool turn-api notify-relay \
                postgres username-indexer-postgres \
                invite-tickets-postgres; do
@@ -209,12 +209,12 @@ fi
 # was not expressible here at all. A misrouted URL starts cleanly and runs the
 # wrong migrations against someone else's schema.
 declare -A DB_OWNERS=(
-  [IDENTITY_DATABASE_URL]="identity-api identity-chain-writer registration-queue"
+  [DEVICE_ATTESTATION_DATABASE_URL]="device-attestation-api device-attestation-chain-writer registration-queue"
   [INDEXER_DATABASE_URL]="username-indexer"
   [INVITE_TICKETS_DATABASE_URL]="invite-tickets-api invite-tickets-pool"
 )
 APP_SERVICES=(
-  identity-api identity-chain-writer registration-queue username-indexer
+  device-attestation-api device-attestation-chain-writer registration-queue username-indexer
   invite-tickets-api invite-tickets-pool turn-api notify-relay
 )
 for key in "${!DB_OWNERS[@]}"; do

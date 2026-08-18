@@ -1,8 +1,8 @@
 //! invite-tickets — the synchronous invitation-credential claim service.
 //!
-//! Preserves the legacy `POST /api/v1/invitation-ticket/claim` mobile contract
-//! (the route the shipping iOS/Android apps call for `Game` / `ProofOfInk`
-//! credentials) as an independently deployable service: its own Postgres
+//! Serves `POST /api/v1/invitation-ticket/claim` (the route the shipping
+//! iOS/Android apps call for `Game` / `ProofOfInk` credentials) as an
+//! independently deployable service: its own Postgres
 //! keypair pool (`available → claimed`, two states only), verify-only JWT auth
 //! via the shared `jwt-verify` crate, and a single-instance pool maintainer
 //! (Phase 2) that generates keypairs and registers them on People Chain

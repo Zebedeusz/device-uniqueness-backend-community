@@ -53,7 +53,7 @@ workloads:
   # ...and the five per-service workloads OFF. The chart fails to render if any
   # of them is left enabled alongside the merged one: a mix would pay this
   # topology's secret union while still running the compartmentalised services.
-  identity-api:
+  device-attestation-api:
     enabled: false
   username-indexer:
     enabled: false
@@ -78,20 +78,20 @@ secrets:
   # workload is a credential nobody deploys and nobody rotates, and the chart
   # rejects it.
   all-in-one:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#IDENTITY_DATABASE_URL
-    INDEXER_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#INDEXER_DATABASE_URL
-    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#INVITE_DATABASE_URL
-    JWT_ED25519_SECRET: ref+vault://kv/TODO/identity-backend-v2/small#JWT_ED25519_SECRET
-    POC_HMAC_SECRET: ref+vault://kv/TODO/identity-backend-v2/small#POC_HMAC_SECRET
-    TURN_SECRET: ref+vault://kv/TODO/identity-backend-v2/small#TURN_SECRET
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/small#DEVICE_ATTESTATION_DATABASE_URL
+    INDEXER_DATABASE_URL: ref+vault://kv/TODO/dub/small#INDEXER_DATABASE_URL
+    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/dub/small#INVITE_DATABASE_URL
+    JWT_ED25519_SECRET: ref+vault://kv/TODO/dub/small#JWT_ED25519_SECRET
+    POC_HMAC_SECRET: ref+vault://kv/TODO/dub/small#POC_HMAC_SECRET
+    TURN_SECRET: ref+vault://kv/TODO/dub/small#TURN_SECRET
 
   # The workers keep their own sets in both topologies: one signer each, on its
   # own account.
-  identity-chain-writer:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#IDENTITY_DATABASE_URL
-    CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/small#CHAIN_WRITER_SIGNER_SURI
+  device-attestation-chain-writer:
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/small#DEVICE_ATTESTATION_DATABASE_URL
+    CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/dub/small#CHAIN_WRITER_SIGNER_SURI
   registration-queue:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#IDENTITY_DATABASE_URL
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/small#DEVICE_ATTESTATION_DATABASE_URL
   invite-tickets-pool:
-    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/small#INVITE_DATABASE_URL
-    INVITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/small#INVITE_INVITER_SIGNER_SURI
+    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/dub/small#INVITE_DATABASE_URL
+    INVITER_SIGNER_SURI: ref+vault://kv/TODO/dub/small#INVITE_INVITER_SIGNER_SURI

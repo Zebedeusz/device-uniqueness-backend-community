@@ -17,8 +17,8 @@
 `PeopleLite::AttestationAllowance` is never read at runtime. If it hits zero, registration
 stops and nothing says so.
 
-- [x] Add `attestation_allowance()` + reuse `free_balance()` in `identity-service/src/chain/client.rs`
-- [x] Poll both every 60s in `identity-chain-writer`, log one INFO line per tick
+- [x] Add `attestation_allowance()` + reuse `free_balance()` in `device-attestation/src/chain/client.rs`
+- [x] Poll both every 60s in `device-attestation-chain-writer`, log one INFO line per tick
       (`ATTESTER_RESOURCE_POLL_SECS`, first tick on lease acquisition)
 - [x] WARN below a configured floor (`ATTESTER_ALLOWANCE_FLOOR`,
       `ATTESTER_SIGNER_BALANCE_FLOOR_PLANCK`)
@@ -26,7 +26,7 @@ stops and nothing says so.
       — the pass reads the primary's allowance and both free balances
 
 ✅ **Demo passed** (local stack against Paseo Next v2, 2026-08-04):
-`docker compose logs identity-chain-writer | grep attester_resources` →
+`docker compose logs device-attestation-chain-writer | grep attester_resources` →
 `allowance=962358 allowance_account=0x86aa… signer_balance_planck=97061295465369
 primary_balance_planck=99976052651206`. Restarted with the floors raised above those values
 and both WARNs fired (`attestation allowance below floor`, `signer balance below floor`).
@@ -36,21 +36,21 @@ and both WARNs fired (`attestation allowance below floor`, `signer balance below
 - [x] Add `metrics` + Prometheus exporter, serve `/metrics` on port 9090 (not through Caddy — the edge is the only thing that publishes host ports)
       — shared `http_common::metrics::spawn`, installed by all ten processes including the headless workers
 - [x] Export: allowance, balances, finalized head, indexer checkpoint lag, outbox depth, oldest queued row
-      (`ibv2_attester_allowance`, `ibv2_account_free_balance_planck{role,chain}`,
-      `ibv2_chain_finalized_head_block`, `ibv2_indexer_checkpoint_lag_blocks`,
-      `ibv2_outbox_depth{status}`, `ibv2_outbox_oldest_age_seconds{status}`)
+      (`dub_attester_allowance`, `dub_account_free_balance_planck{role,chain}`,
+      `dub_chain_finalized_head_block`, `dub_indexer_checkpoint_lag_blocks`,
+      `dub_outbox_depth{status}`, `dub_outbox_oldest_age_seconds{status}`)
 - [x] Add Prometheus in its own compose project on a private network
-      (`observability/`, external `ibv2-metrics`, UI loopback-only on 9091)
+      (`observability/`, external `dub-metrics`, UI loopback-only on 9091)
 
 ✅ **Demo passed** (local stack against Paseo Next v2, 2026-08-04): all six metrics present —
-writer reports `ibv2_attester_allowance 962354`, both balances and all six outbox statuses;
-indexer reports `ibv2_chain_finalized_head_block 2241895`,
-`ibv2_indexer_checkpoint_block 2241859`, `ibv2_indexer_checkpoint_lag_blocks 36`.
+writer reports `dub_attester_allowance 962354`, both balances and all six outbox statuses;
+indexer reports `dub_chain_finalized_head_block 2241895`,
+`dub_indexer_checkpoint_block 2241859`, `dub_indexer_checkpoint_lag_blocks 36`.
 Prometheus targets page: 11/11 `up` (ten services + itself).
 
 Notes for Phase 3: the exporter is best-effort — a bind failure degrades to no metrics rather
 than killing the process. The writer's gauge pass runs inside the lease-holding loop, so a
-writer waiting on another instance's lease reports nothing; absence of `ibv2_outbox_depth` is
+writer waiting on another instance's lease reports nothing; absence of `dub_outbox_depth` is
 itself the "no writer is working" signal.
 
 # Phase 2b — Readiness gauges (half a day) — done
@@ -59,18 +59,18 @@ Prometheus' `up` only proves the metrics port answered. A service whose Postgres
 scrapes as `up`, so Phase 3 could not have alerted on it.
 
 - [x] `http_common::metrics::spawn_readiness_probe` runs each service's existing `/readyz`
-      dependency probe every 30s and publishes `ibv2_readyz_ok` (1/0) plus
-      `ibv2_dependency_up{component}`
+      dependency probe every 30s and publishes `dub_readyz_ok` (1/0) plus
+      `dub_dependency_up{component}`
 - [x] The probe is shared with the endpoint (extracted as `health::probe`), so gauge and
       endpoint can never disagree
 - [x] Extended to the four workers, which serve no HTTP and so had no readiness signal at all
 
-✅ **Demo passed** (2026-08-04): all ten processes report `ibv2_readyz_ok 1`. Stopping
-`dim-tickets-postgres` flipped `dim-tickets-api` to `ibv2_readyz_ok 0` +
-`ibv2_dependency_up{component="db"} 0` **while Prometheus still reported `up 1`** — the exact
+✅ **Demo passed** (2026-08-04): all ten processes report `dub_readyz_ok 1`. Stopping
+`dim-tickets-postgres` flipped `dim-tickets-api` to `dub_readyz_ok 0` +
+`dub_dependency_up{component="db"} 0` **while Prometheus still reported `up 1`** — the exact
 blind spot this closes. Restarting Postgres returned both to 1 and 11/11 targets up.
 
-Phase 3 rule to add from this: alert on `ibv2_readyz_ok == 0` for 5m, distinct from `up == 0`
+Phase 3 rule to add from this: alert on `dub_readyz_ok == 0` for 5m, distinct from `up == 0`
 (process gone) — and note `dim-tickets-writer` went `up 0` instead, because it crash-loops on a
 dead database rather than staying up degraded.
 
@@ -89,18 +89,18 @@ broken"; nothing answered "what did it say".
       project, all loopback-only. No per-service log config: `project` / `service` /
       `container` come from Docker metadata, `level` from the JSON body.
 - [x] Grafana provisioned from disk — both datasources plus the committed
-      `ibv2-overview` dashboard (readiness, allowance, signer balances, outbox depth by status,
+      `dub-overview` dashboard (readiness, allowance, signer balances, outbox depth by status,
       indexer lag, and two log panels), anonymous read-only with Explore.
 - [x] `scripts/verify_compose_boundaries.sh` extended: the observability project may publish
       only Grafana/Prometheus/Alloy on `127.0.0.1` (Loki not at all), and holds no service secret.
 
-✅ **Demo passed** (local stack, 2026-08-11): with `identity-api` + Postgres up,
-`{service="identity-api"} | json | status=200` in Loki returned request lines with
+✅ **Demo passed** (local stack, 2026-08-11): with `device-attestation-api` + Postgres up,
+`{service="device-attestation-api"} | json | status=200` in Loki returned request lines with
 `span_request_id`, `latency`, and `status` as **queryable fields**, labelled
-`project="identity-backend-v2" service="identity-api" level="INFO"`. Loki's label list carried
+`project="dub-paseo-next-v2" service="device-attestation-api" level="INFO"`. Loki's label list carried
 `service` values for all six running containers (services, Postgres, and the monitoring stack
 itself). Grafana `/api/health` `ok`, both provisioned datasources resolvable by UID, and
-`ibv2-overview` present in search. `scripts/verify_compose_boundaries.sh` green.
+`dub-overview` present in search. `scripts/verify_compose_boundaries.sh` green.
 
 Note for Phase 3: this changes the plan. Grafana's unified alerting can hold the five rules
 and notify Matrix through a webhook contact point, so Alertmanager is probably not needed —
@@ -111,9 +111,9 @@ provisioning directory already exists at
 - [ ] Alertmanager + a Matrix bot in the backend/ops room — **or** Grafana unified alerting
       with a Matrix webhook contact point (cheaper now that Grafana is deployed; decide first)
 - [ ] Four rules: allowance zero, signer balance low, finalized head stuck 5min, outbox has work but no progress 5min
-- [ ] Fifth rule: `ibv2_readyz_ok == 0` for 5min (a dependency died while the process stayed up)
+- [ ] Fifth rule: `dub_readyz_ok == 0` for 5min (a dependency died while the process stayed up)
 
-✅ **Demo**: stop `identity-chain-writer` with rows in the outbox. Phone buzzes. Start it. Get the resolved message.
+✅ **Demo**: stop `device-attestation-chain-writer` with rows in the outbox. Phone buzzes. Start it. Get the resolved message.
 
 # Later
 - Per-service metrics for invite/notify (fold in the deferrals already noted in those plans)

@@ -1,6 +1,6 @@
 //! Renders the committed API reference from the service crates' OpenAPI docs.
 //!
-//! The merged OpenAPI document (identity-service + username-indexer +
+//! The merged OpenAPI document (device-attestation + username-indexer +
 //! invite-tickets + turn + notifications, all built
 //! from `#[utoipa::path]` annotations) is the single source of truth. This crate
 //! serializes it to `openapi.json` and renders `index.html` by filling the
@@ -29,11 +29,11 @@ pub fn index_html_path() -> String {
     format!("{DOCS_DIR}/index.html")
 }
 
-/// Build the merged OpenAPI document (identity-service + username-indexer +
+/// Build the merged OpenAPI document (device-attestation + username-indexer +
 /// invite-tickets + turn + notifications).
 pub fn merged_doc() -> Value {
-    let mut base =
-        serde_json::to_value(identity_service::openapi::ApiDoc::openapi()).expect("identity doc");
+    let mut base = serde_json::to_value(device_attestation::openapi::ApiDoc::openapi())
+        .expect("device-attestation doc");
     let indexer =
         serde_json::to_value(username_indexer::openapi::ApiDoc::openapi()).expect("indexer doc");
     let invites =

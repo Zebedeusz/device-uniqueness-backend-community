@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Identity Backend V2",
-    "description": "**Prove the device and register the username on People Chain.** API-compatible with the shipping iOS/Android clients.\n\n### Validation flow\n\nThe iOS smoke drives this sequence end-to-end; each step gates the next:\n\n1. `POST /api/v1/auth/challenges` — mint a single-use challenge\n2. `POST /api/v1/auth/app-attest/attestations` — iOS App Attest (`202`, no-op in M0)\n3. `POST /api/v1/auth/token` — sr25519 proof exchanged for a JWT\n4. `POST /api/v1/usernames/available` — JWT-gated People Chain read\n5. `POST /api/v1/usernames` — `202` outbox reservation\n\n> **Attestation is disabled for M0.** Apple/Google verification is intentionally a no-op; the sr25519 account proof and People Chain reads still run end-to-end.\n\nAll non-2xx responses share the `ErrorResponse` envelope: `{ error, message }`.",
+    "title": "Device Uniqueness Backend",
+    "description": "**Prove the device and register the username on People Chain.**\n\n### Validation flow\n\nThe iOS smoke drives this sequence end-to-end; each step gates the next:\n\n1. `POST /api/v1/auth/challenges` — mint a single-use challenge\n2. `POST /api/v1/auth/app-attest/attestations` — iOS App Attest (`202`, no-op in M0)\n3. `POST /api/v1/auth/token` — sr25519 proof exchanged for a JWT\n4. `POST /api/v1/usernames/available` — JWT-gated People Chain read\n5. `POST /api/v1/usernames` — `202` outbox reservation\n\n> **Attestation is disabled for M0.** Apple/Google verification is intentionally a no-op; the sr25519 account proof and People Chain reads still run end-to-end.\n\nErrors come in two shapes. The auth handshake (`/api/v1/auth/*`) answers the `ErrorResponse` envelope — `{ error, message }`, where `error` is a stable machine code. Every other route answers `{ error }`, a human-readable summary, plus a `fields` array of `{ field, message }` when the failure is per-field validation.",
     "license": {
       "name": "GPL-3.0-only",
       "identifier": "GPL-3.0-only"
@@ -377,7 +377,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token (the frozen problem-details trio).",
+            "description": "Missing or invalid bearer token.",
             "content": {
               "application/json": {
                 "schema": {}
@@ -396,7 +396,7 @@
             }
           },
           "429": {
-            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "description": "Subject rate limit exceeded (with `Retry-After`).",
             "content": {
               "application/json": {
                 "schema": {}
@@ -458,19 +458,16 @@
             }
           },
           "400": {
-            "description": "Validation failed (problem details with `errors`), malformed JSON, or a `lifetimePoUDVoucher` that is unknown, already used, or expired (`{\"error\": \"Voucher already used\"}` — a voucher failure rejects the claim outright).",
+            "description": "Validation failed (with per-field `fields`), malformed JSON, or a `lifetimePoUDVoucher` that is unknown, already used, or expired (`{\"error\": \"Voucher already used\"}` — a voucher failure rejects the claim outright).",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
-                  "title": "Invalid Body Property Value",
-                  "detail": "The request body contains an invalid body property value.",
-                  "status": 400,
-                  "errors": [
+                  "error": "The request body contains invalid values.",
+                  "fields": [
                     {
-                      "detail": "Invalid signature.",
-                      "pointer": "#/candidateSignature"
+                      "field": "candidateSignature",
+                      "message": "Invalid signature."
                     }
                   ]
                 }
@@ -478,7 +475,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token (the frozen problem-details trio), or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present (payment lane off — with `PAYMENT_LANE_ENABLED` a missing token resolves to the 200 PAYMENT_REQUIRED outcome instead).",
+            "description": "Missing or invalid bearer token, or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present (payment lane off — with `PAYMENT_LANE_ENABLED` a missing token resolves to the 200 PAYMENT_REQUIRED outcome instead).",
             "content": {
               "application/json": {
                 "schema": {}
@@ -497,7 +494,7 @@
             }
           },
           "429": {
-            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "description": "Subject rate limit exceeded (with `Retry-After`).",
             "content": {
               "application/json": {
                 "schema": {}
@@ -552,17 +549,6 @@
         ],
         "summary": "Availability for each requested base.",
         "operationId": "check",
-        "parameters": [
-          {
-            "name": "version",
-            "in": "query",
-            "description": "Response version; `v1` is the only (and default) option. The legacy flat `v0` record was removed 2026-07-23.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -601,19 +587,16 @@
             }
           },
           "400": {
-            "description": "Invalid `version` (query dialect), invalid `usernames` (body dialect), or malformed JSON.",
+            "description": "Invalid `usernames`, or malformed JSON.",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
-                  "title": "Invalid Body Property Value",
-                  "detail": "The request body contains an invalid body property value.",
-                  "status": 400,
-                  "errors": [
+                  "error": "The request body contains invalid values.",
+                  "fields": [
                     {
-                      "detail": "Too big: expected array to have <=100 items",
-                      "pointer": "#/usernames"
+                      "field": "usernames",
+                      "message": "must contain at most 100 items"
                     }
                   ]
                 }
@@ -621,7 +604,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token (the frozen problem-details trio; a deliberate hardening divergence — legacy served this route unauthenticated).",
+            "description": "Missing or invalid bearer token.",
             "content": {
               "application/json": {
                 "schema": {}
@@ -629,7 +612,7 @@
             }
           },
           "429": {
-            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "description": "Subject rate limit exceeded (with `Retry-After`).",
             "content": {
               "application/json": {
                 "schema": {}
@@ -642,7 +625,7 @@
               "application/json": {
                 "schema": {},
                 "example": {
-                  "error": "Oops! Something went wrong."
+                  "error": "Internal server error. Please try again."
                 }
               }
             }
@@ -678,7 +661,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid bearer token (the frozen problem-details trio).",
+            "description": "Missing or invalid bearer token.",
             "content": {
               "application/json": {
                 "schema": {}
@@ -697,7 +680,7 @@
             }
           },
           "429": {
-            "description": "Subject rate limit exceeded (problem details with `Retry-After`).",
+            "description": "Subject rate limit exceeded (with `Retry-After`).",
             "content": {
               "application/json": {
                 "schema": {}
@@ -729,7 +712,7 @@
                 },
                 "example": {
                   "status": "ok",
-                  "service": "identity-service"
+                  "service": "device-attestation"
                 }
               }
             }
@@ -754,7 +737,7 @@
                 },
                 "example": {
                   "status": "alive",
-                  "service": "identity-service"
+                  "service": "device-attestation"
                 }
               }
             }
@@ -777,7 +760,7 @@
                 "schema": {},
                 "example": {
                   "status": "ready",
-                  "service": "identity-service",
+                  "service": "device-attestation",
                   "db": "up",
                   "chain": "up"
                 }
@@ -791,7 +774,7 @@
                 "schema": {},
                 "example": {
                   "status": "unavailable",
-                  "service": "identity-service",
+                  "service": "device-attestation",
                   "db": "down"
                 }
               }
@@ -809,7 +792,7 @@
         "operationId": "issue_puzzle",
         "responses": {
           "201": {
-            "description": "A fresh puzzle to solve. Mine a `counter` whose `sha256(sessionId || timestamp || counter)` has at least `difficulty` leading zero bits, then send `Proof-Of-Compute: base64(sessionId:timestamp:difficulty:counter:checksum)` on the search request. Callers holding an identity-service JWT do not need a puzzle.",
+            "description": "A fresh puzzle to solve. Mine a `counter` whose `sha256(sessionId || timestamp || counter)` has at least `difficulty` leading zero bits, then send `Proof-Of-Compute: base64(sessionId:timestamp:difficulty:counter:checksum)` on the search request. Callers holding an device-attestation JWT do not need a puzzle.",
             "content": {
               "application/json": {
                 "schema": {
@@ -825,11 +808,12 @@
             }
           },
           "404": {
-            "description": "Proof of compute is disabled on this deployment (`POC_ENABLED=false`): the route is not mounted and the service-wide plain-text 404 answers instead.",
+            "description": "Proof of compute is disabled on this deployment (`POC_ENABLED=false`): the route is not mounted and the service-wide 404 answers instead.",
             "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "error": "Not found"
                 }
               }
             }
@@ -877,18 +861,9 @@
             }
           },
           {
-            "name": "includeOnchainData",
-            "in": "query",
-            "description": "Compatibility flag; indexed rows have no truthful event position.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
             "name": "Authorization",
             "in": "header",
-            "description": "Optional `Bearer <JWT>` from identity-service. When proof of compute is enabled, a valid token satisfies this route and no puzzle is needed. An unverifiable token is treated as anonymous — this route never answers 401.",
+            "description": "Optional `Bearer <JWT>` from device-attestation. When proof of compute is enabled, a valid token satisfies this route and no puzzle is needed. An unverifiable token is treated as anonymous — this route never answers 401.",
             "required": false,
             "schema": {
               "type": [
@@ -926,19 +901,16 @@
             }
           },
           "400": {
-            "description": "Invalid query parameter (problem details with `errors`), invalid cursor (`{\"error\":\"Invalid cursor\"}`), or a malformed `Proof-Of-Compute` header (`bad-request` problem details).",
+            "description": "Invalid query parameter (with per-field `fields`), invalid cursor (`{\"error\":\"Invalid cursor\"}`), or a malformed `Proof-Of-Compute` header.",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "type": "https://problems-registry.smartbear.com/invalid-request-parameter-value",
-                  "title": "Invalid Query Parameter Value",
-                  "detail": "The request query contains an invalid parameter value.",
-                  "status": 400,
-                  "errors": [
+                  "error": "The request query contains invalid values.",
+                  "fields": [
                     {
-                      "detail": "Prefix is required",
-                      "pointer": "#/prefix"
+                      "field": "prefix",
+                      "message": "Prefix is required"
                     }
                   ]
                 }
@@ -946,29 +918,23 @@
             }
           },
           "402": {
-            "description": "Proof of compute is enabled and the caller presented neither a valid bearer token nor an acceptable puzzle. The `detail` names the reason: missing proof, checksum mismatch, expired puzzle, already-used puzzle, or insufficient difficulty.",
+            "description": "Proof of compute is enabled and the caller presented neither a valid bearer token nor an acceptable puzzle. The `error` names the reason: missing proof, checksum mismatch, expired puzzle, already-used puzzle, or insufficient difficulty.",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "type": "https://problems-registry.smartbear.com/payment-required",
-                  "title": "Payment Required",
-                  "detail": "Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header.",
-                  "status": 402
+                  "error": "Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header."
                 }
               }
             }
           },
           "429": {
-            "description": "Public rate limit exceeded (problem details with `Retry-After`).",
+            "description": "Public rate limit exceeded (with `Retry-After`).",
             "content": {
               "application/json": {
                 "schema": {},
                 "example": {
-                  "type": "https://problems-registry.smartbear.com/too-many-requests",
-                  "title": "Too Many Requests",
-                  "detail": "Rate limit exceeded. Please retry after 60 seconds.",
-                  "status": 429
+                  "error": "Rate limit exceeded. Please retry after 60 seconds."
                 }
               }
             }
@@ -1005,10 +971,10 @@
             }
           },
           "400": {
-            "description": "Body validation failed (RFC 9457 problem details with per-field `errors`); or plain-text `Malformed JSON in request body` when the body is not JSON."
+            "description": "Body validation failed (with per-field `fields`), or `Malformed JSON in request body` when the body is not JSON."
           },
           "401": {
-            "description": "Missing/malformed `Authorization` header or failed token verification (RFC 9457 problem details)."
+            "description": "Missing/malformed `Authorization` header or failed token verification."
           },
           "409": {
             "description": "Ticket race lost — a concurrent request claimed the contended ticket."
@@ -1017,10 +983,10 @@
             "description": "Pool exhausted — no `available` ticket in the `(dim, network)` pool."
           },
           "429": {
-            "description": "Per-subject rate limit exceeded (RFC 9457 problem details, with `Retry-After`)."
+            "description": "Per-subject rate limit exceeded (with `Retry-After`)."
           },
           "500": {
-            "description": "Unexpected internal failure (opaque legacy body)."
+            "description": "Unexpected internal failure (opaque)."
           }
         },
         "security": [
@@ -1059,13 +1025,13 @@
             }
           },
           "400": {
-            "description": "Body validation failed (RFC 9457 problem details with per-field `errors`); or plain-text `Malformed JSON in request body` when the body is present but not JSON. A request with no JSON content-type skips validation entirely and succeeds (legacy quirk)."
+            "description": "Body validation failed (with per-field `fields`), or `Malformed JSON in request body` when a body is present but not JSON. An empty body is accepted — every field is optional."
           },
           "401": {
-            "description": "Missing/malformed `Authorization` header or failed token verification (RFC 9457 problem details)."
+            "description": "Missing/malformed `Authorization` header or failed token verification."
           },
           "429": {
-            "description": "Per-subject rate limit exceeded (RFC 9457 problem details, with `Retry-After`)."
+            "description": "Per-subject rate limit exceeded (with `Retry-After`)."
           }
         },
         "security": [
@@ -1104,13 +1070,13 @@
             }
           },
           "400": {
-            "description": "Unparseable body, invalid hex, a collection outside the canonical People Lite/People allowlist, a proof that is not a single-context ring-VRF signature, a product this deployment does not accept, or a timestamp outside the accepted skew (RFC 9457 problem details)."
+            "description": "Unparseable body, invalid hex, a collection outside the canonical People Lite/People allowlist, a proof that is not a single-context ring-VRF signature, a product this deployment does not accept, or a timestamp outside the accepted skew."
           },
           "403": {
-            "description": "The proof did not verify against the named ring root under that product's context — including when `(ringIndex, ringRevision)` is outside the roots this deployment still holds (RFC 9457 problem details; deliberately unspecific)."
+            "description": "The proof did not verify against the named ring root under that product's context — including when `(ringIndex, ringRevision)` is outside the roots this deployment still holds (deliberately unspecific)."
           },
           "429": {
-            "description": "This person's redemption limit was exceeded (RFC 9457 problem details, with `Retry-After`)."
+            "description": "This person's redemption limit was exceeded (with `Retry-After`)."
           },
           "503": {
             "description": "Verification unavailable: no ring-root snapshot yet (chain unreachable since boot), the bounded waiter queue is full, or all verification slots remained busy for the bounded wait. Saturation responses include `Retry-After`."
@@ -1408,7 +1374,7 @@
       },
       "RegisterRequest": {
         "type": "object",
-        "description": "The flat registration request (documentation mirror — the handler\nvalidates raw JSON to reproduce the legacy zod error bodies).",
+        "description": "The flat registration request (documentation mirror — the handler\nvalidates raw JSON so it can report every failing field).",
         "required": [
           "candidateAccountId",
           "username",
@@ -1650,7 +1616,7 @@
           },
           "username": {
             "type": "string",
-            "description": "Full username when present, otherwise `base.digits` with the digits\nrendered as an integer (`alice.1` for stored digits `01`) — the\nfrozen legacy quirk (`NumberFromString` decode before rendering).",
+            "description": "Full username when present, otherwise `base.digits` with the digits\nrendered as an integer (`alice.1` for stored digits `01`).",
             "example": "alice.12"
           },
           "status": {
@@ -1658,24 +1624,17 @@
             "description": "Assignment state, always `ASSIGNED` for this projection.",
             "example": "ASSIGNED"
           },
-          "onchainData": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "On-chain event position, always null because the snapshot has none."
-          },
           "createdAt": {
             "type": "string",
             "format": "date-time",
             "description": "Time the projection first observed the account.",
-            "example": "2026-07-11T10:00:00.000Z"
+            "example": "2026-07-11T10:00:00Z"
           },
           "updatedAt": {
             "type": "string",
             "format": "date-time",
             "description": "Time the projection last refreshed the account.",
-            "example": "2026-07-11T10:01:00.000Z"
+            "example": "2026-07-11T10:01:00Z"
           }
         }
       },
@@ -1701,7 +1660,7 @@
       },
       "ClaimResponse": {
         "type": "object",
-        "description": "The frozen 200 claim body: the ticket keypair's public half plus the\nsr25519 signature over the claimant's decoded account id.",
+        "description": "The 200 claim body: the ticket keypair's public half plus the\nsr25519 signature over the claimant's decoded account id.",
         "required": [
           "publicKey",
           "inviter",
@@ -1778,7 +1737,7 @@
       },
       "IssueResponse": {
         "type": "object",
-        "description": "The shared 201 body: coturn REST-API ephemeral credentials plus the ICE\nserver list.",
+        "description": "The 201 body: coturn REST-API ephemeral credentials plus the ICE\nserver list.",
         "required": [
           "servers",
           "username",
@@ -2027,7 +1986,7 @@
     },
     {
       "name": "Usernames",
-      "description": "Public username search over the finalized chain projection. Served to callers with an identity-service JWT or, when proof of compute is enabled, a solved puzzle; rate-limited per subject or client IP."
+      "description": "Public username search over the finalized chain projection. Served to callers with an device-attestation JWT or, when proof of compute is enabled, a solved puzzle; rate-limited per subject or client IP."
     },
     {
       "name": "Proof of compute",

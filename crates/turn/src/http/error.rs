@@ -1,14 +1,11 @@
-//! HTTP error type for the turn service. The frozen issue route's dialects
-//! are shared, rendered via `http-common`; the proof routes are a new
-//! contract and render standard RFC 9457 problem details of their own.
+//! HTTP error type for the turn service — every status renders the shared
+//! JSON envelope from `http-common`.
 
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use http_common::problem;
 pub use http_common::FieldError;
 
-/// A handler error mapped to the frozen HTTP response.
+/// A handler error mapped to its HTTP response.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     /// Authenticated subject exceeded the per-window limit (429).
@@ -17,10 +14,10 @@ pub enum AppError {
         /// Seconds until the window resets (also the `Retry-After` header).
         retry_after_secs: u64,
     },
-    /// Request body failed validation (400 problem details with `errors`).
+    /// Request body failed validation (400 with per-field `fields`).
     #[error("invalid request body")]
     InvalidBody(Vec<FieldError>),
-    /// Request body was not parseable JSON (400 plain text, the Hono dialect).
+    /// Request body was not parseable JSON (400).
     #[error("malformed JSON body")]
     MalformedJson,
     /// Proof-route request rejected before verification (400).
@@ -45,24 +42,22 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
-            AppError::RateLimited { retry_after_secs } => problem::rate_limited(retry_after_secs),
-            AppError::InvalidBody(errors) => problem::invalid_body(&errors),
-            AppError::MalformedJson => problem::malformed_json(),
-            AppError::BadProofRequest(detail) => problem::bad_request(detail),
-            AppError::ProofRejected => problem_response(
+            AppError::RateLimited { retry_after_secs } => {
+                http_common::error::rate_limited(retry_after_secs)
+            }
+            AppError::InvalidBody(errors) => http_common::error::invalid_body(&errors),
+            AppError::MalformedJson => http_common::error::malformed_json(),
+            AppError::BadProofRequest(detail) => http_common::error::bad_request(detail),
+            AppError::ProofRejected => http_common::error::message(
                 StatusCode::FORBIDDEN,
-                "Forbidden",
                 "The supplied proof was not accepted.",
             ),
-            AppError::ProofUnavailable(detail) => problem_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Service Unavailable",
-                detail,
-            ),
+            AppError::ProofUnavailable(detail) => {
+                http_common::error::message(StatusCode::SERVICE_UNAVAILABLE, detail)
+            }
             AppError::ProofBusy => {
-                let mut response = problem_response(
+                let mut response = http_common::error::message(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    "Service Unavailable",
                     "All verification slots are busy.",
                 );
                 response
@@ -70,27 +65,12 @@ impl IntoResponse for AppError {
                     .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
                 response
             }
-            AppError::ProofInternal => problem_response(
+            AppError::ProofInternal => http_common::error::message(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error",
                 "Proof verification failed internally.",
             ),
         }
     }
-}
-
-/// Minimal RFC 9457 body for the proof routes' new (non-legacy) statuses.
-fn problem_response(status: StatusCode, title: &str, detail: &str) -> Response {
-    (
-        status,
-        [(header::CONTENT_TYPE, "application/problem+json")],
-        Json(serde_json::json!({
-            "title": title,
-            "detail": detail,
-            "status": status.as_u16(),
-        })),
-    )
-        .into_response()
 }
 
 /// Handler result alias.

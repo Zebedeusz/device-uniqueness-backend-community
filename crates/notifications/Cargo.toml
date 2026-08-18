@@ -8,12 +8,12 @@ publish.workspace = true
 autobins = false
 
 # notifications is a thin, stateless, DB-free `/api/v1/notify` relay: it verifies
-# an identity-service JWT with public-key material only, preserves the frozen
+# an device-attestation JWT with public-key material only, preserves the frozen
 # mobile request/response contract, and hands the flat payload to a push provider.
 # The iOS (APNs) provider is real; the Android (FCM) provider lands in a later phase.
 #
-# A library only: the deployable `notify-relay` service is a role of the `ibv2`
-# binary (`crates/ibv2`), entered through this crate's `routes()`.
+# A library only: the deployable `notify-relay` service is a role of the `dub`
+# binary (`crates/dub`), entered through this crate's `routes()`.
 [lib]
 path = "src/lib.rs"
 

@@ -2,13 +2,13 @@
 
 From-zero setup of a server. Day-2 operations: [runbook.md](runbook.md).
 
-Topology: `identity-api`, `identity-chain-writer`, and the single-instance `registration-queue` advancer (no signing secret; with `QUEUE_ENABLED` on it is the queue's only drain — down, claims park as `QUEUED` and the writer warns about stranded rows) share the identity Postgres; `username-indexer` owns a separate projection Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a third, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). `turn-api` and `notify-relay` are stateless (no Postgres). Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
+Topology: `device-attestation-api`, `device-attestation-chain-writer`, and the single-instance `registration-queue` advancer (no signing secret; with `QUEUE_ENABLED` on it is the queue's only drain — down, claims park as `QUEUED` and the writer warns about stranded rows) share the device-attestation Postgres; `username-indexer` owns a separate projection Postgres; `invite-tickets-api` and the single-instance `invite-tickets-pool` share a third, invite-tickets-owned Postgres (the ticket pool holds private keys — nothing shared). `turn-api` and `notify-relay` are stateless (no Postgres). Normal updates are done by CI ([workflow](../.github/workflows/deploy.yml)) — this page is only for standing up a new machine.
 
-**Two compose projects, one host.** The services live in an *environment* project started from [`docker-compose.yml`](../docker-compose.yml); the public edge is a separate project started from [`gateway/docker-compose.yml`](../gateway/docker-compose.yml). They meet on a shared external docker network (`ibv2-edge`) that neither owns, where each environment registers its services under `ENV_ID`-suffixed aliases (`identity-api-paseo-next-v2`, …). The edge resolves those aliases by docker DNS and is **the only container that publishes a host port** (80/443): nothing else is reachable from outside the machine, and a second environment collides with nothing. Route table: the committed [`gateway/Caddyfile`](../gateway/Caddyfile), loaded by the edge container. Ports for local debugging come from the opt-in [`docker-compose.debug.yml`](../docker-compose.debug.yml) overlay, which binds to `127.0.0.1` only.
+**Two compose projects, one host.** The services live in an *environment* project started from [`docker-compose.yml`](../docker-compose.yml); the public edge is a separate project started from [`gateway/docker-compose.yml`](../gateway/docker-compose.yml). They meet on a shared external docker network (`dub-edge`) that neither owns, where each environment registers its services under `ENV_ID`-suffixed aliases (`device-attestation-api-paseo-next-v2`, …). The edge resolves those aliases by docker DNS and is **the only container that publishes a host port** (80/443): nothing else is reachable from outside the machine, and a second environment collides with nothing. Route table: the committed [`gateway/Caddyfile`](../gateway/Caddyfile), loaded by the edge container. Ports for local debugging come from the opt-in [`docker-compose.debug.yml`](../docker-compose.debug.yml) overlay, which binds to `127.0.0.1` only.
 
-Secret boundaries: the JWT **signing** seed lives only in `identity-api`; `invite-tickets-api`, `turn-api`, and `notify-relay` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the invite inviter SURI lives only in `invite-tickets-pool`. `turn-api` additionally holds `TURN_SECRET` — the HMAC key shared with the TURN relay (coturn `--use-auth-secret`); relay and issuer must be rotated together, and no other service sees it. Push credentials (`APNS_*`/`FCM_*`) live only in `notify-relay`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
+Secret boundaries: the JWT **signing** seed lives only in `device-attestation-api`; `invite-tickets-api`, `turn-api`, and `notify-relay` get the **public** key (or JWKS) only. Each chain-submitting worker holds only its own signing secret: the invite inviter SURI lives only in `invite-tickets-pool`. `turn-api` additionally holds `TURN_SECRET` — the HMAC key shared with the TURN relay (coturn `--use-auth-secret`); relay and issuer must be rotated together, and no other service sees it. Push credentials (`APNS_*`/`FCM_*`) live only in `notify-relay`. Compose uses the root `.env` for interpolation only and gives every application container an explicit environment allowlist, so no service can read another's key.
 
-**Nonce lanes**: `invite-tickets-pool` submits as "an inviter" and `identity-chain-writer` as the attester authority; no two submitters may sign as the same account — two independent submitters on one account race nonces. Give each its own account (e.g. separate proxy delegates of one cold primary); compose interpolates the pool's from `INVITE_INVITER_*` host variables.
+**Nonce lanes**: `invite-tickets-pool` submits as "an inviter" and `device-attestation-chain-writer` as the attester authority; no two submitters may sign as the same account — two independent submitters on one account race nonces. Give each its own account (e.g. separate proxy delegates of one cold primary); compose interpolates the pool's from `INVITE_INVITER_*` host variables.
 
 Postgres is reachable by sibling containers on the internal Compose network and publishes no host port at all.
 
@@ -28,21 +28,21 @@ sudo apt-get install -y docker.io docker-compose-v2 ca-certificates curl gnupg
 sudo systemctl enable --now docker
 
 # Owned by no project: both the environment and the edge attach to it.
-sudo docker network create ibv2-edge
+sudo docker network create dub-edge
 
 # Same idea for metrics: the environment and the observability project meet
 # here, and nothing else does (Prometheus is never reachable from the edge).
-sudo docker network create ibv2-metrics
+sudo docker network create dub-metrics
 ```
 
 ## 2. Code and config
 
 ```bash
-git clone git@github.com:paritytech/device-uniqueness-backend.git ~/identity-backend-v2
-cd ~/identity-backend-v2
+git clone git@github.com:paritytech/device-uniqueness-backend.git ~/dub-paseo-next-v2
+cd ~/dub-paseo-next-v2
 ```
 
-`ENV_ID` names this environment and is what the network aliases are suffixed with. It defaults to `paseo-next-v2` (the ecosystem's id for this network); a second environment sets its own, e.g. `previewnet`. It is unrelated to `PEOPLE_NETWORK`, which stays the frozen legacy literal `paseo`.
+`ENV_ID` names this environment and is what the network aliases are suffixed with. It defaults to `paseo-next-v2` (the ecosystem's id for this network); a second environment sets its own, e.g. `previewnet`. It is unrelated to `PEOPLE_NETWORK`, which stays the wire literal `paseo`.
 
 Create `.env` (`chmod 600 .env`):
 
@@ -117,7 +117,7 @@ set this flag to `false` in the same edit.
 
 Each primary must already hold its on-chain privilege: `ATTESTER_ACCOUNT` a registered attester authority with an attestation allowance, and each inviter (`INVITER_ADDRESS` / `INVITE_INVITER_ADDRESS`) `AvailableInvites` on the `Game` / `ProofOfInk` pallets. Each signing key must hold funds for fees. Proxying is never configured: whenever a signing key's own account differs from the primary it is named against, the call is wrapped in `Proxy.proxy(real = primary)` — so that delegation must already exist on-chain. A non-empty `JWT_JWKS_JSON` takes precedence over `JWT_ED25519_PUBLIC_KEY`.
 
-The `notify-relay` provider secrets are optional: with none set the relay still boots and reports per-request provider failure for the unconfigured platform. `JWT_ED25519_PUBLIC_KEY` must be the public half of `identity-api`'s `JWT_ED25519_SECRET`.
+The `notify-relay` provider secrets are optional: with none set the relay still boots and reports per-request provider failure for the unconfigured platform. `JWT_ED25519_PUBLIC_KEY` must be the public half of `device-attestation-api`'s `JWT_ED25519_SECRET`.
 
 The `turn-api` variables have compose dev defaults (placeholder secret, `example.org` realm, `example.com` ICE URLs), so leaving them unset boots a service that mints credentials **no real relay accepts**. `TURN_SECRET` is the base64 encoding of the relay's raw `static-auth-secret` string — base64-encoding a hex-decoded form produces different HMAC keys and the relay answers 401 to every Allocate.
 
@@ -140,7 +140,7 @@ sudo docker compose -f observability/docker-compose.yml -p observability up -d
 ```
 
 Every process serves Prometheus metrics on port 9090 (`METRICS_ADDR`), published to no
-host port and routed by no Caddy rule: they are reachable only from the `ibv2-metrics`
+host port and routed by no Caddy rule: they are reachable only from the `dub-metrics`
 network, under the same `<service>-$ENV_ID` alias Prometheus scrapes in
 [`observability/prometheus.yml`](../observability/prometheus.yml), which holds one job per
 environment labelled `env_id`. Adding an environment means copying that job with the other
@@ -156,7 +156,7 @@ by discovering this host's containers through a read-only Docker socket
 ([`observability/alloy-config.alloy`](../observability/alloy-config.alloy)), and **Grafana**
 is the single UI over both datasources, loopback-only on `127.0.0.1:3000`
 (`GRAFANA_PORT`) with anonymous read-only access and the committed
-`Identity Backend V2 — overview` dashboard. Nothing has to be configured per service:
+`Device Uniqueness Backend — overview` dashboard. Nothing has to be configured per service:
 `LOG_FORMAT=json` (compose default) is all a process contributes, and the labels
 (`project`, `service`, `container`, `level`) come from Docker metadata. Set
 `GRAFANA_ADMIN_PASSWORD` in the observability project's environment before exposing that
@@ -181,7 +181,7 @@ curl -fsS https://<domain>/readyz                          # {"chain":"up","db":
 curl -fsS https://<domain>/api/v1/attester
 curl -fsS 'https://<domain>/api/v1/usernames/search?prefix=alice'   # routed to the indexer
 curl -fsS https://<domain>/docs/ -o /dev/null              # committed API reference
-sudo docker compose logs identity-chain-writer | tail -5   # "connected signer=…", "acquired writer lease"
+sudo docker compose logs device-attestation-chain-writer | tail -5   # "connected signer=…", "acquired writer lease"
 ```
 
 Confirm the host exposes nothing else:
@@ -204,7 +204,7 @@ Failure isolation check (notify is independent): stop the relay and confirm auth
 sudo docker compose stop notify-relay
 curl -fsS https://<domain>/readyz                                                  # still ready
 curl -s -o /dev/null -w '%{http_code}\n' https://<domain>/api/v1/notify            # 502/504 only for notify
-sudo docker compose start notify-relay                           # recovers without touching identity-api
+sudo docker compose start notify-relay                           # recovers without touching device-attestation-api
 ```
 
 For CI deploys to reach this server, set the repo secrets `IBV2_SSH_KEY` (private key authorized for `ubuntu@server`) and `IBV2_HOST` (server IP), and add a read-only GitHub deploy key on the server.
@@ -215,9 +215,9 @@ Only needed on a machine that still runs Caddy from `apt`. CI **skips** the edge
 project until it exists, precisely so a merge cannot fight the host for 80/443.
 
 ```bash
-cd ~/identity-backend-v2 && git pull
+cd ~/dub-paseo-next-v2 && git pull
 
-sudo docker network create ibv2-edge          # idempotent
+sudo docker network create dub-edge          # idempotent
 
 # 1. recreate the services: they drop their published ports and join the network
 sudo docker compose up -d --remove-orphans    # removes the old in-file gateway too
@@ -248,7 +248,7 @@ how many processes hold how many secrets. The design reasoning and the full thre
 | workloads | 10 | 5 |
 | HTTP tier | six services, one per surface | one `all-in-one` process |
 | workers | four singletons | the same four |
-| `JWT_ED25519_SECRET` reaches | `identity-api` only | the process that also serves public search |
+| `JWT_ED25519_SECRET` reaches | `device-attestation-api` only | the process that also serves public search |
 | `/readyz` on a dead dependency | that service leaves rotation | reports `degraded`, stays in rotation |
 | values file | `values-<env>.yaml` | see `helm/values-small.yaml` |
 
@@ -317,7 +317,7 @@ and the edge; it shares no database, no signing key, and no chain.
    ASSET_HUB_RPC_URL=wss://previewnet.substrate.dev/asset-hub    # compose default
    ```
 
-   On, identity-api accepts the `dotns` block AND identity-chain-writer submits
+   On, device-attestation-api accepts the `dotns` block AND device-attestation-chain-writer submits
    `DotnsGateway::reserve_name` on Asset Hub. Both halves read the same variable;
    a split value is intake accepting blocks nothing ever writes.
 
@@ -340,15 +340,15 @@ and the edge; it shares no database, no signing key, and no chain.
 3. **Start only the services that environment needs**, as its own project:
 
    ```bash
-   sudo docker compose -p identity-previewnet up -d \
-     postgres identity-api identity-chain-writer \
+   sudo docker compose -p dub-previewnet up -d \
+     postgres device-attestation-api device-attestation-chain-writer \
      username-indexer-postgres username-indexer
    ```
 
    `invite-tickets` is deliberately excluded on PreviewNet: its inviter would have
    to sign as the same delegate the chain-writer uses, and two submitters on one
    account and chain race nonces. Its route falls through to that environment's
-   `identity-api`, which 404s.
+   `device-attestation-api`, which 404s.
 
 4. **DNS**: an A record for the hostname at the server IP, unproxied. The edge
    acquires the certificate on its next start once DNS resolves.
@@ -393,7 +393,7 @@ The chart is [`helm/`](../helm): one loop over eight workloads, plus a static se
 reference. One values file per environment.
 
 ```bash
-helm template ibv2 helm -f helm/values-paseo-next-v2.yaml --set global.imageTag=<sha>
+helm template dub helm -f helm/values-paseo-next-v2.yaml --set global.imageTag=<sha>
 ```
 
 It refuses to render rather than deploy something nobody chose. It will fail if: `imageTag` or
@@ -408,7 +408,7 @@ Compose and the chart are **two renderings of one config contract**, and CI keep
 | Gate | What it holds | Where |
 |---|---|---|
 | `verify_compose_boundaries.sh` | no service reads another's secret (compose) | offline |
-| `verify_role_split.sh` | one image, one tag; every compose service and chart workload names a role `ibv2 --list-roles` accepts, exactly once, and its name IS its role; no default role in the image; release exporter shape | offline (+ `RUNTIME_CHECK=1` against the published image) |
+| `verify_role_split.sh` | one image, one tag; every compose service and chart workload names a role `dub --list-roles` accepts, exactly once, and its name IS its role; no default role in the image; release exporter shape | offline (+ `RUNTIME_CHECK=1` against the published image) |
 | `verify_helm_render.sh` | same, on the rendered chart; env-key parity with compose; probe budgets cover compose's | offline |
 | `verify_route_parity_live.sh` | real Caddy and real Traefik answer every route class identically | its own job (needs docker) |
 
@@ -485,7 +485,7 @@ The same digests are published to two registries:
 | `docker.io/paritytech/device-uniqueness-backend` | `vX.Y.Z`, `X.Y.Z`, `stable` | **public**, unauthenticated `docker pull` for external consumers |
 
 Docker Hub namespaces are one level (`org/name`), which one image fits without a workaround —
-the per-service `ibv2-` prefix the multi-image layout needed is gone. Override the destination
+the per-service `dub-` prefix the multi-image layout needed is gone. Override the destination
 with the `DOCKERHUB_REPO` repository variable; the credentials are the `DOCKERHUB_USER` /
 `DOCKERHUB_PASSWORD` secrets.
 
@@ -513,18 +513,18 @@ public only as a deliberate decision — it publishes binaries of a private repo
 To run the released image rather than build it, set `IMAGE_REPO` and `IMAGE_TAG` and pass
 `--no-build` (`IMAGE_REPO=ghcr.io/paritytech/device-uniqueness-backend IMAGE_TAG=v0.2.0
 docker compose pull`). **Every service resolves to the same `$IMAGE_REPO:$IMAGE_TAG`** and
-becomes itself through its `command: ["--role", "<service>"]`; `ibv2 --list-roles` prints the
+becomes itself through its `command: ["--role", "<service>"]`; `dub --list-roles` prints the
 set. A per-service image or tag pin makes "which build is this environment on?" unanswerable,
 and `scripts/verify_role_split.sh` fails the build if the compose file drifts that way. The
 roles each fail fast on missing configuration:
 
 | Service | Required |
 |---|---|
-| `identity-api` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `JWT_ED25519_SECRET`, `ATTESTER_ACCOUNT` |
-| `identity-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI`, `ATTESTER_ACCOUNT`, and `ASSET_HUB_RPC_URL` wherever `DOTNS_GATEWAY_ENABLED` is on — which is the compose default, so it is required unless the environment turns the lane off |
+| `device-attestation-api` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `JWT_ED25519_SECRET`, `ATTESTER_ACCOUNT` |
+| `device-attestation-chain-writer` | `DATABASE_URL`, `PEOPLE_RPC_URL`, `CHAIN_WRITER_SIGNER_SURI`, `ATTESTER_ACCOUNT`, and `ASSET_HUB_RPC_URL` wherever `DOTNS_GATEWAY_ENABLED` is on — which is the compose default, so it is required unless the environment turns the lane off |
 | `username-indexer` | `DATABASE_URL`, `PEOPLE_RPC_URL` |
 
-`identity-api` and `username-indexer` need **separate databases**: each applies its own
+`device-attestation-api` and `username-indexer` need **separate databases**: each applies its own
 `sqlx::migrate!` set and they would collide on a shared `_sqlx_migrations` table. Dev-only
 defaults for every variable are in `.env.example`.
 
@@ -532,11 +532,11 @@ defaults for every variable are in `.env.example`.
 
 | You see | Fix |
 |---|---|
-| `migration N was previously applied but has been modified` | Volume holds an older schema. `sudo docker compose down && sudo docker volume rm identity-backend-v2_pgdata && sudo docker compose up -d` — destroys DB state, back up first ([runbook](runbook.md#database-backup-manual)). |
+| `migration N was previously applied but has been modified` | Volume holds an older schema. `sudo docker compose down && sudo docker volume rm dub-paseo-next-v2_pgdata && sudo docker compose up -d` — destroys DB state, back up first ([runbook](runbook.md#database-backup-manual)). |
 | writer: `Cannot parse hex string` | Malformed `CHAIN_WRITER_SIGNER_SURI` (see accepted formats above). |
-| `identity-api` never healthy | It blocks on the People Chain RPC at startup — check connectivity to `PEOPLE_RPC_URL`. |
+| `device-attestation-api` never healthy | It blocks on the People Chain RPC at startup — check connectivity to `PEOPLE_RPC_URL`. |
 | `username-indexer` never healthy | Check its Postgres, People Chain RPC, and bootstrap logs with `sudo docker compose logs username-indexer`. |
 | No TLS certificate | DNS not propagated, 80/443 blocked, or a host Caddy still holding the ports. `dig +short <domain>`, `sudo ss -ltnp '( sport = :443 )'`, `sudo docker compose -f gateway/docker-compose.yml -p edge logs caddy`. |
-| Edge answers 502 | The upstream alias does not resolve: the environment project is down, or its `ENV_ID` does not match the Caddyfile's upstream suffix. `sudo docker network inspect ibv2-edge`. |
-| `network ibv2-edge not found` | Created out of band, once per host: `sudo docker network create ibv2-edge`. |
+| Edge answers 502 | The upstream alias does not resolve: the environment project is down, or its `ENV_ID` does not match the Caddyfile's upstream suffix. `sudo docker network inspect dub-edge`. |
+| `network dub-edge not found` | Created out of band, once per host: `sudo docker network create dub-edge`. |
 | `/docs` returns 404 | The edge mounts `../docs/api-reference` from the checkout — confirm the path exists and re-create the edge project after a `git pull`. |

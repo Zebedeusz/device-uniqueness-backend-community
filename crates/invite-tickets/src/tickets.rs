@@ -1,9 +1,7 @@
 //! Invitation-ticket domain: the `(dim, network)` pool vocabulary, the
-//! Postgres store, and the **frozen wire mapping** the mobile clients depend
-//! on.
+//! Postgres store, and the wire mapping the mobile clients depend on.
 //!
-//! Wire facts preserved from the legacy backend (ground truth is the legacy
-//! *code* — its feature `ARCHITECTURE.md` disagrees with it in two places):
+//! Wire facts:
 //! - DB states are `available | claimed` only (not the doc's
 //!   `unclaimed_*` triple). Failed registrations are never inserted.
 //! - The signature is over the raw 32-byte account id decoded from `who`,
@@ -30,7 +28,7 @@ pub enum Dim {
 }
 
 impl Dim {
-    /// The frozen wire/DB literal.
+    /// The wire/DB literal.
     pub fn as_str(self) -> &'static str {
         match self {
             Dim::Game => "Game",
@@ -51,7 +49,7 @@ impl FromStr for Dim {
     }
 }
 
-/// Network literal stamped into rows and responses (frozen enum).
+/// Network literal stamped into rows and responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
     /// Westend next.
@@ -63,7 +61,7 @@ pub enum Network {
 }
 
 impl Network {
-    /// The frozen wire/DB literal.
+    /// The wire/DB literal.
     pub fn as_str(self) -> &'static str {
         match self {
             Network::Westend2 => "westend2",
@@ -226,7 +224,7 @@ pub fn to_iso_millis(ts: OffsetDateTime) -> String {
         .expect("static format description")
 }
 
-/// The frozen 200 claim-response body.
+/// The 200 claim-response body.
 ///
 /// `publicKey` / `signature` are lowercase `0x`-hex (the legacy `toHex`);
 /// `createdAt` is the ticket's generation time, `claimedAt` the claim time
@@ -279,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn claim_response_shape_is_frozen() {
+    fn claim_response_shape_is_stable() {
         let ticket = ClaimedTicket {
             public_key: vec![0xab; 32],
             private_key: vec![0; 32],

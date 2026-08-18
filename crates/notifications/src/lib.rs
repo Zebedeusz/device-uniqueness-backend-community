@@ -1,8 +1,8 @@
-//! Thin, stateless, verify-only `/api/v1/notify` relay for Identity Backend V2.
+//! Thin, stateless, verify-only `/api/v1/notify` relay for Device Uniqueness Backend.
 //!
-//! Validates identity-service's Ed25519 JWT with public-key material only (never
-//! mints tokens, calls identity-service, or touches a database), preserves the
-//! frozen mobile request/response contract, and forwards the flat payload to a
+//! Validates device-attestation's Ed25519 JWT with public-key material only (never
+//! mints tokens, calls device-attestation, or touches a database), validates the
+//! mobile request/response contract, and forwards the flat payload to a
 //! [`PushProvider`].
 
 pub mod config;

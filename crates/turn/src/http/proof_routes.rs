@@ -64,13 +64,12 @@ configured TTL. Credentials expire `ttl` seconds after issuance; no alias appear
          body = crate::openapi::IssueResponse),
         (status = 400, description = "Unparseable body, invalid hex, a collection outside the \
 canonical People Lite/People allowlist, a proof that is not a single-context ring-VRF signature, \
-a product this deployment does not accept, or a timestamp outside the accepted skew (RFC 9457 \
-problem details)."),
+a product this deployment does not accept, or a timestamp outside the accepted skew."),
         (status = 403, description = "The proof did not verify against the named ring root \
 under that product's context — including when `(ringIndex, ringRevision)` is outside the roots \
-this deployment still holds (RFC 9457 problem details; deliberately unspecific)."),
-        (status = 429, description = "This person's redemption limit was exceeded (RFC 9457 \
-problem details, with `Retry-After`)."),
+this deployment still holds (deliberately unspecific)."),
+        (status = 429, description = "This person's redemption limit was exceeded (with \
+`Retry-After`)."),
         (status = 503, description = "Verification unavailable: no ring-root snapshot yet (chain \
 unreachable since boot), the bounded waiter queue is full, or all verification slots remained busy \
 for the bounded wait. Saturation responses include `Retry-After`."),

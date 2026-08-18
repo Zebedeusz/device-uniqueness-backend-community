@@ -2,8 +2,8 @@
 
 # One build, one binary, ONE image.
 #
-# Every service and worker is a ROLE of the single `ibv2` binary
-# (`ibv2 --role identity-api`; `ibv2 --list-roles` prints the ten). There is one
+# Every service and worker is a ROLE of the single `dub` binary
+# (`dub --role device-attestation-api`; `dub --list-roles` prints the ten). There is one
 # runtime stage, so there is one image: the deployment selects the role, the
 # image does not. See docs/plans/active/one-image-one-binary.md.
 #
@@ -25,9 +25,9 @@ WORKDIR /app
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release -p ibv2 \
+    cargo build --release -p dub \
     && mkdir -p /out \
-    && cp target/release/ibv2 /out/
+    && cp target/release/dub /out/
 
 # The bare binary, for the release workflow to export with
 # `--target binaries --output type=local`. It reuses the builder layer the image
@@ -42,12 +42,12 @@ COPY --from=builder /out/ /
 # without the trust store that fails at runtime rather than at build time.
 #
 # There is deliberately no `curl`: the compose healthcheck runs
-# `ibv2 --healthcheck`, which GETs this container's own /readyz on the
+# `dub --healthcheck`, which GETs this container's own /readyz on the
 # BIND_ADDR port. That removed the `runtime-http` base layer whose only purpose
 # was carrying curl for six of the ten stages — so the workers did not gain a
 # network client when the images merged. Kubernetes uses httpGet probes and
 # needs nothing in the image either way.
-FROM debian:bookworm-slim AS ibv2
+FROM debian:bookworm-slim AS dub
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -56,10 +56,10 @@ RUN apt-get update \
 # image does not have — and an fsGroup-mounted secret would be unreadable.
 RUN groupadd --system --gid 10001 appuser \
     && useradd --system --uid 10001 --gid 10001 appuser
-COPY --from=builder /out/ibv2 /usr/local/bin/
+COPY --from=builder /out/dub /usr/local/bin/
 USER appuser
 # 8080 is the HTTP roles' port; 9090 is the Prometheus exporter every role
 # serves, reachable on the private metrics network and never published. EXPOSE
 # is documentation — the four worker roles bind only the latter.
 EXPOSE 8080 9090
-ENTRYPOINT ["ibv2"]
+ENTRYPOINT ["dub"]

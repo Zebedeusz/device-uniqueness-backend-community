@@ -1,3 +1,9 @@
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Queue-down policy — stop the free lane from silently unthrottling
 
 > Stage: drafts | active | done | archived. Keep this plan current while working: when a scope item is finished, check its box `[ ]`→`[x]`; when a phase's ✅ demo passes, mark the phase done (with date). The plan file is the source of truth, not memory.
@@ -5,10 +11,10 @@
 Follow-up to the registration-queue slice (#16) and the issue raised against
 its fallback design. Today, with `QUEUE_ENABLED=true` and the advancer lease
 stale, intake falls back to direct `RESERVED`
-(`crates/identity-service/src/usernames/register.rs:355-366` — including on a
+(`crates/device-attestation/src/usernames/register.rs:355-366` — including on a
 mere liveness-probe *error*) and the chain-writer drains stranded `QUEUED`
 rows after `QUEUE_FALLBACK_AFTER_SECS`
-(`crates/identity-service/src/chain/writer.rs:235-245`,
+(`crates/device-attestation/src/chain/writer.rs:235-245`,
 `queue::fallback_drain`). An **absent** lease row (advancer never deployed /
 state wiped) drains with no grace at all. The queue is the throughput control
 for free registrations; the current fallback turns "queue service down" into
@@ -150,7 +156,7 @@ flag off drains. Proven by `queue_live` assertions and a compose demo.
         at the `queue_fallback_after` cadence and logged as a `warn!` with
         the count and the operator actions.
   - [x] (2026-08-03) `docker-compose.yml` passes `QUEUE_ENABLED` to
-        `identity-chain-writer`; `scripts/verify_compose_boundaries.sh`
+        `device-attestation-chain-writer`; `scripts/verify_compose_boundaries.sh`
         requires it (script green).
   - [x] (2026-08-03) `queue_live` reframed: the drain assertions are
         explicitly the flag-off janitor semantics; `stranded_queued`
@@ -168,7 +174,7 @@ flag off drains. Proven by `queue_live` assertions and a compose demo.
   - Rows queued forever if ops ignores the warning with the advancer
     unrecoverable — the escape hatch is deliberate and manual: flag off
     (janitor drains) — no automatic path back to unthrottled.
-  - Mixed `QUEUE_ENABLED` across identity-api / writer during a rolling
+  - Mixed `QUEUE_ENABLED` across device-attestation-api / writer during a rolling
     flip: intake and janitor disagree for one deploy window. Documented in
     the runbook (flip writer last when disabling); self-heals once
     consistent.

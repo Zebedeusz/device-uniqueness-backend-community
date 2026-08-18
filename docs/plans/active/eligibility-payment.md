@@ -2,12 +2,18 @@
 > box `[ ]`→`[x]`; when a phase's ✅ demo passes, mark the phase done (with date). The plan file is
 > the source of truth, not memory.
 
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Eligibility, payment & registration vouchers — INSTANT / PAYMENT_REQUIRED lanes
 
 Implements remaining-scope item 2 of `docs/architecture.md`: the INSTANT (voucher) and
 PAYMENT_REQUIRED (paid-fallback) registration lanes from Mike's "New JWT / Integrity / PoUD /
 Username Claim Logic" spec, the `payment-status` polling endpoint, and the groundwork for the
-spec's `200 {registrationOutcome}` claim envelope. Everything lives **inside `identity-service`**
+spec's `200 {registrationOutcome}` claim envelope. Everything lives **inside `device-attestation`**
 (architecture guardrail: `eligibility`, `payment`, `queue`, `writer` are modules, never services).
 
 **Checked against Mike's spec doc + overview diagram 2026-07-30** (the full 27-page "New JWT /
@@ -127,7 +133,7 @@ greenfield we are free to shape — feature-gated, spec-shaped, coordinated with
 
 ## Outbox + writer + queue
 - What exists: `chain/outbox.rs` state machine (`QUEUED → RESERVED → SUBMITTING → ASSIGNED |
-  RETRY_AFTER | FAILED_TERMINAL`), single-instance `identity-chain-writer`
+  RETRY_AFTER | FAILED_TERMINAL`), single-instance `device-attestation-chain-writer`
   (`chain/writer.rs`, lease + `fallback_drain`), queue advancer (`queue.rs`), migrations
   `0001`–`0005` (next: `0006`).
 - ✅ Demo: registration-queue plan phases 1–4 done 2026-07-27; `just test-live` queue suite.
@@ -154,7 +160,7 @@ greenfield we are free to shape — feature-gated, spec-shaped, coordinated with
 ## Phase 1: Eligibility module + voucher lane (INSTANT) — code-complete 2026-07-30
 - **Goal**: one typed decision replaces the scattered gate logic; a voucher claims instantly.
 - **Scope checklist**:
-  - [x] (2026-07-30) `eligibility` module in `identity-service`
+  - [x] (2026-07-30) `eligibility` module in `device-attestation`
         (`src/eligibility.rs`): pure `decide(Option<VoucherState>) -> Lane | VoucherError`
         (voucher precedence; bad voucher rejects, never falls through), `voucher_state`,
         atomic `redeem_and_reserve`; unit tests over the full decision table + pinned sha256
@@ -254,7 +260,7 @@ greenfield we are free to shape — feature-gated, spec-shaped, coordinated with
 ## Phase 3: Payment detection + registration hand-off — code-complete 2026-07-30
 - **Goal**: money on chain becomes a registered username with no client action.
 - **Scope checklist**:
-  - [x] (2026-07-30) Watcher in the **`identity-chain-writer` active loop**
+  - [x] (2026-07-30) Watcher in the **`device-attestation-chain-writer` active loop**
         (`payment::watch_pass`, called from `writer.rs::active_loop` every
         `PAYMENT_POLL_INTERVAL_SECS`, default 30; read-only on chain — nonce lane untouched;
         a no-op while `payment_requests` is empty, so the writer needs no payment gate):
@@ -318,7 +324,7 @@ greenfield we are free to shape — feature-gated, spec-shaped, coordinated with
         `CONFIRMED` — the deposit WAS observed; a 404 would push the client to re-claim and pay
         twice; the stuck registration is a support case.
   - [x] (2026-07-30) Gateway: `not path /api/v1/usernames/payment-status` inside
-        `@username_reads` (`gateway/Caddyfile`) so the poll reaches identity-api, not the
+        `@username_reads` (`gateway/Caddyfile`) so the poll reaches device-attestation-api, not the
         indexer; `caddy validate` green (caddy:2-alpine); route table updated in
         `docs/plans/active/gateway.md`.
   - [x] (2026-07-30) Wire + OpenAPI: mounted-only-when-enabled pinned by
@@ -373,7 +379,7 @@ greenfield we are free to shape — feature-gated, spec-shaped, coordinated with
   once. No HTTP mint surface.
 - One active payment request per subject; a `CONFIRMED` request is never deleted (money was
   observed — the row is the audit record).
-- All inside `identity-service` — no new crate/service (architecture guardrail); the new bins
+- All inside `device-attestation` — no new crate/service (architecture guardrail); the new bins
   (`voucher-mint`) stay in the same crate like the existing three.
 - New fixtures follow the classification discipline in `legacy_wire.rs` (every fixture in exactly
   one list, count assertion bumped); OpenAPI artifacts regenerated in the same change.
@@ -403,7 +409,7 @@ greenfield we are free to shape — feature-gated, spec-shaped, coordinated with
   without payer cooperation).
 - **Detection = cumulative balance polling, not exact-transfer matching** — decided divergence
   from the spec's "exact amount" wording; recorded in Phase 3.
-- **Watcher lives in `identity-chain-writer`** — the mandatory single-instance process; the
+- **Watcher lives in `device-attestation-chain-writer`** — the mandatory single-instance process; the
   optional-at-runtime queue advancer must not become a payment dependency.
 - **`payment-status` stays on the spec path** (`/api/v1/usernames/payment-status`) with a
   one-line gateway carve-out, rather than moving to `/api/v1/registration/…` — the spec is what

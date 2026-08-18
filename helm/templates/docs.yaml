@@ -16,7 +16,7 @@ kind: ConfigMap
 metadata:
   name: api-reference
   labels:
-    {{- include "ibv2.labels" (dict "name" "api-reference" "root" $root) | nindent 4 }}
+    {{- include "dub.labels" (dict "name" "api-reference" "root" $root) | nindent 4 }}
 data:
   index.html: |
 {{ $root.Files.Get "files/index.html" | indent 4 }}
@@ -28,16 +28,16 @@ kind: Deployment
 metadata:
   name: api-docs
   labels:
-    {{- include "ibv2.labels" (dict "name" "api-docs" "root" $root) | nindent 4 }}
+    {{- include "dub.labels" (dict "name" "api-docs" "root" $root) | nindent 4 }}
 spec:
   replicas: {{ $d.replicas }}
   selector:
     matchLabels:
-      {{- include "ibv2.selectorLabels" (dict "name" "api-docs" "root" $root) | nindent 6 }}
+      {{- include "dub.selectorLabels" (dict "name" "api-docs" "root" $root) | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "ibv2.labels" (dict "name" "api-docs" "root" $root) | nindent 8 }}
+        {{- include "dub.labels" (dict "name" "api-docs" "root" $root) | nindent 8 }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -69,10 +69,10 @@ kind: Service
 metadata:
   name: api-docs
   labels:
-    {{- include "ibv2.labels" (dict "name" "api-docs" "root" $root) | nindent 4 }}
+    {{- include "dub.labels" (dict "name" "api-docs" "root" $root) | nindent 4 }}
 spec:
   selector:
-    {{- include "ibv2.selectorLabels" (dict "name" "api-docs" "root" $root) | nindent 4 }}
+    {{- include "dub.selectorLabels" (dict "name" "api-docs" "root" $root) | nindent 4 }}
   ports:
     - name: http
       port: 80

@@ -4,7 +4,7 @@
 
 # Personhood-proof TURN issuance
 
-Issues: `identity-backend-rust#21`, `identity-backend#2904`.
+Issues: `device-uniqueness-backend#21`, `identity-backend#2904`.
 
 ## Shipped behavior
 
@@ -53,7 +53,7 @@ Issues: `identity-backend-rust#21`, `identity-backend#2904`.
   the server rebuilds the digest and bounds it. A captured proof stays usable for at most the skew
   window.
 - **No client-chosen nonce, and no genesis in the digest.** The product builds this
-  message, so it contains only a timestamp plus the `ibv2/turn-credential/v1` label
+  message, so it contains only a timestamp plus the `dub/turn-credential/v1` label
   (never shipped, so the earlier nonce/genesis layouts were never redeemed). Genesis
   stays a server pin (`TURN_PROOF_GENESIS`) for the root refresher: a proof made on
   another chain fails because that ring root does not verify. The nonce existed only

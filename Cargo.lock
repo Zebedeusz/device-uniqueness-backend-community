@@ -84,7 +84,7 @@ name = "apidoc-gen"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "identity-service",
+ "device-attestation",
  "invite-tickets",
  "notifications",
  "serde_json",
@@ -1237,6 +1237,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "device-attestation"
+version = "0.2.0"
+dependencies = [
+ "aes-gcm",
+ "aes-kw",
+ "anyhow",
+ "axum",
+ "base64",
+ "blake2",
+ "chain-client",
+ "chain-types",
+ "ciborium",
+ "ed25519-dalek",
+ "futures",
+ "hex",
+ "http-body-util",
+ "http-common",
+ "jsonwebtoken",
+ "jwt-verify",
+ "metrics",
+ "p256",
+ "p384",
+ "rand 0.8.6",
+ "rcgen",
+ "reqwest",
+ "rsa",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "subxt",
+ "subxt-rpcs",
+ "subxt-signer",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "utoipa",
+ "x509-parser",
+]
+
+[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1279,6 +1324,28 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
+
+[[package]]
+name = "dub"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "device-attestation",
+ "http-common",
+ "invite-tickets",
+ "notifications",
+ "reqwest",
+ "secrecy",
+ "serde_json",
+ "sqlx",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "turn",
+ "username-indexer",
+]
 
 [[package]]
 name = "ecdsa"
@@ -2105,28 +2172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ibv2"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "axum",
- "http-common",
- "identity-service",
- "invite-tickets",
- "notifications",
- "reqwest",
- "secrecy",
- "serde_json",
- "sqlx",
- "time",
- "tokio",
- "tower-http",
- "tracing",
- "turn",
- "username-indexer",
-]
-
-[[package]]
 name = "icu_collections"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2213,51 +2258,6 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
-
-[[package]]
-name = "identity-service"
-version = "0.2.0"
-dependencies = [
- "aes-gcm",
- "aes-kw",
- "anyhow",
- "axum",
- "base64",
- "blake2",
- "chain-client",
- "chain-types",
- "ciborium",
- "ed25519-dalek",
- "futures",
- "hex",
- "http-body-util",
- "http-common",
- "jsonwebtoken",
- "jwt-verify",
- "metrics",
- "p256",
- "p384",
- "rand 0.8.6",
- "rcgen",
- "reqwest",
- "rsa",
- "secrecy",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "subxt",
- "subxt-rpcs",
- "subxt-signer",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tower 0.5.3",
- "tower-http",
- "tracing",
- "utoipa",
- "x509-parser",
-]
 
 [[package]]
 name = "idna"
@@ -3780,7 +3780,7 @@ name = "routegen"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "ibv2",
+ "dub",
 ]
 
 [[package]]

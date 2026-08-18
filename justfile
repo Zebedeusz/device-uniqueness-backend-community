@@ -72,7 +72,7 @@ deny:
 
 # Regenerate the committed edge configs (the `(routes)` snippet in gateway/Caddyfile
 # and the `routes:` list in helm/values.yaml) from the ONE route table in
-# crates/ibv2/src/routes/table.rs. The `committed_artifacts_are_in_sync` test in
+# crates/dub/src/routes/table.rs. The `committed_artifacts_are_in_sync` test in
 # `just check` fails if either is stale, so run this after changing the table —
 # and never hand-edit between the `generated:route-table` markers.
 routes:
@@ -84,16 +84,16 @@ routes:
 openapi:
     cargo run -p apidoc-gen
 
-# Run the identity-api service natively (needs Postgres reachable on localhost:
+# Run the device-attestation-api service natively (needs Postgres reachable on localhost:
 # `docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d postgres`).
 run:
-    cargo run -p ibv2 -- --role identity-api
+    cargo run -p dub -- --role device-attestation-api
 
-# Run the identity-chain-writer worker (drains the reservation outbox onto People
+# Run the device-attestation-chain-writer worker (drains the reservation outbox onto People
 # Chain). Needs Postgres reachable on localhost — same prerequisite as `run`.
 run-writer:
-    cargo run -p ibv2 -- --role identity-chain-writer
+    cargo run -p dub -- --role device-attestation-chain-writer
 
 # Run the notifications relay (stateless /api/v1/notify).
 run-notify:
-    cargo run -p ibv2 -- --role notify-relay
+    cargo run -p dub -- --role notify-relay

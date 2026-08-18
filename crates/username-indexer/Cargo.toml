@@ -8,7 +8,7 @@ publish.workspace = true
 autobins = false
 
 # A library only: the deployable `username-indexer` service is a role of the
-# `ibv2` binary (`crates/ibv2`), entered through this crate's `routes()`.
+# `dub` binary (`crates/dub`), entered through this crate's `routes()`.
 [lib]
 path = "src/lib.rs"
 

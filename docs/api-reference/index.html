@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Identity Backend V2 API Reference</title>
+<title>Device Uniqueness Backend API Reference</title>
 <style>
 :root{
   --bg:#0b0e14;
@@ -776,7 +776,7 @@ table.params td.desc code{
   <div class="sidebar-inner">
     <div class="brand">
       <div class="brand-tag">v2 · M0</div>
-      <div class="brand-title">identity-backend</div>
+      <div class="brand-title">device-uniqueness-backend</div>
       <div class="brand-sub">API Reference</div>
     </div>
 
@@ -850,8 +850,8 @@ table.params td.desc code{
 
     <!-- HERO -->
     <section class="hero" id="overview">
-      <div class="hero-eyebrow">API Reference · Identity Service</div>
-      <h1>Identity Backend V2 <span class="v">v2</span></h1>
+      <div class="hero-eyebrow">API Reference</div>
+      <h1>Device Uniqueness Backend <span class="v">v2</span></h1>
       <p class="sub">API Reference for Leonardo's iOS smoke — client compatibility runs against the live server.</p>
 
       <div class="meta-grid">
@@ -945,7 +945,7 @@ table.params td.desc code{
             </div>
 <pre><span class="p">{</span>
   <span class="s">"status"</span><span class="p">:</span> <span class="s">"ok"</span><span class="p">,</span>
-  <span class="s">"service"</span><span class="p">:</span> <span class="s">"identity-service"</span>
+  <span class="s">"service"</span><span class="p">:</span> <span class="s">"device-attestation"</span>
 <span class="p">}</span></pre>
           </div>
           <div class="status-grid">
@@ -980,7 +980,7 @@ table.params td.desc code{
             </div>
 <pre><span class="p">{</span>
   <span class="s">"status"</span><span class="p">:</span> <span class="s">"alive"</span><span class="p">,</span>
-  <span class="s">"service"</span><span class="p">:</span> <span class="s">"identity-service"</span>
+  <span class="s">"service"</span><span class="p">:</span> <span class="s">"device-attestation"</span>
 <span class="p">}</span></pre>
           </div>
           <div class="status-grid">
@@ -1016,7 +1016,7 @@ table.params td.desc code{
             </div>
 <pre><span class="p">{</span>
   <span class="s">"status"</span><span class="p">:</span> <span class="s">"ready"</span><span class="p">,</span>
-  <span class="s">"service"</span><span class="p">:</span> <span class="s">"identity-service"</span><span class="p">,</span>
+  <span class="s">"service"</span><span class="p">:</span> <span class="s">"device-attestation"</span><span class="p">,</span>
   <span class="s">"db"</span><span class="p">:</span> <span class="s">"up"</span><span class="p">,</span>
   <span class="s">"chain"</span><span class="p">:</span> <span class="s">"up"</span>
 <span class="p">}</span></pre>
@@ -1028,7 +1028,7 @@ table.params td.desc code{
             </div>
 <pre><span class="p">{</span>
   <span class="s">"status"</span><span class="p">:</span> <span class="s">"unavailable"</span><span class="p">,</span>
-  <span class="s">"service"</span><span class="p">:</span> <span class="s">"identity-service"</span><span class="p">,</span>
+  <span class="s">"service"</span><span class="p">:</span> <span class="s">"device-attestation"</span><span class="p">,</span>
   <span class="s">"db"</span><span class="p">:</span> <span class="s">"down"</span>
 <span class="p">}</span></pre>
           </div>
@@ -1501,7 +1501,7 @@ credential key (no-op <code>202 {}</code> while <code>AUTH_ENABLED=false</code>)
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio).</div>
+              <div class="sc-desc">Missing or invalid bearer token.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
@@ -1515,7 +1515,7 @@ credential key (no-op <code>202 {}</code> while <code>AUTH_ENABLED=false</code>)
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">Subject rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+              <div class="sc-desc">Subject rate limit exceeded (with <code>Retry-After</code>).</div>
             </div>
           </div>
         </div>
@@ -1629,14 +1629,11 @@ the PoUD gate and the registration queue. Ignored unless
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/invalid-body-property-value"</span><span class="p">,</span>
-  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Invalid Body Property Value"</span><span class="p">,</span>
-  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"The request body contains an invalid body property value."</span><span class="p">,</span>
-  <span class="s">"status"</span><span class="p">:</span> <span class="n">400</span><span class="p">,</span>
-  <span class="s">"errors"</span><span class="p">:</span> <span class="p">[</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"The request body contains invalid values."</span><span class="p">,</span>
+  <span class="s">"fields"</span><span class="p">:</span> <span class="p">[</span>
     <span class="p">{</span>
-      <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Invalid signature."</span><span class="p">,</span>
-      <span class="s">"pointer"</span><span class="p">:</span> <span class="s">"#/candidateSignature"</span>
+      <span class="s">"field"</span><span class="p">:</span> <span class="s">"candidateSignature"</span><span class="p">,</span>
+      <span class="s">"message"</span><span class="p">:</span> <span class="s">"Invalid signature."</span>
     <span class="p">}</span>
   <span class="p">]</span>
 <span class="p">}</span></pre>
@@ -1695,16 +1692,16 @@ the PoUD gate and the registration queue. Ignored unless
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c400">400</span>
-                <span class="sc-label">WRONG_DATA</span>
+                <span class="sc-label">The request body contains invalid values.</span>
               </div>
-              <div class="sc-desc">Validation failed (problem details with <code>errors</code>), malformed JSON, or a <code>lifetimePoUDVoucher</code> that is unknown, already used, or expired (<code>{&quot;error&quot;: &quot;Voucher already used&quot;}</code> — a voucher failure rejects the claim outright).</div>
+              <div class="sc-desc">Validation failed (with per-field <code>fields</code>), malformed JSON, or a <code>lifetimePoUDVoucher</code> that is unknown, already used, or expired (<code>{&quot;error&quot;: &quot;Voucher already used&quot;}</code> — a voucher failure rejects the claim outright).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio), or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present (payment lane off — with <code>PAYMENT_LANE_ENABLED</code> a missing token resolves to the 200 PAYMENT_REQUIRED outcome instead).</div>
+              <div class="sc-desc">Missing or invalid bearer token, or hard-mode DeviceCheck required a usable Device-Token-iOS and none was present (payment lane off — with <code>PAYMENT_LANE_ENABLED</code> a missing token resolves to the 200 PAYMENT_REQUIRED outcome instead).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
@@ -1718,7 +1715,7 @@ the PoUD gate and the registration queue. Ignored unless
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">Subject rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+              <div class="sc-desc">Subject rate limit exceeded (with <code>Retry-After</code>).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
@@ -1749,7 +1746,7 @@ the PoUD gate and the registration queue. Ignored unless
         <div class="endpoint-head">
           <div class="endpoint-title">
             <span class="method-badge m-post">POST</span>
-            <span class="endpoint-path">/api/v1/usernames/available<span class="query">?version=<span class="pname">&lt;version&gt;</span></span></span>
+            <span class="endpoint-path">/api/v1/usernames/available</span>
           </div>
           <div class="endpoint-meta">
             <span class="chip green">200</span>
@@ -1765,16 +1762,6 @@ the PoUD gate and the registration queue. Ignored unless
           <div class="auth-note">
             <span class="auth-label">Auth</span>
             <span class="auth-text">Bearer JWT required in the <code>Authorization</code> header.</span>
-          </div>
-          <div class="tbl-wrap">
-            <table class="params">
-              <thead>
-                <tr><th>Query</th><th>Type</th><th>Required</th><th>Description</th></tr>
-              </thead>
-              <tbody>
-                <tr><td class="name">version</td><td class="type">string</td><td class="req">no</td><td class="desc">Response version; <code>v1</code> is the only (and default) option. The legacy flat <code>v0</code> record was removed 2026-07-23.</td></tr>
-              </tbody>
-            </table>
           </div>
           <div class="tbl-wrap">
             <table class="params">
@@ -1826,14 +1813,11 @@ the PoUD gate and the registration queue. Ignored unless
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/invalid-body-property-value"</span><span class="p">,</span>
-  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Invalid Body Property Value"</span><span class="p">,</span>
-  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"The request body contains an invalid body property value."</span><span class="p">,</span>
-  <span class="s">"status"</span><span class="p">:</span> <span class="n">400</span><span class="p">,</span>
-  <span class="s">"errors"</span><span class="p">:</span> <span class="p">[</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"The request body contains invalid values."</span><span class="p">,</span>
+  <span class="s">"fields"</span><span class="p">:</span> <span class="p">[</span>
     <span class="p">{</span>
-      <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Too big: expected array to have &lt;=100 items"</span><span class="p">,</span>
-      <span class="s">"pointer"</span><span class="p">:</span> <span class="s">"#/usernames"</span>
+      <span class="s">"field"</span><span class="p">:</span> <span class="s">"usernames"</span><span class="p">,</span>
+      <span class="s">"message"</span><span class="p">:</span> <span class="s">"must contain at most 100 items"</span>
     <span class="p">}</span>
   <span class="p">]</span>
 <span class="p">}</span></pre>
@@ -1844,7 +1828,7 @@ the PoUD gate and the registration queue. Ignored unless
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Oops! Something went wrong."</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Internal server error. Please try again."</span>
 <span class="p">}</span></pre>
           </div>
           <div class="status-grid">
@@ -1858,28 +1842,28 @@ the PoUD gate and the registration queue. Ignored unless
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c400">400</span>
-                <span class="sc-label">WRONG_DATA</span>
+                <span class="sc-label">The request body contains invalid values.</span>
               </div>
-              <div class="sc-desc">Invalid <code>version</code> (query dialect), invalid <code>usernames</code> (body dialect), or malformed JSON.</div>
+              <div class="sc-desc">Invalid <code>usernames</code>, or malformed JSON.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio; a deliberate hardening divergence — legacy served this route unauthenticated).</div>
+              <div class="sc-desc">Missing or invalid bearer token.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">Subject rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+              <div class="sc-desc">Subject rate limit exceeded (with <code>Retry-After</code>).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c500">500</span>
-                <span class="sc-label">Oops! Something went wrong.</span>
+                <span class="sc-label">Internal server error. Please try again.</span>
               </div>
               <div class="sc-desc">People Chain failure or reservation-outbox failure.</div>
             </div>
@@ -1938,7 +1922,7 @@ the PoUD gate and the registration queue. Ignored unless
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing or invalid bearer token (the frozen problem-details trio).</div>
+              <div class="sc-desc">Missing or invalid bearer token.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
@@ -1952,7 +1936,7 @@ the PoUD gate and the registration queue. Ignored unless
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">Subject rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+              <div class="sc-desc">Subject rate limit exceeded (with <code>Retry-After</code>).</div>
             </div>
           </div>
         </div>
@@ -1962,7 +1946,7 @@ the PoUD gate and the registration queue. Ignored unless
         <div class="endpoint-head">
           <div class="endpoint-title">
             <span class="method-badge m-get">GET</span>
-            <span class="endpoint-path">/api/v1/usernames/search<span class="query">?prefix=<span class="pname">&lt;prefix&gt;</span>&limit=<span class="pname">&lt;limit&gt;</span>&cursor=<span class="pname">&lt;cursor&gt;</span>&includeOnchainData=<span class="pname">&lt;includeOnchainData&gt;</span></span></span>
+            <span class="endpoint-path">/api/v1/usernames/search<span class="query">?prefix=<span class="pname">&lt;prefix&gt;</span>&limit=<span class="pname">&lt;limit&gt;</span>&cursor=<span class="pname">&lt;cursor&gt;</span></span></span>
           </div>
           <div class="endpoint-meta">
             <span class="chip green">200</span>
@@ -1980,7 +1964,7 @@ the PoUD gate and the registration queue. Ignored unless
                 <tr><th>Header</th><th>Type</th><th>Required</th><th>Description</th></tr>
               </thead>
               <tbody>
-                <tr><td class="name">Authorization</td><td class="type">string</td><td class="req">no</td><td class="desc">Optional <code>Bearer &lt;JWT&gt;</code> from identity-service. When proof of compute is enabled, a valid token satisfies this route and no puzzle is needed. An unverifiable token is treated as anonymous — this route never answers 401.</td></tr>
+                <tr><td class="name">Authorization</td><td class="type">string</td><td class="req">no</td><td class="desc">Optional <code>Bearer &lt;JWT&gt;</code> from device-attestation. When proof of compute is enabled, a valid token satisfies this route and no puzzle is needed. An unverifiable token is treated as anonymous — this route never answers 401.</td></tr>
                 <tr><td class="name">Proof-Of-Compute</td><td class="type">string</td><td class="req">no</td><td class="desc">Solved puzzle, required only when proof of compute is enabled and no valid bearer token is presented: <code>base64(sessionId:timestamp:difficulty:counter:checksum)</code> for a puzzle from <code>POST /api/v1/poc/issue</code>. Single-use.</td></tr>
               </tbody>
             </table>
@@ -1994,7 +1978,6 @@ the PoUD gate and the registration queue. Ignored unless
                 <tr><td class="name">prefix</td><td class="type">string</td><td class="req yes">yes</td><td class="desc">Prefix of letters/digits, optionally followed by a dot and digits.</td></tr>
                 <tr><td class="name">limit</td><td class="type">number</td><td class="req">no</td><td class="desc">Requested page size, defaulting to 100 and clamped to 1,000.</td></tr>
                 <tr><td class="name">cursor</td><td class="type">string</td><td class="req">no</td><td class="desc">Opaque continuation cursor from an earlier response.</td></tr>
-                <tr><td class="name">includeOnchainData</td><td class="type">boolean</td><td class="req">no</td><td class="desc">Compatibility flag; indexed rows have no truthful event position.</td></tr>
               </tbody>
             </table>
           </div>
@@ -2014,14 +1997,11 @@ the PoUD gate and the registration queue. Ignored unless
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/invalid-request-parameter-value"</span><span class="p">,</span>
-  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Invalid Query Parameter Value"</span><span class="p">,</span>
-  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"The request query contains an invalid parameter value."</span><span class="p">,</span>
-  <span class="s">"status"</span><span class="p">:</span> <span class="n">400</span><span class="p">,</span>
-  <span class="s">"errors"</span><span class="p">:</span> <span class="p">[</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"The request query contains invalid values."</span><span class="p">,</span>
+  <span class="s">"fields"</span><span class="p">:</span> <span class="p">[</span>
     <span class="p">{</span>
-      <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Prefix is required"</span><span class="p">,</span>
-      <span class="s">"pointer"</span><span class="p">:</span> <span class="s">"#/prefix"</span>
+      <span class="s">"field"</span><span class="p">:</span> <span class="s">"prefix"</span><span class="p">,</span>
+      <span class="s">"message"</span><span class="p">:</span> <span class="s">"Prefix is required"</span>
     <span class="p">}</span>
   <span class="p">]</span>
 <span class="p">}</span></pre>
@@ -2032,10 +2012,7 @@ the PoUD gate and the registration queue. Ignored unless
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/payment-required"</span><span class="p">,</span>
-  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Payment Required"</span><span class="p">,</span>
-  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header."</span><span class="p">,</span>
-  <span class="s">"status"</span><span class="p">:</span> <span class="n">402</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header."</span>
 <span class="p">}</span></pre>
           </div>
           <div class="code-block">
@@ -2044,10 +2021,7 @@ the PoUD gate and the registration queue. Ignored unless
               <div class="code-head-right"><span class="code-lang-tag">json</span></div>
             </div>
 <pre><span class="p">{</span>
-  <span class="s">"type"</span><span class="p">:</span> <span class="s">"https://problems-registry.smartbear.com/too-many-requests"</span><span class="p">,</span>
-  <span class="s">"title"</span><span class="p">:</span> <span class="s">"Too Many Requests"</span><span class="p">,</span>
-  <span class="s">"detail"</span><span class="p">:</span> <span class="s">"Rate limit exceeded. Please retry after 60 seconds."</span><span class="p">,</span>
-  <span class="s">"status"</span><span class="p">:</span> <span class="n">429</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Rate limit exceeded. Please retry after 60 seconds."</span>
 <span class="p">}</span></pre>
           </div>
           <div class="status-grid">
@@ -2061,23 +2035,23 @@ the PoUD gate and the registration queue. Ignored unless
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c400">400</span>
-                <span class="sc-label">WRONG_DATA</span>
+                <span class="sc-label">The request query contains invalid values.</span>
               </div>
-              <div class="sc-desc">Invalid query parameter (problem details with <code>errors</code>), invalid cursor (<code>{&quot;error&quot;:&quot;Invalid cursor&quot;}</code>), or a malformed <code>Proof-Of-Compute</code> header (<code>bad-request</code> problem details).</div>
+              <div class="sc-desc">Invalid query parameter (with per-field <code>fields</code>), invalid cursor (<code>{&quot;error&quot;:&quot;Invalid cursor&quot;}</code>), or a malformed <code>Proof-Of-Compute</code> header.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c402">402</span>
-                <span class="sc-label">402</span>
+                <span class="sc-label">Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header.</span>
               </div>
-              <div class="sc-desc">Proof of compute is enabled and the caller presented neither a valid bearer token nor an acceptable puzzle. The <code>detail</code> names the reason: missing proof, checksum mismatch, expired puzzle, already-used puzzle, or insufficient difficulty.</div>
+              <div class="sc-desc">Proof of compute is enabled and the caller presented neither a valid bearer token nor an acceptable puzzle. The <code>error</code> names the reason: missing proof, checksum mismatch, expired puzzle, already-used puzzle, or insufficient difficulty.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c429">429</span>
-                <span class="sc-label">RATE_LIMITED</span>
+                <span class="sc-label">Rate limit exceeded. Please retry after 60 seconds.</span>
               </div>
-              <div class="sc-desc">Public rate limit exceeded (problem details with <code>Retry-After</code>).</div>
+              <div class="sc-desc">Public rate limit exceeded (with <code>Retry-After</code>).</div>
             </div>
           </div>
         </div>
@@ -2118,20 +2092,29 @@ the PoUD gate and the registration queue. Ignored unless
   <span class="s">"checksum"</span><span class="p">:</span> <span class="s">"c8828951fd6c123fdbf6501f111d27dd3f260839344a7370e0dd8f20e2c40482"</span>
 <span class="p">}</span></pre>
           </div>
+          <div class="code-block">
+            <div class="code-head">
+              <span class="code-head-label">Response · 404 · application/json</span>
+              <div class="code-head-right"><span class="code-lang-tag">json</span></div>
+            </div>
+<pre><span class="p">{</span>
+  <span class="s">"error"</span><span class="p">:</span> <span class="s">"Not found"</span>
+<span class="p">}</span></pre>
+          </div>
           <div class="status-grid">
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c201">201</span>
                 <span class="sc-label">CREATED</span>
               </div>
-              <div class="sc-desc">A fresh puzzle to solve. Mine a <code>counter</code> whose <code>sha256(sessionId || timestamp || counter)</code> has at least <code>difficulty</code> leading zero bits, then send <code>Proof-Of-Compute: base64(sessionId:timestamp:difficulty:counter:checksum)</code> on the search request. Callers holding an identity-service JWT do not need a puzzle.</div>
+              <div class="sc-desc">A fresh puzzle to solve. Mine a <code>counter</code> whose <code>sha256(sessionId || timestamp || counter)</code> has at least <code>difficulty</code> leading zero bits, then send <code>Proof-Of-Compute: base64(sessionId:timestamp:difficulty:counter:checksum)</code> on the search request. Callers holding an device-attestation JWT do not need a puzzle.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c404">404</span>
-                <span class="sc-label">NOT_FOUND</span>
+                <span class="sc-label">Not found</span>
               </div>
-              <div class="sc-desc">Proof of compute is disabled on this deployment (<code>POC_ENABLED=false</code>): the route is not mounted and the service-wide plain-text 404 answers instead.</div>
+              <div class="sc-desc">Proof of compute is disabled on this deployment (<code>POC_ENABLED=false</code>): the route is not mounted and the service-wide 404 answers instead.</div>
             </div>
           </div>
         </div>
@@ -2220,14 +2203,14 @@ the PoUD gate and the registration queue. Ignored unless
                 <span class="sc-code c400">400</span>
                 <span class="sc-label">WRONG_DATA</span>
               </div>
-              <div class="sc-desc">Body validation failed (RFC 9457 problem details with per-field <code>errors</code>); or plain-text <code>Malformed JSON in request body</code> when the body is not JSON.</div>
+              <div class="sc-desc">Body validation failed (with per-field <code>fields</code>), or <code>Malformed JSON in request body</code> when the body is not JSON.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing/malformed <code>Authorization</code> header or failed token verification (RFC 9457 problem details).</div>
+              <div class="sc-desc">Missing/malformed <code>Authorization</code> header or failed token verification.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
@@ -2248,14 +2231,14 @@ the PoUD gate and the registration queue. Ignored unless
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">Per-subject rate limit exceeded (RFC 9457 problem details, with <code>Retry-After</code>).</div>
+              <div class="sc-desc">Per-subject rate limit exceeded (with <code>Retry-After</code>).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c500">500</span>
                 <span class="sc-label">INTERNAL</span>
               </div>
-              <div class="sc-desc">Unexpected internal failure (opaque legacy body).</div>
+              <div class="sc-desc">Unexpected internal failure (opaque).</div>
             </div>
           </div>
         </div>
@@ -2337,21 +2320,21 @@ the PoUD gate and the registration queue. Ignored unless
                 <span class="sc-code c400">400</span>
                 <span class="sc-label">WRONG_DATA</span>
               </div>
-              <div class="sc-desc">Body validation failed (RFC 9457 problem details with per-field <code>errors</code>); or plain-text <code>Malformed JSON in request body</code> when the body is present but not JSON. A request with no JSON content-type skips validation entirely and succeeds (legacy quirk).</div>
+              <div class="sc-desc">Body validation failed (with per-field <code>fields</code>), or <code>Malformed JSON in request body</code> when a body is present but not JSON. An empty body is accepted — every field is optional.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c401">401</span>
                 <span class="sc-label">UNAUTHORIZED</span>
               </div>
-              <div class="sc-desc">Missing/malformed <code>Authorization</code> header or failed token verification (RFC 9457 problem details).</div>
+              <div class="sc-desc">Missing/malformed <code>Authorization</code> header or failed token verification.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">Per-subject rate limit exceeded (RFC 9457 problem details, with <code>Retry-After</code>).</div>
+              <div class="sc-desc">Per-subject rate limit exceeded (with <code>Retry-After</code>).</div>
             </div>
           </div>
         </div>
@@ -2439,21 +2422,21 @@ server's accepted skew.</td></tr>
                 <span class="sc-code c400">400</span>
                 <span class="sc-label">WRONG_DATA</span>
               </div>
-              <div class="sc-desc">Unparseable body, invalid hex, a collection outside the canonical People Lite/People allowlist, a proof that is not a single-context ring-VRF signature, a product this deployment does not accept, or a timestamp outside the accepted skew (RFC 9457 problem details).</div>
+              <div class="sc-desc">Unparseable body, invalid hex, a collection outside the canonical People Lite/People allowlist, a proof that is not a single-context ring-VRF signature, a product this deployment does not accept, or a timestamp outside the accepted skew.</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c403">403</span>
                 <span class="sc-label">FORBIDDEN</span>
               </div>
-              <div class="sc-desc">The proof did not verify against the named ring root under that product's context — including when <code>(ringIndex, ringRevision)</code> is outside the roots this deployment still holds (RFC 9457 problem details; deliberately unspecific).</div>
+              <div class="sc-desc">The proof did not verify against the named ring root under that product's context — including when <code>(ringIndex, ringRevision)</code> is outside the roots this deployment still holds (deliberately unspecific).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
                 <span class="sc-code c429">429</span>
                 <span class="sc-label">RATE_LIMITED</span>
               </div>
-              <div class="sc-desc">This person's redemption limit was exceeded (RFC 9457 problem details, with <code>Retry-After</code>).</div>
+              <div class="sc-desc">This person's redemption limit was exceeded (with <code>Retry-After</code>).</div>
             </div>
             <div class="status-card">
               <div class="sc-head">
@@ -2674,7 +2657,7 @@ curl -fsS "$BASE/.well-known/jwks.json"</pre>
 
     <!-- FOOTER -->
     <footer class="footer">
-      Generated from the current <code>identity-backend-v2</code> route code on <code>2026-07-08</code>. Served at <code>https://identity.dotspark.app</code> (test deployment).
+      Generated from the current <code>dub</code> route code on <code>2026-07-08</code>. Served at <code>https://identity.dotspark.app</code> (test deployment).
     </footer>
 
   </div>

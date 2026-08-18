@@ -1,0 +1,61 @@
+[package]
+name = "dub"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+# The single deployable binary. Every service and worker in this workspace is a
+# ROLE of this one process (`--role <name>`), not its own executable: the ten
+# `main` bodies moved here unchanged, each keeping its own telemetry/metrics
+# service name, its own config, and its own shutdown behaviour.
+#
+# This crate is process wiring only — no domain logic. It depends on the six
+# service libraries and calls the same `routes()` / `run()` entry points the
+# per-service integration suites exercise.
+# A library as well as the binary: `crates/routegen` reads the route table out of
+# it to render the committed edge configs. Only the binary ships in the image.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dub"
+path = "src/main.rs"
+
+[dependencies]
+http-common.workspace = true
+device-attestation = { path = "../device-attestation" }
+username-indexer = { path = "../username-indexer" }
+invite-tickets = { path = "../invite-tickets" }
+turn = { path = "../turn" }
+notifications = { path = "../notifications" }
+
+tokio.workspace = true
+axum.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+# `/docs`: with no edge in front, the process file-serves the committed API
+# reference itself.
+tower-http = { version = "0.6", features = ["fs"] }
+
+# Types that appear in the moved bodies' signatures: the indexer's spent-puzzle
+# pruner takes a `PgPool`, its bootstrap stamps an `OffsetDateTime`, and
+# device-attestation-api reads two `Secret`s. All three are already in the tree.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+] }
+time = "0.3"
+secrecy = "0.10"
+
+# `--healthcheck` only: one plain-HTTP GET to this process's own /readyz, so the
+# image needs no curl. Already a dependency of device-attestation and
+# notifications, so this adds nothing to the dependency tree.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[lints]
+workspace = true

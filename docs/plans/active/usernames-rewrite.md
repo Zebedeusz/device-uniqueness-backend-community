@@ -1,3 +1,9 @@
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Usernames surface rewrite — frozen legacy dialect
 
 Goal: end the invented-dialect debt on the whole `/api/v1/usernames` surface.
@@ -11,7 +17,7 @@ endpoint.
 Provenance: fixtures captured 2026-07-23 from `paritytech/identity-backend`
 @ `c8369d936b41e875f2434dc2931878b7dafe2d1a`
 (`crates/username-indexer/tests/fixtures/`,
-`crates/identity-service/tests/fixtures/`, READMEs there). The capture
+`crates/device-attestation/tests/fixtures/`, READMEs there). The capture
 settled the load-bearing unknown: legacy's `.use('/', …)` middleware bound
 **only the collection root**, so CORS/ETag/JWT/rate-limits applied far more
 narrowly than the route docs implied (see the middleware-scope table in the
@@ -30,14 +36,14 @@ indexer fixtures README).
   the integer-digit response render, JS-ISO millis dates, new
   `GET /api/v1/usernames/{username}`, `standard_layers` + `hono_not_found`,
   shared `ConfigError`, OpenAPI tags, fixture replay suite. 2026-07-23.
-- [x] Phase 3 — `identity-service` usernames shell: `AuthSubject` (frozen 401
+- [x] Phase 3 — `device-attestation` usernames shell: `AuthSubject` (frozen 401
   trio), subject-keyed rate limit, the three-phase zod validation semantics
   (incl. the captured 500 quirks), captured 409/500 bodies, `?version`
   (v0 default) + v0 response shape, collection-root CORS, service-wide
   `hono_not_found` fallback, fixture replay suite. Old `AuthAccount`
   extractor deleted. 2026-07-23.
 - [x] Phase 4 — gateway: `@username_reads` (GET-only) matcher to :8081;
-  POST/OPTIONS fall through to identity-api. 2026-07-23.
+  POST/OPTIONS fall through to device-attestation-api. 2026-07-23.
 - [x] Phase 5 — boundary script (indexer holds no JWT material), apidoc-gen
   route list + regenerated artifacts. 2026-07-23.
 - [x] Compose stack end-to-end curl pass through the gateway: search 200
@@ -101,14 +107,14 @@ indexer fixtures README).
 8. **DeviceCheck lanes deferred** to the attestation slice
    (`PAYMENT_REQUIRED` 200, the non-trio Device-Token 401,
    `device_check_available` advisories). Fixtures parked behind the frozen
-   `DEFERRED_DEVICECHECK` list in the identity-service replay test.
+   `DEFERRED_DEVICECHECK` list in the device-attestation replay test.
 9. **dotns gating is config-driven** (`DOTNS_GATEWAY_ENABLED`, default
    enabled, freshness bounds 600s/600s via env) — legacy read the bounds
    from chain constants. The capture environment had the gateway disabled;
    the disabled 400 replays through a disabled-config router.
 10. **Auth-handshake routes are out of scope**: they still speak the older
     `{error, message}` dialect pending their own capture slice. The
-    service-wide fallback change means unknown paths on identity-api now
+    service-wide fallback change means unknown paths on device-attestation-api now
     404 in the Hono text dialect (previously axum's empty 404).
 11. **Error bodies are no longer byte-frozen (2026-07-23).** No client
     parses error bodies, so the reproduced legacy quirks were retired on
@@ -129,7 +135,7 @@ indexer fixtures README).
   (includes both `legacy_wire` replay suites: 48 + 55 fixtures classified
   exactly once, frozen counts).
 - `bash scripts/verify_compose_boundaries.sh`.
-- Live Postgres semantics: `just test-live` (identity outbox allocation across
+- Live Postgres semantics: `just test-live` (device-attestation outbox allocation across
   every status + indexer `pagination_live`).
 - Compose stack: `docker compose up -d` then through the gateway (`:8000`):
   search 200 envelope; `GET /api/v1/usernames/nosuchname.11` →

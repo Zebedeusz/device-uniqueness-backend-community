@@ -15,7 +15,7 @@
 #
 # What this proves CHANGED when the route table became a generated artifact.
 # Both configs are now rendered by `just routes` from one table
-# (crates/ibv2/src/routes/table.rs), so they can no longer drift by a hand-edit
+# (crates/dub/src/routes/table.rs), so they can no longer drift by a hand-edit
 # — `cargo test -p routegen` catches that offline and for free. What only a live
 # run can still prove is that the two RENDERINGS mean the same thing to the two
 # proxies: Caddy and Traefik do not share a matching language (ordered
@@ -32,7 +32,7 @@ set -euo pipefail
 
 HELM="${HELM:-helm}"
 VALUES="${1:-helm/values-paseo-next-v2.yaml}"
-NET=ibv2-parity
+NET=dub-parity
 CADDY_PORT="${CADDY_PORT:-18081}"
 TRAEFIK_PORT="${TRAEFIK_PORT:-18082}"
 STUB_IMAGE=caddy:2-alpine
@@ -44,7 +44,7 @@ command -v docker >/dev/null || { echo "docker not found" >&2; exit 127; }
 # Containers and network only — kept separate from the temp dir so the pre-run
 # sweep cannot delete the workspace the run is about to write into.
 reset_docker() {
-  docker rm -f $(docker ps -aq --filter "label=ibv2-parity=1") >/dev/null 2>&1 || true
+  docker rm -f $(docker ps -aq --filter "label=dub-parity=1") >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 reset_docker   # clear anything a previous interrupted run left behind
@@ -60,9 +60,9 @@ docker network create "$NET" >/dev/null
 # Caddyfile uses (`<svc>-paseo-next-v2`, `<svc>-previewnet`) and the plain
 # service names the chart's IngressRoute uses — so Caddy runs on its committed
 # DEFAULT upstreams, with no environment overrides to get wrong.
-SERVICES=(identity-api username-indexer invite-tickets-api turn-api notify-relay)
+SERVICES=(device-attestation-api username-indexer invite-tickets-api turn-api notify-relay)
 for svc in "${SERVICES[@]}"; do
-  docker run -d --rm --label ibv2-parity=1 --name "ibv2-stub-$svc" \
+  docker run -d --rm --label dub-parity=1 --name "dub-stub-$svc" \
     --network "$NET" \
     --network-alias "$svc" \
     --network-alias "$svc-paseo-next-v2" \
@@ -73,14 +73,14 @@ done
 # The API reference, served exactly as the chart serves it: the committed files
 # at the document ROOT, so a request that arrives un-stripped (/docs/...) misses
 # and one that arrives stripped (/openapi.json) hits.
-docker run -d --rm --label ibv2-parity=1 --name ibv2-stub-api-docs \
+docker run -d --rm --label dub-parity=1 --name dub-stub-api-docs \
   --network "$NET" --network-alias api-docs \
   -v "$PWD/docs/api-reference:/srv:ro" \
   "$STUB_IMAGE" caddy file-server --listen :8080 --root /srv >/dev/null
 
 # --- the two edges --------------------------------------------------------
-HOST_PASEO=ibv2-paseo.test
-HOST_PREVIEW=ibv2-preview.test
+HOST_PASEO=dub-paseo.test
+HOST_PREVIEW=dub-preview.test
 # Each environment is a separate site block in the Caddyfile, reachable only
 # under its own hostname — so the harness must address the one under test, or it
 # silently compares the primary's table against the other environment's chart.
@@ -89,7 +89,7 @@ case "$VALUES" in
   *)            HOST="$HOST_PASEO" ;;
 esac
 
-docker run -d --rm --label ibv2-parity=1 --name ibv2-edge-caddy \
+docker run -d --rm --label dub-parity=1 --name dub-edge-caddy \
   --network "$NET" -p "127.0.0.1:$CADDY_PORT:80" \
   -e GATEWAY_ADDRESS="http://$HOST_PASEO" \
   -e PREVIEW_GATEWAY_ADDRESS="http://$HOST_PREVIEW" \
@@ -100,7 +100,7 @@ docker run -d --rm --label ibv2-parity=1 --name ibv2-edge-caddy \
 
 # Traefik's dynamic config is GENERATED from the rendered chart, so what is
 # tested is the artifact that gets applied, not a hand-written copy of it.
-"$HELM" template ibv2 helm -f "$VALUES" \
+"$HELM" template dub helm -f "$VALUES" \
   --set global.imageTag=parity-live \
   --set "global.ingress.host=$HOST" 2>/dev/null > "$work/rendered.yaml"
 
@@ -137,7 +137,7 @@ docs = [d for d in yaml.safe_load_all(open(os.environ["RENDERED"])) if d]
 # Identified by what it IS, not by which service it names: the redirect router
 # is the one whose every route carries the redirect-to-https middleware. Keying
 # on the service name broke the moment a topology pointed the redirect at
-# something other than identity-api.
+# something other than device-attestation-api.
 def is_redirect(doc):
     return all(
         any(m["name"] == "redirect-to-https" for m in r.get("middlewares") or [])
@@ -172,7 +172,7 @@ if middlewares:
 yaml.safe_dump(cfg, open(os.environ["OUT"], "w"))
 PY
 
-docker run -d --rm --label ibv2-parity=1 --name ibv2-edge-traefik \
+docker run -d --rm --label dub-parity=1 --name dub-edge-traefik \
   --network "$NET" -p "127.0.0.1:$TRAEFIK_PORT:80" \
   -v "$work/dynamic.yml:/etc/traefik/dynamic.yml:ro" \
   "$TRAEFIK_IMAGE" \

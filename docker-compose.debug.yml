@@ -22,11 +22,11 @@
 services:
   postgres:
     ports:
-      - "127.0.0.1:${IDENTITY_POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${DEVICE_ATTESTATION_POSTGRES_PORT:-5432}:5432"
 
-  identity-api:
+  device-attestation-api:
     ports:
-      - "127.0.0.1:${IDENTITY_PORT:-8080}:8080"
+      - "127.0.0.1:${DEVICE_ATTESTATION_PORT:-8080}:8080"
 
   username-indexer-postgres:
     ports:

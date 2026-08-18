@@ -24,25 +24,25 @@ global:
     invite: TODO-invite-inviter-ss58   # owns its own nonce lane
 
 workloads:
-  identity-api:
+  device-attestation-api:
     env:
       AUTH_ENABLED: "false"
 
 secrets:
-  identity-api:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
-    JWT_ED25519_SECRET: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#JWT_ED25519_SECRET
-  identity-chain-writer:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
-    CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#CHAIN_WRITER_SIGNER_SURI
+  device-attestation-api:
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/paseo-next-v2#DEVICE_ATTESTATION_DATABASE_URL
+    JWT_ED25519_SECRET: ref+vault://kv/TODO/dub/paseo-next-v2#JWT_ED25519_SECRET
+  device-attestation-chain-writer:
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/paseo-next-v2#DEVICE_ATTESTATION_DATABASE_URL
+    CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/dub/paseo-next-v2#CHAIN_WRITER_SIGNER_SURI
   registration-queue:
-    IDENTITY_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#IDENTITY_DATABASE_URL
+    DEVICE_ATTESTATION_DATABASE_URL: ref+vault://kv/TODO/dub/paseo-next-v2#DEVICE_ATTESTATION_DATABASE_URL
   username-indexer:
-    INDEXER_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INDEXER_DATABASE_URL
+    INDEXER_DATABASE_URL: ref+vault://kv/TODO/dub/paseo-next-v2#INDEXER_DATABASE_URL
   invite-tickets-api:
-    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_DATABASE_URL
+    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/dub/paseo-next-v2#INVITE_DATABASE_URL
   invite-tickets-pool:
-    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_DATABASE_URL
-    INVITER_SIGNER_SURI: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#INVITE_INVITER_SIGNER_SURI
+    INVITE_TICKETS_DATABASE_URL: ref+vault://kv/TODO/dub/paseo-next-v2#INVITE_DATABASE_URL
+    INVITER_SIGNER_SURI: ref+vault://kv/TODO/dub/paseo-next-v2#INVITE_INVITER_SIGNER_SURI
   turn-api:
-    TURN_SECRET: ref+vault://kv/TODO/identity-backend-v2/paseo-next-v2#TURN_SECRET
+    TURN_SECRET: ref+vault://kv/TODO/dub/paseo-next-v2#TURN_SECRET

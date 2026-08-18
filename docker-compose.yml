@@ -1,6 +1,6 @@
-name: identity-backend-v2
+name: dub-paseo-next-v2
 
-# Local/dev topology: Postgres + the identity binaries, plus the username-indexer
+# Local/dev topology: Postgres + the device-attestation binaries, plus the username-indexer
 # The People Chain RPC is external (a public PreviewNet endpoint by default,
 # paired with PreviewNet's Asset Hub so the dotNS lane can run), so
 # `docker compose up` needs outbound internet to reach it.
@@ -13,28 +13,35 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Role/password/database come from these three vars, and so does every
+    # DEVICE_ATTESTATION_DATABASE_URL below — one source, so init, healthcheck
+    # and the three consumers cannot drift apart. The image reads POSTGRES_*
+    # ONLY when initialising an empty data directory, so an environment whose
+    # volume predates the identity -> device_attestation rename keeps the old
+    # names: point these at them rather than renaming the database (see
+    # docs/runbook.md "One-time: the identity -> device-attestation rename").
     environment:
-      POSTGRES_USER: identity
-      POSTGRES_PASSWORD: identity
-      POSTGRES_DB: identity
+      POSTGRES_USER: ${DEVICE_ATTESTATION_DB_USER:-device_attestation}
+      POSTGRES_PASSWORD: ${DEVICE_ATTESTATION_DB_PASSWORD:-device_attestation}
+      POSTGRES_DB: ${DEVICE_ATTESTATION_DB_NAME:-device_attestation}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U identity -d identity"]
+      test: ["CMD-SHELL", "pg_isready -U ${DEVICE_ATTESTATION_DB_USER:-device_attestation} -d ${DEVICE_ATTESTATION_DB_NAME:-device_attestation}"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  # N-replica HTTP API. Stateless; scale with `--scale identity-api=N`.
+  # N-replica HTTP API. Stateless; scale with `--scale device-attestation-api=N`.
   # Applies embedded migrations on boot (advisory-locked, safe across replicas).
-  identity-api:
+  device-attestation-api:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
-    command: ["--role", "identity-api"]
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
+    command: ["--role", "device-attestation-api"]
     restart: unless-stopped
     depends_on:
       postgres:
@@ -43,7 +50,12 @@ services:
     # also contains service-owned signing secrets.
     environment:
       BIND_ADDR: 0.0.0.0:8080
-      IDENTITY_DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      # Composed from the three vars the postgres service initialises with,
+      # never overridden whole: the host must stay `postgres` (the service on
+      # this network), and `.env` already carries a DEVICE_ATTESTATION_DATABASE_URL
+      # pointing at localhost for host-side `cargo run`. Interpolating that name
+      # here would aim every container at its own loopback.
+      DEVICE_ATTESTATION_DATABASE_URL: postgres://${DEVICE_ATTESTATION_DB_USER:-device_attestation}:${DEVICE_ATTESTATION_DB_PASSWORD:-device_attestation}@postgres:5432/${DEVICE_ATTESTATION_DB_NAME:-device_attestation}
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       # Dev-only 32-byte Ed25519 seed (0x + 64 hex). Replace in prod.
       JWT_ED25519_SECRET: ${JWT_ED25519_SECRET:-0x0101010101010101010101010101010101010101010101010101010101010101}
@@ -88,11 +100,11 @@ services:
     networks:
       default: {}
       edge:
-        aliases: ["identity-api-${ENV_ID:-paseo-next-v2}"]
+        aliases: ["device-attestation-api-${ENV_ID:-paseo-next-v2}"]
       metrics:
-        aliases: ["identity-api-${ENV_ID:-paseo-next-v2}"]
+        aliases: ["device-attestation-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "ibv2", "--healthcheck"]
+      test: ["CMD", "dub", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -100,31 +112,31 @@ services:
       start_period: 40s
 
   # Single-instance worker: drains the reservation outbox onto People Chain.
-  # Owns the `identity-chain-writer` image (one binary). MUST stay at exactly one replica —
+  # Owns the `device-attestation-chain-writer` image (one binary). MUST stay at exactly one replica —
   # one signer = one nonce lane. Do not `--scale` this service.
-  identity-chain-writer:
+  device-attestation-chain-writer:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
-    command: ["--role", "identity-chain-writer"]
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
+    command: ["--role", "device-attestation-chain-writer"]
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-      identity-api:
+      device-attestation-api:
         condition: service_started
     # Explicit allowlist: do not inject the shared .env wholesale because it
     # also contains service-owned signing secrets.
     environment:
-      IDENTITY_DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      DEVICE_ATTESTATION_DATABASE_URL: postgres://${DEVICE_ATTESTATION_DB_USER:-device_attestation}:${DEVICE_ATTESTATION_DB_PASSWORD:-device_attestation}@postgres:5432/${DEVICE_ATTESTATION_DB_NAME:-device_attestation}
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       # Dev signer. In prod the least-privilege proxy key; the writer proxies
       # whenever ATTESTER_ACCOUNT is not this key.
       CHAIN_WRITER_SIGNER_SURI: ${CHAIN_WRITER_SIGNER_SURI:-//Alice}
-      # Same value identity-api publishes at /api/v1/attester.
+      # Same value device-attestation-api publishes at /api/v1/attester.
       ATTESTER_ACCOUNT: ${ATTESTER_ACCOUNT:-5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY}
       CHAIN_WRITER_HOLDER_ID: ${CHAIN_WRITER_HOLDER_ID:-}
       CHAIN_WRITER_LEASE_NAME: ${CHAIN_WRITER_LEASE_NAME:-people-chain-writer}
@@ -134,7 +146,7 @@ services:
       CHAIN_WRITER_FINALIZE_SECS: ${CHAIN_WRITER_FINALIZE_SECS:-120}
       CHAIN_WRITER_MAX_ATTEMPTS: ${CHAIN_WRITER_MAX_ATTEMPTS:-8}
       # dotNS gateway lane (Asset Hub). On by default, and must match
-      # identity-api's DOTNS_GATEWAY_ENABLED. That side gates intake, this side
+      # device-attestation-api's DOTNS_GATEWAY_ENABLED. That side gates intake, this side
       # submits. A split value means blocks are accepted that nothing ever
       # writes. On + no ASSET_HUB_RPC_URL = startup abort, by design; every
       # other dotNS failure parks the lane rather than the writer, including a
@@ -148,7 +160,7 @@ services:
       # the lane off explicitly.
       DOTNS_GATEWAY_ENABLED: ${DOTNS_GATEWAY_ENABLED:-true}
       ASSET_HUB_RPC_URL: ${ASSET_HUB_RPC_URL:-wss://previewnet.substrate.dev/asset-hub}
-      # Must match identity-api's QUEUE_ENABLED: on = QUEUED rows are never
+      # Must match device-attestation-api's QUEUE_ENABLED: on = QUEUED rows are never
       # drained here (stranded-queue warning only); off = janitor drain.
       QUEUE_ENABLED: ${QUEUE_ENABLED:-false}
       QUEUE_FALLBACK_AFTER_SECS: ${QUEUE_FALLBACK_AFTER_SECS:-60}
@@ -165,7 +177,7 @@ services:
     networks:
       default: {}
       metrics:
-        aliases: ["identity-chain-writer-${ENV_ID:-paseo-next-v2}"]
+        aliases: ["device-attestation-chain-writer-${ENV_ID:-paseo-next-v2}"]
     deploy:
       replicas: 1
 
@@ -178,19 +190,19 @@ services:
   registration-queue:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
     command: ["--role", "registration-queue"]
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     # Explicit allowlist: no signing secrets — this service only reads chain
-    # balances and flips queue rows in the identity DB.
+    # balances and flips queue rows in the device-attestation DB.
     environment:
-      IDENTITY_DATABASE_URL: postgres://identity:identity@postgres:5432/identity
+      DEVICE_ATTESTATION_DATABASE_URL: postgres://${DEVICE_ATTESTATION_DB_USER:-device_attestation}:${DEVICE_ATTESTATION_DB_PASSWORD:-device_attestation}@postgres:5432/${DEVICE_ATTESTATION_DB_NAME:-device_attestation}
       PEOPLE_RPC_URL: ${PEOPLE_RPC_URL:-wss://previewnet.substrate.dev/people}
       QUEUE_ADVANCE_INTERVAL_SECS: ${QUEUE_ADVANCE_INTERVAL_SECS:-6}
       QUEUE_LEASE_TTL_SECS: ${QUEUE_LEASE_TTL_SECS:-30}
@@ -206,7 +218,7 @@ services:
     deploy:
       replicas: 1
 
-  # username-indexer owns its persistence independently of the identity DB, so its
+  # username-indexer owns its persistence independently of the device-attestation DB, so its
   # projection can be rebuilt or wiped without touching auth/registration state.
   username-indexer-postgres:
     image: postgres:16-alpine
@@ -228,10 +240,10 @@ services:
   username-indexer:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
     command: ["--role", "username-indexer"]
     restart: unless-stopped
     depends_on:
@@ -248,14 +260,14 @@ services:
       SEARCH_RATE_LIMIT: ${SEARCH_RATE_LIMIT:-60}
       SEARCH_RATE_LIMIT_WINDOW_SECS: ${SEARCH_RATE_LIMIT_WINDOW_SECS:-60}
       # Proof-of-compute gate on public search, OFF by default. When enabled the
-      # gate is either-or: a valid identity-service JWT satisfies search just as
+      # gate is either-or: a valid device-attestation JWT satisfies search just as
       # a solved puzzle does, so the shipping apps (which authenticate search)
       # need no change and only anonymous callers mine.
       POC_ENABLED: ${POC_ENABLED:-false}
       POC_HMAC_SECRET: ${POC_HMAC_SECRET:-}
       POC_DIFFICULTY_BITS: ${POC_DIFFICULTY_BITS:-16}
       # VERIFY-ONLY key material for that bypass — the public half only, never
-      # JWT_ED25519_SECRET: this service can verify identity-service tokens but
+      # JWT_ED25519_SECRET: this service can verify device-attestation tokens but
       # can never mint one (enforced by scripts/verify_compose_boundaries.sh).
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
@@ -271,7 +283,7 @@ services:
       metrics:
         aliases: ["username-indexer-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "ibv2", "--healthcheck"]
+      test: ["CMD", "dub", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -281,7 +293,7 @@ services:
       start_period: 300s
 
   # invite-tickets owns its persistence independently: the ticket-pool table
-  # holds private keys and must share nothing with the identity DB.
+  # holds private keys and must share nothing with the device-attestation DB.
   invite-tickets-postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -303,10 +315,10 @@ services:
   invite-tickets-api:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
     command: ["--role", "invite-tickets-api"]
     restart: unless-stopped
     depends_on:
@@ -316,9 +328,9 @@ services:
       BIND_ADDR: 0.0.0.0:8080
       INVITE_TICKETS_DATABASE_URL: postgres://invite_tickets:invite_tickets@invite-tickets-postgres:5432/invite_tickets
       PEOPLE_NETWORK: ${PEOPLE_NETWORK:-paseo}
-      # Verifies identity-service JWTs. Dev default = the public half of
-      # identity-api's dev JWT_ED25519_SECRET above; in prod prefer
-      # JWT_JWKS_JSON from identity-service's /.well-known/jwks.json.
+      # Verifies device-attestation JWTs. Dev default = the public half of
+      # device-attestation-api's dev JWT_ED25519_SECRET above; in prod prefer
+      # JWT_JWKS_JSON from device-attestation's /.well-known/jwks.json.
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       INVITE_TICKETS_RATE_LIMIT: ${INVITE_TICKETS_RATE_LIMIT:-30}
@@ -335,7 +347,7 @@ services:
       metrics:
         aliases: ["invite-tickets-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "ibv2", "--healthcheck"]
+      test: ["CMD", "dub", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -351,10 +363,10 @@ services:
   invite-tickets-pool:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
     command: ["--role", "invite-tickets-pool"]
     restart: unless-stopped
     depends_on:
@@ -396,10 +408,10 @@ services:
   turn-api:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
     command: ["--role", "turn-api"]
     restart: unless-stopped
     environment:
@@ -412,9 +424,9 @@ services:
       TURN_TTL_SECS: ${TURN_TTL_SECS:-1800}
       TURN_REALM: ${TURN_REALM:-example.org}
       ICE_SERVERS: ${ICE_SERVERS:-stun:stun.example.com:3478,turn:turn.example.com:3478?transport=udp}
-      # Verifies identity-service JWTs. Dev default = the public half of
-      # identity-api's dev JWT_ED25519_SECRET above; in prod prefer
-      # JWT_JWKS_JSON from identity-service's /.well-known/jwks.json.
+      # Verifies device-attestation JWTs. Dev default = the public half of
+      # device-attestation-api's dev JWT_ED25519_SECRET above; in prod prefer
+      # JWT_JWKS_JSON from device-attestation's /.well-known/jwks.json.
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       TURN_RATE_LIMIT: ${TURN_RATE_LIMIT:-30}
@@ -440,7 +452,7 @@ services:
       metrics:
         aliases: ["turn-api-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "ibv2", "--healthcheck"]
+      test: ["CMD", "dub", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -453,16 +465,16 @@ services:
   notify-relay:
     build:
       context: .
-      target: ibv2
+      target: dub
     image: ${IMAGE_REPO:-device-uniqueness-backend}:${IMAGE_TAG:-local}
     # One image, eight roles: this line is what makes the container this
-    # service. verify_role_split.sh checks it against `ibv2 --list-roles`.
+    # service. verify_role_split.sh checks it against `dub --list-roles`.
     command: ["--role", "notify-relay"]
     restart: unless-stopped
     environment:
       BIND_ADDR: 0.0.0.0:8080
-      # Verifies identity-service JWTs. Dev default = the public half of
-      # identity-api's dev JWT_ED25519_SECRET above; in prod prefer JWT_JWKS_JSON.
+      # Verifies device-attestation JWTs. Dev default = the public half of
+      # device-attestation-api's dev JWT_ED25519_SECRET above; in prod prefer JWT_JWKS_JSON.
       JWT_JWKS_JSON: ${JWT_JWKS_JSON:-}
       JWT_ED25519_PUBLIC_KEY: ${JWT_ED25519_PUBLIC_KEY:-0x8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
       NOTIFY_RATE_LIMIT: ${NOTIFY_RATE_LIMIT:-60}
@@ -490,7 +502,7 @@ services:
       metrics:
         aliases: ["notify-relay-${ENV_ID:-paseo-next-v2}"]
     healthcheck:
-      test: ["CMD", "ibv2", "--healthcheck"]
+      test: ["CMD", "dub", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -500,19 +512,19 @@ networks:
   # Per-project private network: how each service reaches its own Postgres.
   default:
   # Shared with the edge gateway and every other environment's project. Created
-  # once out of band (`docker network create ibv2-edge`) so no project owns it.
+  # once out of band (`docker network create dub-edge`) so no project owns it.
   # Services join it under an ENV_ID-suffixed alias, which is what lets two
   # projects with identical service names coexist on one host.
   edge:
     external: true
-    name: ${EDGE_NETWORK:-ibv2-edge}
+    name: ${EDGE_NETWORK:-dub-edge}
   # Shared with the observability project (Prometheus) and nothing else.
-  # Created once out of band (`docker network create ibv2-metrics`); every
+  # Created once out of band (`docker network create dub-metrics`); every
   # process joins it under an ENV_ID-suffixed alias so one Prometheus can
   # scrape several environments on one host. Never routed from the edge.
   metrics:
     external: true
-    name: ${METRICS_NETWORK:-ibv2-metrics}
+    name: ${METRICS_NETWORK:-dub-metrics}
 
 volumes:
   pgdata:

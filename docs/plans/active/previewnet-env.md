@@ -3,8 +3,8 @@
 # Goals
 
 - A second live deployment of this backend bound to **PreviewNet** (`wss://previewnet.substrate.dev/people`, para 1502), on its own hostname alongside the existing Paseo Next v2 deployment at `https://identity.dotspark.app`.
-- Hosts that switch to PreviewNet (Brevity desktop has the switch, gated off today) get a working identity backend on that network: auth handshake, username registration on PreviewNet People, username search.
-- Both deployments run on the **existing** `ibv2` machine and ship from the same `main` push.
+- Hosts that switch to PreviewNet (Brevity desktop has the switch, gated off today) get a working device-attestation backend on that network: auth handshake, username registration on PreviewNet People, username search.
+- Both deployments run on the **existing** `dub` machine and ship from the same `main` push.
 - One binary set works against both People runtimes — no per-network fork of `chain-types`, no second image.
 - The public edge becomes a committed, reproducible artifact instead of host state.
 
@@ -41,10 +41,10 @@
   - clients already store a **per-environment** backend URL (Brevity's `HostConfig.preview.identity.backendUrl`), so a URL costs them a data edit while a header costs code;
   - one origin for two JWT issuers breaks anything caching JWKS by URL, and collapses logs/Sentry for both environments into one host.
 - **Edge**: the gateway runs **in a container** (its own small compose project) owning 80/443 and a certs volume, joined to a shared external docker network. **No application or Postgres container publishes a host port.**
-- **Per-env services**: `identity-api`, `identity-chain-writer`, `username-indexer`, and their two Postgres instances. **`invite-tickets` is not deployed to PreviewNet** (decided 2026-08-03): the Game/ProofOfInk invites live on the shared authority `5F7H1LkZ…`, whose only registered delegate is the account the chain-writer already signs as — two submitters on one account and one chain is the nonce race the contracts forbid. It also loses no parity, because the Paseo pool is itself non-functional (running the compose `//Bob` default, unfunded, zero tickets). Revisit by asking the operator for a second delegate.
-- **Shared services** (one instance for all envs): `turn-api` and `notify-relay`. They hold no chain connection and no per-chain state; they verify identity JWTs from a **merged JWKS** — tokens carry a `kid` derived from the signing key (`crates/identity-service/src/jwt.rs:61`) and `Verifier::from_jwks` selects among many keys (`crates/jwt-verify/src/lib.rs:99-165`), so accepting both issuers is configuration, not code.
+- **Per-env services**: `device-attestation-api`, `device-attestation-chain-writer`, `username-indexer`, and their two Postgres instances. **`invite-tickets` is not deployed to PreviewNet** (decided 2026-08-03): the Game/ProofOfInk invites live on the shared authority `5F7H1LkZ…`, whose only registered delegate is the account the chain-writer already signs as — two submitters on one account and one chain is the nonce race the contracts forbid. It also loses no parity, because the Paseo pool is itself non-functional (running the compose `//Bob` default, unfunded, zero tickets). Revisit by asking the operator for a second delegate.
+- **Shared services** (one instance for all envs): `turn-api` and `notify-relay`. They hold no chain connection and no per-chain state; they verify device-attestation JWTs from a **merged JWKS** — tokens carry a `kid` derived from the signing key (`crates/device-attestation/src/jwt.rs:61`) and `Verifier::from_jwks` selects among many keys (`crates/jwt-verify/src/lib.rs:99-165`), so accepting both issuers is configuration, not code.
 - **Cross-runtime signing**: one transaction-extension tuple carrying both slot-0 names. Verified in subxt 0.50: extensions are encoded by walking the **live** metadata list and resolving tuple members **by name**, so a member the runtime does not declare is never encoded and cannot shift positions.
-- **Host layout**: **one checkout per environment** (`~/identity-backend-v2`, `~/identity-backend-previewnet`), each holding exactly one `.env`; the CI loop names both. The alternative — a single checkout with `.env.paseo-next-v2` / `.env.previewnet` selected by `--env-file` — was considered and rejected (decided 2026-08-03): compose auto-loads `./.env` whenever `--env-file` is absent, so one forgotten flag runs the PreviewNet project (its own volumes, its own database) against Paseo's RPC and Paseo's signer with no error at all. That is the same silent-default failure the hostname decision above exists to prevent, and a directory per environment makes it structurally impossible rather than a habit. Accepted costs: the edge always deploys from the primary checkout, and a third environment means another clone — revisit then, and note that a single checkout only becomes safe if no plain `.env` exists in the tree.
+- **Host layout**: **one checkout per environment** (`~/dub-paseo-next-v2`, `~/dub-previewnet`), each holding exactly one `.env`; the CI loop names both. The alternative — a single checkout with `.env.paseo-next-v2` / `.env.previewnet` selected by `--env-file` — was considered and rejected (decided 2026-08-03): compose auto-loads `./.env` whenever `--env-file` is absent, so one forgotten flag runs the PreviewNet project (its own volumes, its own database) against Paseo's RPC and Paseo's signer with no error at all. That is the same silent-default failure the hostname decision above exists to prevent, and a directory per environment makes it structurally impossible rather than a habit. Accepted costs: the edge always deploys from the primary checkout, and a third environment means another clone — revisit then, and note that a single checkout only becomes safe if no plain `.env` exists in the tree.
 - **Network label**: `PEOPLE_NETWORK` stays `paseo` wherever it is read. It is a frozen legacy wire literal that shipping clients parse (`crates/invite-tickets/src/tickets.rs`, DB `CHECK` in `crates/invite-tickets/migrations/0001_invite_tickets.sql:15`), so emitting an unknown value risks a client-side decode failure. Only the ticket services read it, and they are not deployed to PreviewNet, so the question is currently moot there — it returns if `invite-tickets` ever ships on another environment. Not to be confused with `ENV_ID`, which **does** follow the ecosystem ids (`paseo-next-v2`, `previewnet`).
 
 # Foundations / Already shipped (✅)
@@ -52,7 +52,7 @@
 ## Single-host multi-service stack
 
 - What exists: `docker-compose.yml` — the service set, per-service env allowlists, and secret boundaries enforced by `scripts/verify_compose_boundaries.sh`.
-- ✅ Demo: `sudo docker compose ps` on `ibv2` shows the stack healthy.
+- ✅ Demo: `sudo docker compose ps` on `dub` shows the stack healthy.
 - Gaps: every app and Postgres service publishes a host port (`8080`–`8085`, `5432`, `5433`, `5435`, gateway `8000`), mostly on **all interfaces**; only dim-tickets' Postgres binds `127.0.0.1`.
 
 ## Committed gateway config + a compose gateway service
@@ -63,13 +63,13 @@
 
 ## CI build + deploy
 
-- What exists: `.github/workflows/deploy.yml` — path-gated build to `ghcr.io`, SSH deploy into `~/identity-backend-v2`, Caddy reload, public `/readyz` check, one concurrency group.
+- What exists: `.github/workflows/deploy.yml` — path-gated build to `ghcr.io`, SSH deploy into `~/dub-paseo-next-v2`, Caddy reload, public `/readyz` check, one concurrency group.
 - ✅ Demo: a deployable push to `main` updates `identity.dotspark.app`.
 - Gaps: one target directory, one health URL, no notion of a second project.
 
 ## Chain surface
 
-- What exists: `crates/chain-types` (static subxt codegen from `metadata/people.scale`) + `chain-client` (`OnlineClient`, reconnecting RPC, `WriterSigner`). Registration is a **dynamic** call by name (`crates/identity-service/src/chain/writer.rs:485`), so pallet-index differences between runtimes are irrelevant.
+- What exists: `crates/chain-types` (static subxt codegen from `metadata/people.scale`) + `chain-client` (`OnlineClient`, reconnecting RPC, `WriterSigner`). Registration is a **dynamic** call by name (`crates/device-attestation/src/chain/writer.rs:485`), so pallet-index differences between runtimes are irrelevant.
 - ✅ Demo: the Paseo deployment registers usernames on-chain (verified 2026-07-09).
 - Gaps: the tuple in `crates/chain-types/src/lib.rs` names slot 0 `AuthorizeValueTransfer`, which PreviewNet calls `UnitTransactionExtension`. Verified 2026-08-01: PreviewNet People is `next-people-paseo` 1000030/tx 4 vs Paseo v2's 1000029/tx 3, and **every** item this workspace uses is shape-identical (`Resources::UsernameOwnerOf`, `Consumers`, `UsernameReservationQueue`, `Game`/`ProofOfInk::AvailableInvites` + `set_invite_ticket`, `Utility::force_batch`, `Proxy::proxy`, `System::Account`, `PeopleLite::attest`, SS58 42). `transactionVersion` needs nothing: `OnlineClient` feeds the live value to `CheckTxVersion`, and `CheckMetadataHash` is not in this tuple.
 
@@ -84,7 +84,7 @@ Not a coding phase; it is the long pole, so it must not start after Phase 1.
   2. `dot previewnet-people.query.PeopleLite.AttestationAllowance --dump` — expect a non-trivial allowance for `5GCF223U…`. Missing → ask for `PeopleLite.increase_attestation_allowance(5GCF223U…, n)` (root origin).
   3. `dot previewnet-people.query.Game.AvailableInvites --dump` and `…ProofOfInk.AvailableInvites --dump` — expect invites for `5GCF223U…`. Missing → ask the same owner to top them up.
   4. `dot previewnet-people.query.System.Account 5HEhiB3hMb8P36L6Edj716fR4wLPUSqoZZpcUrrYEod7f3qu` (and the authority) — expect a funded free balance for fees.
-  5. Reset the environment's own state, which the wipe invalidated too: `scripts/reset_env_state.sh --project identity-previewnet --confirm identity-previewnet` (`--dry-run` first to see the counts). It clears the registration outbox and payment quotes and leaves the device keys and minted vouchers alone — the rationale per table is in the script header and `docs/runbook.md` → **After a chain wipe**. Skipping it leaves ASSIGNED rows for usernames the new chain has never heard of, and every one of them keeps occupying a discriminator: availability unions the whole outbox with no status filter, so bases go `EXHAUSTED` against an empty chain. The username-indexer needs nothing here — since `sync_state.genesis_hash` it detects the new chain at boot and rebuilds its own projection.
+  5. Reset the environment's own state, which the wipe invalidated too: `scripts/reset_env_state.sh --project dub-previewnet --confirm dub-previewnet` (`--dry-run` first to see the counts). It clears the registration outbox and payment quotes and leaves the device keys and minted vouchers alone — the rationale per table is in the script header and `docs/runbook.md` → **After a chain wipe**. Skipping it leaves ASSIGNED rows for usernames the new chain has never heard of, and every one of them keeps occupying a discriminator: availability unions the whole outbox with no status filter, so bases go `EXHAUSTED` against an empty chain. The username-indexer needs nothing here — since `sync_state.genesis_hash` it detects the new chain at boot and rebuilds its own projection.
   6. Only then restart the PreviewNet stack; the writer logs `connected signer=…` and the first extrinsic should finalize.
 - **✅ Demo** (passed 2026-08-03): attester authority, its proxy delegation to our writer signer, attestation allowance, and both invite pools are all visible on PreviewNet People on-chain, with the writer signer funded.
 
@@ -107,7 +107,7 @@ Not a coding phase; it is the long pole, so it must not start after Phase 1.
 The riskiest step, taken while there is only one env so a failure has exactly one cause.
 
 - **Scope checklist**:
-  - [x] Create the external docker network; give every service a per-env network alias (`identity-api-${ENV_ID}`, …).
+  - [x] Create the external docker network; give every service a per-env network alias (`device-attestation-api-${ENV_ID}`, …).
   - [x] Remove every published host port from `docker-compose.yml`; add an optional debug overlay file that republishes them on `127.0.0.1` when needed (`docker-compose.debug.yml`, and the boundary script now fails on any published port in the base file).
   - [x] Promote the compose `gateway` to the production edge: own compose project, 80/443, a named certs volume, the real domain, and container-alias upstreams. It still holds no secrets (`scripts/verify_compose_boundaries.sh`).
   - [x] Documented the **one-time cutover** in `docs/deploy.md` (recreate services → `systemctl disable --now caddy` → start the edge → verify), with the rollback beside it. CI deliberately **skips** the edge project until it exists, so a merge can never fight host Caddy for 80/443.
@@ -123,7 +123,7 @@ The riskiest step, taken while there is only one env so a failure has exactly on
 
 - **Scope checklist**:
   - [x] Second checkout + compose project (`-p identity-previewnet`) with its own `.env` (one checkout per environment — see Approved architecture → Host layout): PreviewNet RPC, fresh `JWT_ED25519_SECRET`, `PEOPLE_NETWORK=paseo`, `QUEUE_ENABLED=false`, `DOTNS_GATEWAY_ENABLED=false`, Phase 0's signer material. No `POOL_TARGET_SIZE`: the ticket pool is not deployed here.
-  - [x] Only the per-env services: `identity-api`, `identity-chain-writer`, `username-indexer` (see Approved architecture for why `invite-tickets` is excluded).
+  - [x] Only the per-env services: `device-attestation-api`, `device-attestation-chain-writer`, `username-indexer` (see Approved architecture for why `invite-tickets` is excluded).
   - [x] DNS A record for `identity-previewnet.dotspark.app` at the server IP, unproxied.
   - [x] Add a second site block to `gateway/Caddyfile` reusing the route handles against the `*-previewnet` upstreams, with its own `{$VAR:default}` set; keep it one file (CI installs it, and the edge mounts it read-only). The handles moved into a `(routes)` snippet imported by both sites, so the ownership map exists once.
   - [x] Point the shared `turn-api` / `notify-relay` at a merged `JWT_JWKS_JSON` holding both envs' public keys. Note the accepted consequence: `JWT_JWKS_JSON` is one variable read by every verify-only service in the primary `.env`, so Paseo's indexer and ticket services now also accept PreviewNet-issued tokens. Harmless while both environments run `AUTH_ENABLED=false` (anyone can already mint a token for either); scope it to the shared services before real attestation is turned on.
@@ -138,7 +138,7 @@ The riskiest step, taken while there is only one env so a failure has exactly on
   - both stacks healthy against **their own** chain (`/readyz` `chain: up` on each);
   - the indexer route returned each environment's own projection — `loadcqdojnaia.1` on Paseo, `loadtestvua.1` on PreviewNet — proving per-env chain reads, not just routing;
   - a **shared** `turn-api` with a merged JWKS issued credentials for tokens from **both** issuers (201/201) and rejected an unrelated signer (401), so the shared-service decision is verified rather than assumed;
-  - issuer isolation holds in both directions: each `identity-api` returned 401 for the other environment's token and got past auth (400 on a deliberately invalid body) for its own;
+  - issuer isolation holds in both directions: each `device-attestation-api` returned 401 for the other environment's token and got past auth (400 on a deliberately invalid body) for its own;
   - stopping the PreviewNet environment left Paseo fully healthy (its hostname 502s alone);
   - an unknown `Host` reached no environment at all (empty response, no upstream dialled).
   - Not covered locally: the registration extrinsic (needs the attester proxy secret, which stays on the server) and certificate issuance (needs the real hostnames on 443).
@@ -152,7 +152,9 @@ The riskiest step, taken while there is only one env so a failure has exactly on
   - [x] `deploy.yml` deploys Paseo first, then PreviewNet, then brings the edge up and prunes images once — all under the **single** existing host concurrency group (separate groups would let two runs race one docker daemon and one Caddy config). The remote half is a heredoc'd bash script (loop over `<project>:<checkout>` entries, `docker network create` made idempotent, an env with no checkout is skipped rather than failing) so it can be syntax-checked outside CI.
   - [x] Health checks for both hostnames; a hostname that does not resolve yet is skipped, and the PreviewNet environment is deployed after Paseo so a failure there cannot block or revert it.
 - **✅ Demo** (pending the first real deploy — deliberately not run yet): one deployable push to `main` updates both stacks and both health checks pass in the workflow log.
-- **Review finding (2026-08-03)**: the established stack **keeps the project name declared in `docker-compose.yml`** (`identity-backend-v2`). An earlier draft passed `-p identity-paseo-next-v2`, which would have created a second project — fresh volumes, an apparently empty database, and a second writer on the same chain. `ENV_ID` still follows the ecosystem ids; the project name and the environment id are separate things.
+- **Review finding (2026-08-03)**: the established stack **keeps the project name declared in `docker-compose.yml`** (`identity-backend-v2` at the time). An earlier draft passed `-p identity-paseo-next-v2`, which would have created a second project — fresh volumes, an apparently empty database, and a second writer on the same chain. `ENV_ID` still follows the ecosystem ids; the project name and the environment id are separate things.
+
+  *Superseded 2026-08-17.* The DUB rename landed before any of this was deployed, so there were no volumes to orphan and no running writer — the constraint above had nothing to bind. With that gone, the projects are named for their environments (`dub-paseo-next-v2`, `dub-previewnet`), and `docker-compose.yml` declares the primary one as its default. The finding's rule still holds for any **live** host: renaming a project there costs exactly what this paragraph describes.
 - **Ordered, not transactional**: if the PreviewNet environment fails to come up, Paseo is already updated and the edge is not — the run fails loudly rather than rolling anything back.
 
 ## Phase 5: hand off
@@ -167,9 +169,9 @@ The riskiest step, taken while there is only one env so a failure has exactly on
 
 - `https://identity.dotspark.app` keeps serving Paseo Next v2 unchanged through every phase.
 - An environment is only ever reached through its own hostname. No route, header, or path may fall back to a default environment.
-- One writer per nonce lane, where a lane is **(signing account, chain)**: `identity-chain-writer` and `invite-tickets-pool` stay single-instance, and no two submitters share an account **on the same chain**. The two environments' writers deliberately share one account across *different* chains — nonces are per chain, so that is safe and must not be "fixed".
-- No shared state between envs: separate databases, volumes, and JWT signing seeds. `identity-api` and `username-indexer` keep separate databases within an env.
-- Secrets stay service-scoped: the JWT signing seed only in `identity-api`, public key/JWKS elsewhere, and the gateway holds none.
+- One writer per nonce lane, where a lane is **(signing account, chain)**: `device-attestation-chain-writer` and `invite-tickets-pool` stay single-instance, and no two submitters share an account **on the same chain**. The two environments' writers deliberately share one account across *different* chains — nonces are per chain, so that is safe and must not be "fixed".
+- No shared state between envs: separate databases, volumes, and JWT signing seeds. `device-attestation-api` and `username-indexer` keep separate databases within an env.
+- Secrets stay service-scoped: the JWT signing seed only in `device-attestation-api`, public key/JWKS elsewhere, and the gateway holds none.
 - `chain-types` stays the only place chain types live; one tuple serves every runtime.
 - The route table stays a committed artifact — never hand-edit the running config.
 - Nothing but the edge publishes a host port.

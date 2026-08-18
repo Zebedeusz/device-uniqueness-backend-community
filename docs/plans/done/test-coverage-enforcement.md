@@ -24,7 +24,7 @@
 
 # User journey
 1. A contributor runs `just check` for the fast offline gate, then `just test-live-db` for all deterministic SQL/state-machine behavior.
-2. The test command starts a project-scoped scratch stack on test-only loopback ports, waits for all four databases, runs the shared suite catalog, and tears that stack down without touching the contributor's normal `identity-backend-v2` project.
+2. The test command starts a project-scoped scratch stack on test-only loopback ports, waits for all four databases, runs the shared suite catalog, and tears that stack down without touching the contributor's normal `dub-paseo-next-v2` project.
 3. A pull request runs the same offline and database-backed commands automatically.
 4. A release tag reuses those required checks and publishes images only after they pass for the tagged SHA.
 5. A maintainer opts into People Chain or APNs/FCM smokes through separately named commands when the required external dependencies are available.

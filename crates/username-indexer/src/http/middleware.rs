@@ -61,7 +61,7 @@ impl RateLimiter {
 /// Keyed on the best-effort client IP and deliberately doing no signature work:
 /// it must be the cheapest layer on the route so a client that has exhausted its
 /// window cannot force JWT verification or puzzle hashing. The 429 renders the
-/// frozen legacy problem-details body with `Retry-After`.
+/// shared JSON envelope with `Retry-After`.
 pub async fn rate_limit(State(state): State<AppState>, req: Request, next: Next) -> Response {
     if !state.limiter.allow(&client_ip(&req)) {
         return AppError::RateLimited {
@@ -90,7 +90,7 @@ fn client_ip(req: &Request) -> String {
 }
 
 /// Admit a public read when the caller presents **either** a valid
-/// identity-service JWT **or** a fresh, solved proof-of-compute puzzle.
+/// device-attestation JWT **or** a fresh, solved proof-of-compute puzzle.
 ///
 /// Pass-through when the gate is disabled (`state.poc` is `None`), which is the
 /// shipping default. A bearer token that fails verification is treated as

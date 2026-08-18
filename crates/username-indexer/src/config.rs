@@ -56,7 +56,7 @@ impl Config {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let database_url = required_renamed(&get, "INDEXER_DATABASE_URL", "DATABASE_URL")?;
+        let database_url = required(&get, "INDEXER_DATABASE_URL")?;
         let people_rpc_url = required(&get, "PEOPLE_RPC_URL")?;
         let bind_addr = parse(
             "BIND_ADDR",
@@ -190,23 +190,6 @@ where
         .ok_or(ConfigError::Missing(key))
 }
 
-/// [`required`] for a key that has been namespaced: the new name wins, the bare
-/// name is accepted for one release with a `WARN`, and the error names the new
-/// one. Goes through the injected getter so the dual-read is testable without
-/// touching the process environment.
-fn required_renamed<F>(
-    get: &F,
-    key: &'static str,
-    legacy: &'static str,
-) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    http_common::config::renamed_with(get, key, legacy)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or(ConfigError::Missing(key))
-}
-
 fn parse<T>(key: &'static str, raw: &str) -> Result<T, ConfigError>
 where
     T: std::str::FromStr,
@@ -245,32 +228,6 @@ mod tests {
             config(&[("INDEXER_DATABASE_URL", "postgres://localhost/read")]),
             Err(ConfigError::Missing("PEOPLE_RPC_URL"))
         ));
-    }
-
-    /// The database URL was namespaced because four services read a bare
-    /// `DATABASE_URL` pointing at four different Postgres instances — a single
-    /// process reading two of those configs would connect one service to
-    /// another's database. The bare name stays honoured for one release so a
-    /// running deployment does not break on the release that introduces this.
-    #[test]
-    fn the_legacy_database_url_is_still_accepted_and_loses_to_the_namespaced_one() {
-        let legacy = config(&[
-            ("DATABASE_URL", "postgres://localhost/legacy"),
-            ("PEOPLE_RPC_URL", "ws://localhost:9944"),
-        ])
-        .expect("the bare DATABASE_URL is still accepted");
-        assert_eq!(legacy.database_url, "postgres://localhost/legacy");
-
-        let both = config(&[
-            ("INDEXER_DATABASE_URL", "postgres://localhost/read"),
-            ("DATABASE_URL", "postgres://localhost/legacy"),
-            ("PEOPLE_RPC_URL", "ws://localhost:9944"),
-        ])
-        .expect("both names set");
-        assert_eq!(
-            both.database_url, "postgres://localhost/read",
-            "the namespaced key must win, or an upgrade silently keeps the old value"
-        );
     }
 
     #[test]

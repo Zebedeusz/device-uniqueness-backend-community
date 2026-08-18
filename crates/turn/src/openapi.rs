@@ -2,8 +2,8 @@
 //!
 //! The issue route is described by the `#[utoipa::path]` attribute on its
 //! handler; the request/response bodies here are documentation-only mirrors
-//! of the frozen wire shapes (the handler works on raw JSON to preserve the
-//! legacy validation quirks byte-for-byte). The committed
+//! of the wire shapes (the handler works on raw JSON so it can report every
+//! failing field rather than the first). The committed
 //! `docs/api-reference/{openapi.json,index.html}` are generated from
 //! [`ApiDoc`] by the `apidoc-gen` binary, so they cannot drift from the code.
 
@@ -13,7 +13,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 
 /// `{ regionHint? }` — the issue command (the hint is reserved and ignored).
 #[derive(Deserialize, ToSchema)]
-#[allow(dead_code)] // documentation-only mirror of the frozen wire shape
+#[allow(dead_code)] // documentation-only mirror of the wire shape
 pub struct IssueRequest {
     /// Optional region hint (reserved for future use; accepted and ignored).
     #[serde(rename = "regionHint")]
@@ -21,10 +21,10 @@ pub struct IssueRequest {
     pub region_hint: Option<String>,
 }
 
-/// The shared 201 body: coturn REST-API ephemeral credentials plus the ICE
+/// The 201 body: coturn REST-API ephemeral credentials plus the ICE
 /// server list.
 #[derive(Serialize, ToSchema)]
-#[allow(dead_code)] // documentation-only mirror of the frozen wire shape
+#[allow(dead_code)] // documentation-only mirror of the wire shape
 pub struct IssueResponse {
     /// Configured ICE server URLs (`stun:` / `turn:` forms), echoed verbatim.
     #[schema(example = json!(["stun:stun.example.com:3478", "turn:turn.example.com:3478?transport=udp"]))]

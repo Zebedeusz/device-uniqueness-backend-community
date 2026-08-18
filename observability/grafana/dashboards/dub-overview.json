@@ -1,0 +1,341 @@
+{
+  "uid": "dub-overview",
+  "title": "Device Uniqueness Backend — overview",
+  "description": "Is every process ready, is the writer making progress, can it still pay for what it submits, and what is it complaining about. One environment at a time — the selector scopes every panel, metrics and logs alike.",
+  "tags": ["dub"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 10,
+  "editable": false,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "environment",
+        "description": "Which deployment on this host. Single-select on purpose: two environments sum into one meaningless line.",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+        "query": { "query": "label_values(dub_readyz_ok, env_id)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "paseo-next-v2", "value": "paseo-next-v2" }
+      },
+      {
+        "name": "service",
+        "label": "service",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "dub-loki" },
+        "query": { "label": "service", "stream": "{env_id=\"$env\"}", "refId": "LokiVariableQueryEditor-VariableQuery", "type": 1 },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Readiness (dub_readyz_ok)",
+      "description": "1 = the service's own /readyz probe passed. Distinct from Prometheus `up`: a service whose Postgres died still scrapes as up.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dub_readyz_ok{env_id=\"$env\"}",
+          "legendFormat": "{{service}}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "READY", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Attestation allowance",
+      "description": "People (dub_attester_allowance) and Asset Hub dotNS (dub_dotns_attester_allowance) are separate budgets. Either at zero stops its half of registration.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "dub_attester_allowance{env_id=\"$env\"}", "legendFormat": "people", "instant": true },
+        { "refId": "B", "expr": "dub_dotns_attester_allowance{env_id=\"$env\"}", "legendFormat": "asset-hub", "instant": true }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "green", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Signing account balances (planck)",
+      "description": "Every account this deployment pays fees from: the device-attestation writer's signer on both chains, its proxied primary, and the invite pool's inviter. `role` and `chain` separate the budgets — a fee balance at zero stops that lane regardless of its on-chain quota.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dub_account_free_balance_planck{env_id=\"$env\"}",
+          "legendFormat": "{{role}} ({{chain}})"
+        }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 5 } }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Outbox depth by status",
+      "description": "Work waiting on the chain writer. A rising RESERVED/QUEUED line with a flat ASSIGNED line is the writer not making progress. Absent entirely = no writer holds the lease.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "dub_outbox_depth{env_id=\"$env\"}", "legendFormat": "{{status}}" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Indexer lag (blocks behind)",
+      "description": "dub_indexer_checkpoint_lag_blocks: how many finalized blocks the username projection is behind. Zero is caught up; a climb means search is serving stale data. On its own axis on purpose — it shares no unit with block throughput.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "dub_indexer_checkpoint_lag_blocks{env_id=\"$env\"}", "legendFormat": "blocks behind" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 5 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 100 }, { "color": "red", "value": 300 }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Chain liveness (finalized blocks / 5m)",
+      "description": "The head the indexer sees moving. Flat at zero means the chain connection is dead while every other panel still looks healthy.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "increase(dub_chain_finalized_head_block{env_id=\"$env\"}[5m])", "legendFormat": "blocks / 5m" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 5 } }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Targets up (expected processes)",
+      "description": "Prometheus `up` per scrape target, relabelled to the bare process name. The target list is static, so it is also the inventory: 0 means the process is expected and absent, which readiness can never report — a dead process reports nothing at all.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "label_replace(up{env_id=\"$env\"}, \"proc\", \"$1\", \"instance\", \"(.*)-$env:9090\")",
+          "legendFormat": "{{proc}}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "ABSENT", "color": "red", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Chain submissions by outcome",
+      "description": "Per lane. Flat zero lines mean nothing is failing; a rising `retry` line with a flat `ok` line means submissions are failing while nothing is stuck yet. The reason is in the writer's logs.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (lane, outcome) (increase(dub_chain_submit_total{env_id=\"$env\"}[5m]))",
+          "legendFormat": "{{lane}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Invite pool depth (unclaimed tickets)",
+      "description": "Pre-registered ticket keypairs waiting in invite-tickets' database, per DIM. This is what a claim consumes: at zero the shipping apps' Game / ProofOfInk claims fail synchronously, whatever the rest of the stack reports.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "targets": [
+        { "refId": "A", "expr": "dub_invite_pool_depth{env_id=\"$env\"}", "legendFormat": "{{dim}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Available invites (inviter quota)",
+      "description": "The inviter's remaining on-chain AvailableInvites per DIM — the budget every minted ticket spends. At zero the pool stops refilling, the stock drains, and claims start failing. Separate from the inviter's fee balance: either at zero stops minting.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "targets": [
+        { "refId": "A", "expr": "dub_inviter_available_invites{env_id=\"$env\"}", "legendFormat": "{{dim}}", "instant": true }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "green", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Deployment — which accounts and chains is this?",
+      "description": "Which accounts this deployment signs as and attests for, and whether the dotNS lane is configured. Endpoints are deliberately absent — a configured URL can carry a credential and this surface is read anonymously.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 8, "w": 18, "x": 0, "y": 29 },
+      "targets": [
+        { "refId": "A", "expr": "dub_writer_info{env_id=\"$env\"}", "instant": true, "format": "table" }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "Value": true, "job": true, "instance": true, "env_id": true, "__name__": true },
+            "indexByName": { "service": 0, "signer": 1, "attester": 2, "dotns_lane": 3 }
+          }
+        },
+        { "id": "transpose", "options": { "firstFieldName": "setting", "restFieldName": "value" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "left", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "setting" }, "properties": [{ "id": "custom.width", "value": 150 }] }
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Runtime version",
+      "description": "spec_version and transaction_version per chain, read from the live connection each resource pass. The value only matters when it changes: a runtime upgrade is the one event that can break a working submission path with no deploy of ours.",
+      "datasource": { "type": "prometheus", "uid": "dub-prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 29 },
+      "targets": [
+        { "refId": "A", "expr": "dub_chain_spec_version{env_id=\"$env\"}", "legendFormat": "{{chain}} spec", "instant": true },
+        { "refId": "B", "expr": "dub_chain_transaction_version{env_id=\"$env\"}", "legendFormat": "{{chain}} tx", "instant": true }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Warnings and errors — all services",
+      "description": "level is a Loki label because the services log JSON, so this needs no regex over message text. Non-JSON lines (Postgres, Caddy) fall through to the original line.",
+      "datasource": { "type": "loki", "uid": "dub-loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 37 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{env_id=\"$env\", level=~\"WARN|ERROR\", service=~\"$service\"} | json | line_format \"{{ if .message }}{{ .message }}{{ else }}{{ __line__ }}{{ end }}\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 7,
+      "type": "logs",
+      "title": "All logs — selected services",
+      "datasource": { "type": "loki", "uid": "dub-loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 47 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{env_id=\"$env\", service=~\"$service\"} | json | line_format \"{{ if .message }}{{ .message }}{{ else }}{{ __line__ }}{{ end }}\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

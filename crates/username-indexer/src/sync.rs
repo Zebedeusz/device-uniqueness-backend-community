@@ -156,14 +156,14 @@ pub async fn run(pool: PgPool, chain: ChainClient, config: Config, freshness: Fr
 /// checkpoint, so it can grow while every individual pass reports success.
 async fn record_lag_gauges(pool: &PgPool, chain: &ChainClient) -> anyhow::Result<()> {
     let head = chain.online().at_current_block().await?.block_number();
-    metrics::gauge!("ibv2_chain_finalized_head_block").set(head as f64);
+    metrics::gauge!("dub_chain_finalized_head_block").set(head as f64);
 
     let Some(snapshot) = checkpoint_freshness(pool).await? else {
         return Ok(());
     };
     let checkpoint = snapshot.last_finalized_number;
-    metrics::gauge!("ibv2_indexer_checkpoint_block").set(checkpoint as f64);
-    metrics::gauge!("ibv2_indexer_checkpoint_lag_blocks")
+    metrics::gauge!("dub_indexer_checkpoint_block").set(checkpoint as f64);
+    metrics::gauge!("dub_indexer_checkpoint_lag_blocks")
         .set(head.saturating_sub(checkpoint) as f64);
     Ok(())
 }

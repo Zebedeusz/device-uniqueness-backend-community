@@ -1,7 +1,7 @@
 | DIM/PoI tickets | App → pallets directly; PoUD/personhood policy grants self-start instead of backend pool | Pallet flows ✅; issuance policy = runtime change | Yes | Never port daemons/pool |
 
 > Status: research write-up (draft). Grounds the decentralization targets from Karim's
-> "Identity Backend V2" proposal (2026-06-22, LGTM Torsten) and the design doc's Future
+> "Device Uniqueness Backend" proposal (2026-06-22, LGTM Torsten) and the design doc's Future
 > Work section in what actually exists today in three codebases:
 >
 > - **polkadot-bulletin-chain** (`../polkadot-bulletin-chain`, HEAD 2026-07-08) — content-addressed blob storage parachain.
@@ -63,7 +63,7 @@ Before the per-feature paths, the four primitives everything below composes from
 
 **Paths:**
 
-- **3a. On-device availability check (do now)** — light-client reads of the relevant exact keys (`UsernameOwnerOf` for legacy resources names; `LiteLabelOwner`/DotNS contract state on AH for the DotNS world). Retires `POST /usernames/available` — currently a direct-chain read in identity-service anyway, so the backend code is already shaped for this. If the UX keeps the "base + available digits" response, the app needs either a bounded loop over the candidate suffix range or a small runtime/contract view that returns the available set.
+- **3a. On-device availability check (do now)** — light-client reads of the relevant exact keys (`UsernameOwnerOf` for legacy resources names; `LiteLabelOwner`/DotNS contract state on AH for the DotNS world). Retires `POST /usernames/available` — currently a direct-chain read in device-attestation anyway, so the backend code is already shaped for this. If the UX keeps the "base + available digits" response, the app needs either a bounded loop over the candidate suffix range or a small runtime/contract view that returns the available set.
 - **3b. Track the DotNS migration in the write path.** identity-backend-rust's chain-writer currently submits `PeopleLite.attest` (+ optional DotNS reservation). As `resources` usernames deprecate, the writer's target becomes `dotns-gateway::reserve_name` on **Asset Hub** — which changes the chain the writer connects to and keeps the attester-allowance gating. Watch the "pop ↔ dotns chat" outcome ([y] in the proposal: reservation-by-attester "will change"); if the app ends up calling `register_name`/reserve directly (needs PC→AH ring-propagation latency for proof generation, per individuality#755), the backend's username write path shrinks to lite-only.
 
 ## 4. Registration itself (the "backend-less" question)

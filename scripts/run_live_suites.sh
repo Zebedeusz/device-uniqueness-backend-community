@@ -36,21 +36,21 @@ if [ "$mode" != "db" ] && [ "$mode" != "chain" ]; then
 fi
 
 # A dedicated, per-invocation project keeps test containers, networks, and
-# named volumes separate from the normal identity-backend-v2 dev stack. The
+# named volumes separate from the normal dub dev stack. The
 # prefix check makes the EXIT cleanup safe even if an override is supplied.
-test_project="${IBV2_TEST_COMPOSE_PROJECT:-identity-backend-v2-tests-$$}"
+test_project="${DUB_TEST_COMPOSE_PROJECT:-dub-tests-$$}"
 case "$test_project" in
-  identity-backend-v2-tests-*) ;;
+  dub-tests-*) ;;
   *)
-    echo "IBV2_TEST_COMPOSE_PROJECT must start with identity-backend-v2-tests-" >&2
+    echo "DUB_TEST_COMPOSE_PROJECT must start with dub-tests-" >&2
     exit 2
     ;;
 esac
 
-identity_port="${IDENTITY_TEST_POSTGRES_PORT:-56432}"
+device_attestation_port="${DEVICE_ATTESTATION_TEST_POSTGRES_PORT:-56432}"
 indexer_port="${INDEXER_TEST_POSTGRES_PORT:-56433}"
 invite_port="${INVITE_TICKETS_TEST_POSTGRES_PORT:-56435}"
-export IDENTITY_POSTGRES_PORT="$identity_port"
+export DEVICE_ATTESTATION_POSTGRES_PORT="$device_attestation_port"
 export INDEXER_POSTGRES_PORT="$indexer_port"
 export INVITE_POSTGRES_PORT="$invite_port"
 
@@ -75,7 +75,7 @@ trap 'exit 143' TERM
 
 "${compose[@]}" up -d --wait --wait-timeout 90 "${databases[@]}"
 
-identity_url="postgres://identity:identity@localhost:${identity_port}/identity"
+device_attestation_url="postgres://device_attestation:device_attestation@localhost:${device_attestation_port}/device_attestation"
 indexer_url="postgres://username_indexer:username_indexer@localhost:${indexer_port}/username_indexer"
 invite_url="postgres://invite_tickets:invite_tickets@localhost:${invite_port}/invite_tickets"
 
@@ -84,8 +84,8 @@ if [ "$mode" = "chain" ]; then
   # public Paseo default. They stay opt-in because external chain availability
   # is not a deterministic merge/release prerequisite.
   for suite in voucher_http_live payment_http_live payment_watch_live; do
-    IDENTITY_TEST_DATABASE_URL="$identity_url" \
-      "${cargo_cmd[@]}" -p identity-service --test "$suite" -- --ignored
+    DEVICE_ATTESTATION_TEST_DATABASE_URL="$device_attestation_url" \
+      "${cargo_cmd[@]}" -p device-attestation --test "$suite" -- --ignored
   done
   exit 0
 fi
@@ -93,8 +93,8 @@ fi
 # Deterministic database-only gate: 13 suites / 28 ignored tests. Keep this
 # list here so local tests, CI, and coverage all execute the same catalog.
 for suite in allocation_live auth_live outbox_live dotns_live queue_live voucher_live payment_live; do
-  IDENTITY_TEST_DATABASE_URL="$identity_url" \
-    "${cargo_cmd[@]}" -p identity-service --test "$suite" -- --ignored
+  DEVICE_ATTESTATION_TEST_DATABASE_URL="$device_attestation_url" \
+    "${cargo_cmd[@]}" -p device-attestation --test "$suite" -- --ignored
 done
 
 # `ingest_live` and `chain_identity_live` both drive the singleton `sync_state`

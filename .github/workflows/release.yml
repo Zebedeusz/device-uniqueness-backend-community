@@ -150,7 +150,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           TARGET: ${{ matrix.target }}
         run: |
-          name="ibv2-$VERSION-$TARGET"
+          name="dub-$VERSION-$TARGET"
           mv "$RUNNER_TEMP/bin" "$RUNNER_TEMP/$name"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v7
@@ -180,17 +180,17 @@ jobs:
           ref: refs/tags/${{ needs.version.outputs.tag }}
       - uses: Swatinem/rust-cache@v2
       - name: Build the release binary
-        run: cargo build --release -p ibv2
+        run: cargo build --release -p dub
       - name: Package the binaries
         env:
           VERSION: ${{ needs.version.outputs.version }}
           TARGET: aarch64-apple-darwin
         run: |
-          name="ibv2-$VERSION-$TARGET"
+          name="dub-$VERSION-$TARGET"
           mkdir -p "$RUNNER_TEMP/$name"
-          # One binary, every service: `ibv2 --role <name>`. The tarball's
+          # One binary, every service: `dub --role <name>`. The tarball's
           # contents now match the image's, with no list to keep in step.
-          cp target/release/ibv2 "$RUNNER_TEMP/$name/"
+          cp target/release/dub "$RUNNER_TEMP/$name/"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v7
         with:
@@ -239,7 +239,7 @@ jobs:
       #
       # A plain repository. Docker Hub namespaces are one level (`org/name`),
       # which used to force a `<prefix><service>` hack because ten images could
-      # not live under `paritytech/ibv2/<svc>` the way they did under a ghcr
+      # not live under `paritytech/dub/<svc>` the way they did under a ghcr
       # path. One image needs no such workaround.
       - id: dockerhub
         name: Resolve the Docker Hub mirror
@@ -432,13 +432,13 @@ jobs:
             # single service is that same image with a different --role.
             printf '```bash\n'
             printf '# the whole stack, pinned to this release:\n'
-            printf 'tar xzf ibv2-compose-%s.tar.gz && cp .env.example .env\n' "$VERSION"
-            printf 'docker network create ibv2-edge   # once per host\n'
+            printf 'tar xzf dub-compose-%s.tar.gz && cp .env.example .env\n' "$VERSION"
+            printf 'docker network create dub-edge   # once per host\n'
             printf 'docker compose up -d\n\n'
             printf '# ...or one service:\n'
-            printf 'docker run %s:%s --role identity-api\n' "$repo" "${{ needs.version.outputs.tag }}"
+            printf 'docker run %s:%s --role device-attestation-api\n' "$repo" "${{ needs.version.outputs.tag }}"
             printf '```\n'
-            printf 'No containers? `ibv2-%s-<target>.tar.gz` carries the single `ibv2` binary for `x86_64`/`aarch64` Linux and Apple Silicon — every service is a role of it (`ibv2 --role identity-api`, `ibv2 --list-roles`); `SHA256SUMS` covers every asset here.\n\n' "$VERSION"
+            printf 'No containers? `dub-%s-<target>.tar.gz` carries the single `dub` binary for `x86_64`/`aarch64` Linux and Apple Silicon — every service is a role of it (`dub --role device-attestation-api`, `dub --list-roles`); `SHA256SUMS` covers every asset here.\n\n' "$VERSION"
             cat section.md
             grep -E '^\[[^]]+\]: ' CHANGELOG.md
           } > notes.md
@@ -484,7 +484,7 @@ jobs:
           # compose file rather than something the substitutions mangled.
           docker compose -f bundle/docker-compose.yml config -q
 
-          tar -C bundle -czf "ibv2-compose-$VERSION.tar.gz" \
+          tar -C bundle -czf "dub-compose-$VERSION.tar.gz" \
             docker-compose.yml .env.example gateway
 
       - name: Create the GitHub Release
@@ -501,7 +501,7 @@ jobs:
           # Every asset in one directory, then one checksum file over all of
           # them — including the compose bundle, so `sha256sum -c` covers the
           # whole release rather than only the binaries.
-          mv "ibv2-compose-$VERSION.tar.gz" binaries/
+          mv "dub-compose-$VERSION.tar.gz" binaries/
           ( cd binaries && sha256sum ./*.tar.gz | sed 's| \./| |' > SHA256SUMS )
 
           # The notes promise three Linux/macOS targets plus the bundle; assert

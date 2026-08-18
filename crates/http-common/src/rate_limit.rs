@@ -2,8 +2,8 @@
 //!
 //! Keyed on the **JWT subject**, never the client IP: a whole venue shares one
 //! public IP under CGNAT, so a per-IP bucket on an authenticated route is a
-//! self-inflicted DoS (the legacy shared-nat postmortem). Fixed window,
-//! per-instance — the same deliberate simplicity as identity-service's auth
+//! self-inflicted DoS (the shared-NAT postmortem). Fixed window,
+//! per-instance — the same deliberate simplicity as device-attestation's auth
 //! limiter.
 
 use std::collections::HashMap;

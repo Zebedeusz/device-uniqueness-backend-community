@@ -53,7 +53,7 @@ pub fn spawn(service: &'static str) {
 const READINESS_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Periodically run `ready` — the probe `/readyz` serves — and publish the
-/// verdict as `ibv2_readyz_ok` plus `ibv2_dependency_up{component}`.
+/// verdict as `dub_readyz_ok` plus `dub_dependency_up{component}`.
 ///
 /// Prometheus' `up` only proves the metrics port answered, so a service whose
 /// Postgres died still scrapes as `up`. This closes that gap. Skipped when
@@ -97,21 +97,21 @@ fn record_readiness(
     probe_order: &'static [&'static str],
 ) -> &'static [&'static str] {
     for (component, value) in readiness_plan(readiness, probe_order) {
-        metrics::gauge!("ibv2_dependency_up", "component" => component).set(value);
+        metrics::gauge!("dub_dependency_up", "component" => component).set(value);
     }
     match readiness {
         Ok(components) => {
-            metrics::gauge!("ibv2_readyz_ok").set(1.0);
+            metrics::gauge!("dub_readyz_ok").set(1.0);
             components
         }
         Err(_) => {
-            metrics::gauge!("ibv2_readyz_ok").set(0.0);
+            metrics::gauge!("dub_readyz_ok").set(0.0);
             probe_order
         }
     }
 }
 
-/// The pure half of [`record_readiness`]: which `ibv2_dependency_up` series to
+/// The pure half of [`record_readiness`]: which `dub_dependency_up` series to
 /// set, and to what — `1.0` up, `0.0` down, `NaN` not checked.
 fn readiness_plan(
     readiness: crate::health::Readiness,

@@ -1,3 +1,9 @@
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Device attestation — ship-first plan
 
 > Working agreement: keep phases small; each ends in a runnable demo. Check boxes `[ ]`→`[x]` with
@@ -5,9 +11,9 @@
 
 ## What ships
 
-The **Genuineness + iOS Uniqueness** scope, implemented inside `identity-service` per
+The **Genuineness + iOS Uniqueness** scope, implemented inside `device-attestation` per
 `docs/architecture.md`
-("attestation → inside identity-service, NOT a service, NOT a shared lib"):
+("attestation → inside device-attestation, NOT a service, NOT a shared lib"):
 
 - **Apple App Attest** (iOS genuineness) — real verification behind the existing
   `POST /api/v1/auth/app-attest/attestations` + `/api/v1/auth/token` scaffold.
@@ -55,7 +61,7 @@ The **Genuineness + iOS Uniqueness** scope, implemented inside `identity-service
 
 # Foundations / Already shipped (✅)
 
-- **Auth handshake scaffold** (`crates/identity-service/src/auth/`): challenge mint/consume
+- **Auth handshake scaffold** (`crates/device-attestation/src/auth/`): challenge mint/consume
   (single-use + TTL, `challenge.rs`), sr25519 account proof over the raw body (`proof.rs`,
   always verified), JWT + refresh issuance (`token.rs`, `refresh.rs`), platform detection from
   `Auth-iOS-Package` / `Auth-Android-Package` headers (`auth.rs::detect_platform`), and the
@@ -175,7 +181,7 @@ The **Genuineness + iOS Uniqueness** scope, implemented inside `identity-service
   - **✅ Demo**: the two real captured chains (a real
     Google device with its `Auth-Challenge`, and a GrapheneOS nightly build) verify green through
     the full pipeline; software-level attestation and CRL-revoked certs rejected in hard mode.
-    *(Golden fixtures committed under `crates/identity-service/testdata/key_attest/`; verifier
+    *(Golden fixtures committed under `crates/device-attestation/testdata/key_attest/`; verifier
     pins 2026-06-10 because the embedded Droid CA3 / TEE intermediates are short-lived. 18 unit
     tests cover both captures plus every reject reason — challenge, package, digest, revocation,
     expiry, untrusted root, untrusted verified-boot key, software level, unlocked bootloader.
@@ -273,7 +279,7 @@ The **Genuineness + iOS Uniqueness** scope, implemented inside `identity-service
   before the Phase 5 flip, and confirm the shipping client handles `403`/`503` on this path. The
   `/auth/app-attest/attestations` registration endpoint still returns its legacy `401 {_tag}` bodies.
 - DeviceCheck "seen device" is a **200 `PAYMENT_REQUIRED` outcome, not an error**.
-- All of this stays inside `identity-service` — no new crate/service (architecture guardrail).
+- All of this stays inside `device-attestation` — no new crate/service (architecture guardrail).
 
 # Deviations from Mike's spec (decided 2026-07-28)
 

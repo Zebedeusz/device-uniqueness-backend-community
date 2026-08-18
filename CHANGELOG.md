@@ -13,6 +13,110 @@ they summarise each release rather than list every change.
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING (API): every V1 wire dialect is gone. Error bodies across the whole
+  surface are now one JSON envelope.** Nothing reproduces the legacy TypeScript
+  backend byte-for-byte any more, so a client that parses V1 error bodies must be
+  updated in step.
+  - `{"error": "<message>"}` at every status, always `application/json`, with an
+    optional `"fields": [{"field", "message"}]` array on per-field validation
+    failures. Replaces the RFC 9457 problem-details bodies
+    (`application/problem+json`, `type`/`title`/`detail`/`status`/`errors[]` with
+    `#/`-prefixed JSON pointers), the Hono plain-text bodies (`404 Not Found`,
+    `Malformed JSON in request body`), and the opaque
+    `{"error":"Oops! Something went wrong."}` 500.
+  - Field messages are now plain English (`must not be empty`,
+    `expected string, received nothing`, `must contain at most 100 items`) where
+    they were verbatim zod v4 strings, and field identifiers are bare names
+    (`who`, `dotns.signedAt`, `usernames[0]`) where they were JSON pointers.
+  - `turn`'s proof routes move onto the same envelope; they were the last
+    `application/problem+json` responses in the workspace.
+  - **Behavioral quirks inherited from V1 are gone.** A request with no JSON
+    content type is validated like any other (it no longer skips validation into
+    a `201` on `turn/issue`, nor crashes into a `500` on
+    `invitation-ticket/claim`); `limit` on username search is parsed as an
+    integer instead of through JS `Number()` semantics; search timestamps
+    serialize as RFC 3339 (`…T10:00:00Z`) instead of `Date#toISOString`
+    milliseconds.
+  - `POST /api/v1/usernames/available` drops its `?version` query parameter (it
+    existed only to reject the removed `v0` shape); the response is unchanged.
+  - `GET /api/v1/usernames/search` drops the inert `includeOnchainData`
+    parameter and the always-null `onchainData` response field.
+  - The four `legacy_wire.rs` golden-replay suites and their captured
+    `legacy-wire.json` fixtures (plus the TypeScript capture harnesses) are
+    deleted, along with `http-common`'s `problem` and `zod` modules.
+- **BREAKING (deployment): pre-namespacing environment variable names are no
+  longer read.** `IDENTITY_DATABASE_URL` and the bare `DATABASE_URL`,
+  `RATE_LIMIT`, and `RATE_LIMIT_WINDOW_SECS` were accepted with a deprecation
+  `WARN`; an environment still setting only those now fails fast at boot naming
+  the namespaced key (`DEVICE_ATTESTATION_DATABASE_URL`,
+  `INDEXER_DATABASE_URL`, `INVITE_TICKETS_DATABASE_URL`,
+  `INVITE_TICKETS_RATE_LIMIT`, `TURN_RATE_LIMIT`, …).
+- The stale `LEGACY_BACKEND_ORIGIN` entry in `.env.example`; the Caddy lane it
+  configured was removed on 2026-08-03.
+
+### Changed
+
+- **BREAKING (deployment): the identity service is renamed device-attestation,
+  including its Postgres role and database.** `POSTGRES_USER`/`POSTGRES_DB` and
+  every service's `DEVICE_ATTESTATION_DATABASE_URL` now default to
+  `device_attestation` where they said `identity`.
+  - **An existing volume does not migrate itself.** The postgres image reads
+    `POSTGRES_*` only when it initialises an empty data directory, so a volume
+    created under the old names keeps them and the new defaults would fail
+    authentication.
+  - Three new compose vars are the supported fix, and the only knob for this:
+    `DEVICE_ATTESTATION_DB_USER`, `DEVICE_ATTESTATION_DB_PASSWORD` and
+    `DEVICE_ATTESTATION_DB_NAME`. They are what the `postgres` service
+    initialises with *and* what each service's URL is built from, so setting all
+    three to `identity` keeps an existing database in place with no downtime and
+    no SQL. `DEVICE_ATTESTATION_DATABASE_URL` in `.env` does **not** reconfigure
+    the containers — it is the host-side string for `cargo run`. Both migration
+    paths are in `docs/runbook.md`, "One-time: the identity -> device-attestation
+    rename".
+  - The config key `IDENTITY_DATABASE_URL` → `DEVICE_ATTESTATION_DATABASE_URL`
+    (and, before that, a bare `DATABASE_URL`). The old names were dropped in the
+    same release cycle — see Removed above.
+- **BREAKING (deployment): every `ibv2` identifier is renamed `dub`, after the
+  repository's move to `device-uniqueness-backend`.** `ibv2` encoded "identity
+  backend v2" — a name nothing in the repository explains and no new reader can
+  decode. Entries at and before 0.2.0 keep the old spelling: they describe
+  artifacts already published under it.
+  - The binary is `dub` (crate `crates/dub`), so `command:` becomes
+    `["--role", "identity-api"]` on `dub`, healthchecks are `dub --healthcheck`,
+    and `dub --list-roles` prints the ten. Release assets become
+    `dub-<version>-<target>.tar.gz` and `dub-compose-<version>.tar.gz`; the
+    `ibv2-*` assets on 0.1.2 and 0.2.0 keep their names.
+  - **Every Prometheus metric is renamed** `ibv2_*` → `dub_*`
+    (`dub_readyz_ok`, `dub_dependency_up`, `dub_chain_submit_total`, the
+    `dub_dotns_*` family, …). Any dashboard or alert rule outside this
+    repository must be retargeted; the committed Grafana dashboard moves to
+    `observability/grafana/dashboards/dub-overview.json` (uid `dub-overview`)
+    and is already updated.
+  - The Helm chart is `dub`, and each environment's compose project is now
+    named for that environment: `dub-paseo-next-v2` and `dub-previewnet`. So
+    **named volumes move** (`identity-backend-v2_pgdata` →
+    `dub-paseo-next-v2_pgdata`) and an existing stack would come up on empty
+    databases. The shared edge network is `dub-edge`, and the metrics/log
+    networks are `dub-metrics` / `dub-loki`.
+  - Helm: chart `dub`, `app.kubernetes.io/part-of: dub`, and the
+    env-id annotation `dub.parity.io/env-id`. The selector (`name` + `instance`)
+    is unchanged and `part-of` is metadata, so an in-place `helm upgrade` is
+    fine. Renaming the **release** is not: `instance` is a selector label and is
+    immutable on a live Deployment, so `helm template ibv2` → `dub` (see
+    `docs/deploy.md`) means uninstall and reinstall.
+  - TURN domain-separation labels become `dub/turn-credential/v1` and
+    `dub/turn-proof-credential-id/v1`, changing derived proof credential ids.
+    Safe today: `TURN_PROOF_ENABLED` is `false` in every environment, so none
+    were ever issued.
+  - `IBV2_TEST_COMPOSE_PROJECT` → `DUB_TEST_COMPOSE_PROJECT`. The
+    `IBV2_SSH_KEY` / `IBV2_HOST` **CI secret names are unchanged** — renaming
+    them needs the repository secrets recreated first.
+  - The proof-of-compute HKDF label
+    (`identity-backend/proof-of-compute/hmac-v1`) is deliberately untouched: it
+    is wire-compatible with the legacy TypeScript service.
+
 ## [0.2.0] - 2026-08-17
 
 Breaking on three fronts: the image's ten binaries become one `ibv2` binary

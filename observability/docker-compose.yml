@@ -1,6 +1,6 @@
 # Observability project: Prometheus (metrics), Loki + Alloy (logs), and Grafana
 # (the one UI over both), scraping the services over the private
-# `ibv2-metrics` network.
+# `dub-metrics` network.
 #
 # Its own compose project (`-p observability`) for the same reason the edge is:
 # restarting an environment must never take monitoring down, and monitoring
@@ -8,7 +8,7 @@
 # network — it is not reachable from, and cannot reach, the edge.
 #
 # Run:
-#   docker network create ibv2-metrics   # once, out of band
+#   docker network create dub-metrics   # once, out of band
 #   docker compose -f observability/docker-compose.yml -p observability up -d
 #
 # The UIs are loopback-only by default (Grafana 127.0.0.1:3000, Prometheus
@@ -109,7 +109,7 @@ services:
 networks:
   metrics:
     external: true
-    name: ${METRICS_NETWORK:-ibv2-metrics}
+    name: ${METRICS_NETWORK:-dub-metrics}
 
 volumes:
   prometheus_data:

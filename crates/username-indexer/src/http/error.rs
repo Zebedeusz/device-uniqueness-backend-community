@@ -1,26 +1,23 @@
-//! HTTP error type reproducing the legacy usernames wire contract
-//! (golden-captured in `tests/fixtures/legacy-wire.json`).
+//! HTTP error type for the usernames read surface.
 //!
-//! The shared dialects (query problem details, 429, opaque 500) render via
-//! `http-common`; only this route's own bare `{"error": "..."}` body (the
-//! cursor 400) lives here.
+//! The shared statuses (the query 400, 429, the opaque 500) render via
+//! `http-common`; only this route's own message (the cursor 400) lives here.
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use http_common::problem;
 pub use http_common::FieldError;
 use serde_json::json;
 
 use crate::search::SearchError;
 
-/// A handler error mapped to the frozen HTTP response.
+/// A handler error mapped to its HTTP response.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    /// A query parameter failed validation (400 problem details with `errors`).
+    /// A query parameter failed validation (400 with per-field `fields`).
     #[error("invalid query parameters")]
     InvalidQuery(Vec<FieldError>),
-    /// The continuation cursor failed decoding (400, bare legacy body).
+    /// The continuation cursor failed decoding (400).
     #[error("invalid cursor")]
     InvalidCursor,
     /// Client exceeded the public per-IP limit (429).
@@ -40,18 +37,22 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
-            AppError::InvalidQuery(errors) => problem::invalid_query(&errors),
+            AppError::InvalidQuery(errors) => http_common::error::invalid_query(&errors),
             AppError::InvalidCursor => (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "Invalid cursor" })),
             )
                 .into_response(),
-            AppError::RateLimited { retry_after_secs } => problem::rate_limited(retry_after_secs),
+            AppError::RateLimited { retry_after_secs } => {
+                http_common::error::rate_limited(retry_after_secs)
+            }
             AppError::Poc(rejection) => match rejection {
-                crate::poc::Rejection::Malformed => problem::bad_request(rejection.detail()),
-                other => problem::payment_required(other.detail()),
+                crate::poc::Rejection::Malformed => {
+                    http_common::error::bad_request(rejection.detail())
+                }
+                other => http_common::error::payment_required(other.detail()),
             },
-            AppError::Internal(err) => problem::internal(&err),
+            AppError::Internal(err) => http_common::error::internal(&err),
         }
     }
 }

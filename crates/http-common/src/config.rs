@@ -2,7 +2,7 @@
 //!
 //! A missing or malformed required value stops the process loudly at boot
 //! instead of serving with half-initialised state (same posture as
-//! identity-service). Each service keeps its own `Config` struct (and its
+//! device-attestation). Each service keeps its own `Config` struct (and its
 //! redacting `Debug`); these are only the parsing primitives.
 
 /// A required or malformed configuration value; surfaced at startup.
@@ -19,73 +19,6 @@ pub enum ConfigError {
         /// Why it could not be parsed.
         reason: String,
     },
-}
-
-/// Resolve a variable that has been **namespaced**, through a caller-provided
-/// lookup so it is testable without mutating the process environment.
-///
-/// `key` (the namespaced name) wins. `legacy` (the bare name) is still accepted
-/// for one release and logs a `WARN` naming its replacement.
-///
-/// This exists because four services read a bare `DATABASE_URL` pointing at
-/// **four different Postgres instances**, and three read a bare `RATE_LIMIT`.
-/// One process reading more than one of those configs — the `all-in-one` role —
-/// would silently connect a service to another service's database and run the
-/// wrong migrations against it. Namespacing is the fix; the dual-read is what
-/// keeps a running deployment from breaking on the release that introduces it.
-pub fn renamed_with<F>(get: &F, key: &'static str, legacy: &'static str) -> Option<String>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    if let Some(value) = get(key) {
-        return Some(value);
-    }
-    let value = get(legacy)?;
-    tracing::warn!(
-        legacy_key = legacy,
-        key,
-        "configuration key {legacy} is deprecated and will be removed; set {key} instead"
-    );
-    Some(value)
-}
-
-/// [`renamed_with`] against the process environment.
-pub fn renamed(key: &'static str, legacy: &'static str) -> Option<String> {
-    renamed_with(&|k: &str| std::env::var(k).ok(), key, legacy)
-}
-
-/// A required [`renamed`] variable: namespaced name wins, bare name warns, and
-/// neither is a fail-fast startup error naming the **new** key.
-pub fn required_renamed(key: &'static str, legacy: &'static str) -> Result<String, ConfigError> {
-    let raw = renamed(key, legacy).ok_or(ConfigError::Missing(key))?;
-    let value = raw.trim();
-    if value.is_empty() {
-        return Err(ConfigError::Invalid {
-            key,
-            reason: "must not be empty".to_string(),
-        });
-    }
-    Ok(value.to_string())
-}
-
-/// [`renamed`] parsed into `T`, falling back to `default` when neither name is
-/// set.
-pub fn parse_renamed<T>(
-    key: &'static str,
-    legacy: &'static str,
-    default: &str,
-) -> Result<T, ConfigError>
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    let raw = renamed(key, legacy).unwrap_or_else(|| default.to_string());
-    raw.trim()
-        .parse()
-        .map_err(|e: T::Err| ConfigError::Invalid {
-            key,
-            reason: e.to_string(),
-        })
 }
 
 /// Read a required env var, trimming and rejecting empty values.
@@ -129,7 +62,7 @@ where
 }
 
 /// Load verify-only key material: `JWT_JWKS_JSON` (an inline JWKS document, as
-/// served by identity-service at `/.well-known/jwks.json`) wins; otherwise
+/// served by device-attestation at `/.well-known/jwks.json`) wins; otherwise
 /// `JWT_ED25519_PUBLIC_KEY` (32-byte hex, optional `0x`) pins a single key.
 pub fn jwt_verifier_from_env() -> Result<jwt_verify::Verifier, ConfigError> {
     let jwks = std::env::var("JWT_JWKS_JSON").ok();

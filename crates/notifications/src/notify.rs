@@ -13,7 +13,7 @@ use crate::http::error::{AppError, AppResult, FieldError};
 use crate::http::state::AppState;
 use crate::platform::{self, Platform};
 use crate::provider::{ProviderError, PushOutcome, PushRequest};
-use http_common::{zod, AuthSubject};
+use http_common::AuthSubject;
 
 /// Route component of the rate-limit key (kept explicit so the key is
 /// `route:subject`, not subject alone, if more authenticated routes are added).
@@ -178,8 +178,8 @@ pub async fn handle(
 fn validate_body(body: &serde_json::Value) -> Result<NotifyRequest, Vec<FieldError>> {
     if !body.is_object() {
         return Err(vec![FieldError {
-            detail: zod::invalid_input("object", zod::type_name(body)),
-            pointer: "#/".to_string(),
+            message: http_common::error::expected("object", http_common::error::type_name(body)),
+            field: "".to_string(),
         }]);
     }
 
@@ -187,7 +187,7 @@ fn validate_body(body: &serde_json::Value) -> Result<NotifyRequest, Vec<FieldErr
     let device_token = required_string(
         body,
         "deviceToken",
-        "#/deviceToken",
+        "deviceToken",
         valid_device_token,
         "Must be a valid device token",
         &mut errors,
@@ -195,7 +195,7 @@ fn validate_body(body: &serde_json::Value) -> Result<NotifyRequest, Vec<FieldErr
     let push_id = required_string(
         body,
         "pushId",
-        "#/pushId",
+        "pushId",
         valid_push_id,
         "Must be a 32 or 64 character hexadecimal hash",
         &mut errors,
@@ -203,7 +203,7 @@ fn validate_body(body: &serde_json::Value) -> Result<NotifyRequest, Vec<FieldErr
     let message = required_string(
         body,
         "message",
-        "#/message",
+        "message",
         valid_hex_message,
         "Must be a valid hexadecimal string",
         &mut errors,
@@ -249,16 +249,19 @@ fn required_string(
         Some(serde_json::Value::String(value)) => {
             if !is_valid(value) {
                 errors.push(FieldError {
-                    detail: message.to_string(),
-                    pointer: pointer.to_string(),
+                    message: message.to_string(),
+                    field: pointer.to_string(),
                 });
             }
             Some(value.clone())
         }
         other => {
             errors.push(FieldError {
-                detail: zod::invalid_input("string", zod::received_name(other)),
-                pointer: pointer.to_string(),
+                message: http_common::error::expected(
+                    "string",
+                    http_common::error::received_name(other),
+                ),
+                field: pointer.to_string(),
             });
             None
         }
@@ -313,12 +316,9 @@ mod tests {
     #[test]
     fn missing_required_fields_report_zod_pointers_in_schema_order() {
         let errors = validate_body(&json!({})).unwrap_err();
-        let pointers: Vec<&str> = errors.iter().map(|e| e.pointer.as_str()).collect();
-        assert_eq!(pointers, vec!["#/deviceToken", "#/pushId", "#/message"]);
-        assert_eq!(
-            errors[0].detail,
-            "Invalid input: expected string, received undefined"
-        );
+        let pointers: Vec<&str> = errors.iter().map(|e| e.field.as_str()).collect();
+        assert_eq!(pointers, vec!["deviceToken", "pushId", "message"]);
+        assert_eq!(errors[0].message, "expected string, received nothing");
     }
 
     #[test]
@@ -328,10 +328,10 @@ mod tests {
         }))
         .unwrap_err();
         assert_eq!(errors.len(), 2);
-        assert_eq!(errors[0].pointer, "#/deviceToken");
-        assert_eq!(errors[0].detail, "Must be a valid device token");
-        assert_eq!(errors[1].pointer, "#/message");
-        assert_eq!(errors[1].detail, "Must be a valid hexadecimal string");
+        assert_eq!(errors[0].field, "deviceToken");
+        assert_eq!(errors[0].message, "Must be a valid device token");
+        assert_eq!(errors[1].field, "message");
+        assert_eq!(errors[1].message, "Must be a valid hexadecimal string");
     }
 
     #[test]
@@ -340,21 +340,15 @@ mod tests {
             "deviceToken": 5, "pushId": PUSH_ID, "message": "abcd",
         }))
         .unwrap_err();
-        assert_eq!(errors[0].pointer, "#/deviceToken");
-        assert_eq!(
-            errors[0].detail,
-            "Invalid input: expected string, received number"
-        );
+        assert_eq!(errors[0].field, "deviceToken");
+        assert_eq!(errors[0].message, "expected string, received number");
     }
 
     #[test]
     fn non_object_body_reports_the_root_pointer() {
         let errors = validate_body(&json!([1, 2])).unwrap_err();
-        assert_eq!(errors[0].pointer, "#/");
-        assert_eq!(
-            errors[0].detail,
-            "Invalid input: expected object, received array"
-        );
+        assert_eq!(errors[0].field, "");
+        assert_eq!(errors[0].message, "expected object, received array");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Verify-only JWT validation — the cross-service auth contract.
 //!
-//! identity-service is the **sole issuer** of asymmetric (EdDSA/Ed25519) access
+//! device-attestation is the **sole issuer** of asymmetric (EdDSA/Ed25519) access
 //! tokens and publishes its public key as JWKS at `/.well-known/jwks.json`.
 //! Sibling services (notifications, invite-tickets, …) gate their authenticated
 //! routes with this crate: JWKS/public-key loading, Ed25519 signature
@@ -8,7 +8,7 @@
 //! a consumer can verify tokens but can never mint them.
 //!
 //! Verification is offline once key material is loaded: no runtime call to
-//! identity-service is made per request.
+//! device-attestation is made per request.
 
 use base64::Engine as _;
 use ed25519_dalek::{Verifier as _, VerifyingKey};
@@ -17,7 +17,7 @@ use serde::Deserialize;
 const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-/// Verifies bearer tokens issued by identity-service against its public keys.
+/// Verifies bearer tokens issued by device-attestation against its public keys.
 #[derive(Clone, Debug)]
 pub struct Verifier {
     /// Published keys; `kid` is `None` only for pinned keys loaded without one.
@@ -122,7 +122,7 @@ impl Verifier {
     /// Build a verifier around one pinned public key (no JWKS fetch).
     ///
     /// Tokens naming any `kid` still verify — a pinned key has no id to
-    /// mismatch. identity-service uses this to verify its own tokens.
+    /// mismatch. device-attestation uses this to verify its own tokens.
     pub fn from_verifying_key(key: VerifyingKey) -> Self {
         Self {
             keys: vec![(None, key)],

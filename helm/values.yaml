@@ -109,7 +109,7 @@ workloads:
     # control. One process holding all of these is the trade this topology
     # makes; see docs/architecture.md "Deployment topologies".
     secretKeys:
-      - IDENTITY_DATABASE_URL      # identity: full read/write
+      - DEVICE_ATTESTATION_DATABASE_URL      # device attestation: full read/write
       - INDEXER_DATABASE_URL       # the username projection
       - INVITE_TICKETS_DATABASE_URL
       - JWT_ED25519_SECRET         # mint an access token for ANY subject
@@ -159,14 +159,14 @@ workloads:
       NOTIFY_RATE_LIMIT: "60"
       NOTIFY_RATE_LIMIT_WINDOW_SECS: "60"
 
-  identity-api:
+  device-attestation-api:
     enabled: true
     kind: http
     replicas: 2
     # Startup grace, from the compose healthcheck's start_period.
     startupSeconds: 90
     globalEnv: [BIND_ADDR, PEOPLE_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [IDENTITY_DATABASE_URL, JWT_ED25519_SECRET]
+    secretKeys: [DEVICE_ATTESTATION_DATABASE_URL, JWT_ED25519_SECRET]
     env:
       ACCESS_TOKEN_TTL_SECS: "86400"
       ANDROID_PACKAGE_NAMES: ""
@@ -184,14 +184,14 @@ workloads:
       JWT_ISSUER: "polkadot-app"
       REFRESH_TOKEN_TTL_SECS: "2592000"
 
-  identity-chain-writer:
+  device-attestation-chain-writer:
     enabled: true
     kind: worker
     # Single-instance: one signer/advancer = one lane. Never scale.
     singleton: true
     replicas: 1
     globalEnv: [PEOPLE_RPC_URL, ASSET_HUB_RPC_URL, DOTNS_GATEWAY_ENABLED, QUEUE_ENABLED, ATTESTER_ACCOUNT, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [IDENTITY_DATABASE_URL, CHAIN_WRITER_SIGNER_SURI]
+    secretKeys: [DEVICE_ATTESTATION_DATABASE_URL, CHAIN_WRITER_SIGNER_SURI]
     env:
       ATTESTER_ALLOWANCE_FLOOR: "100"
       ATTESTER_RESOURCE_POLL_SECS: "60"
@@ -271,7 +271,7 @@ workloads:
     singleton: true
     replicas: 1
     globalEnv: [PEOPLE_RPC_URL, METRICS_ENABLED, METRICS_ADDR, RUST_LOG, LOG_FORMAT]
-    secretKeys: [IDENTITY_DATABASE_URL]
+    secretKeys: [DEVICE_ATTESTATION_DATABASE_URL]
     env:
       QUEUE_ADVANCE_INTERVAL_SECS: "6"
       QUEUE_LEASE_TTL_SECS: "30"
@@ -364,7 +364,7 @@ routes:
     priority: 110
     stripPrefix: /docs
   # GET username reads belong to the indexer — EXCEPT the payment-status poll, which is
-  # identity-api's, and except every non-GET method (the write and availability surface,
+  # device-attestation-api's, and except every non-GET method (the write and availability surface,
   # and the collection-root CORS preflight). A plain path-prefix rule can express neither
   # carve-out; this is why the chart renders a Traefik IngressRoute rather than an Ingress.
   - name: username-reads
@@ -384,7 +384,7 @@ routes:
     shared: true
     priority: 90
   # shared, like turn. NOTE: this service answers an EMPTY 404 for an unmatched path and
-  # 405 for a wrong method, where every sibling answers the frozen Hono text body. The
+  # 405 for a wrong method, where every sibling answers the JSON 404 body. The
   # whole prefix is routed here, so that is the live contract — see routes::fallback.
   - name: notify
     match: PathPrefix(`/api/v1/notify`)
@@ -400,6 +400,6 @@ routes:
   # Everything else: auth, attester, username writes, JWKS, root health.
   - name: default
     match: PathPrefix(`/`)
-    service: identity-api
+    service: device-attestation-api
     priority: 1
   # /generated:route-table

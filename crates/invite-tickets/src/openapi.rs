@@ -2,8 +2,8 @@
 //!
 //! The claim route is described by the `#[utoipa::path]` attribute on its
 //! handler; the request/response bodies here are documentation-only mirrors of
-//! the frozen wire shapes (the handler itself works on raw JSON to preserve
-//! the legacy validation quirks byte-for-byte). The committed
+//! the wire shapes (the handler itself works on raw JSON so it can report every
+//! failing field rather than the first). The committed
 //! `docs/api-reference/{openapi.json,index.html}` are generated from
 //! [`ApiDoc`] by the `apidoc-gen` binary, so they cannot drift from the code.
 
@@ -13,7 +13,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 
 /// `{ who, dim }` — the claim command.
 #[derive(Deserialize, ToSchema)]
-#[allow(dead_code)] // documentation-only mirror of the frozen wire shape
+#[allow(dead_code)] // documentation-only mirror of the wire shape
 pub struct ClaimRequest {
     /// SS58 address to claim a ticket for (any valid SS58 prefix).
     #[schema(example = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty")]
@@ -23,10 +23,10 @@ pub struct ClaimRequest {
     pub dim: String,
 }
 
-/// The frozen 200 claim body: the ticket keypair's public half plus the
+/// The 200 claim body: the ticket keypair's public half plus the
 /// sr25519 signature over the claimant's decoded account id.
 #[derive(Serialize, ToSchema)]
-#[allow(dead_code)] // documentation-only mirror of the frozen wire shape
+#[allow(dead_code)] // documentation-only mirror of the wire shape
 pub struct ClaimResponse {
     /// `0x`-hex 32-byte sr25519 public key of the claimed ticket.
     #[serde(rename = "publicKey")]

@@ -1,54 +1,46 @@
-//! Validated prefix search, stable cursors, and the frozen mobile wire
-//! response shapes.
+//! Validated prefix search, stable cursors, and the response shapes.
 //!
-//! Validation reproduces the legacy zod dialect byte-for-byte
-//! (golden-captured in `tests/fixtures/legacy-wire.json`): all query failures
-//! are collected in zod field order as `FieldError`s, the legacy `limit` is
-//! **clamped** to 1,000 (never rejected for being large), unknown query
-//! parameters are ignored, and an invalid cursor short-circuits everything
-//! (the legacy cursor middleware ran before zod validation).
+//! Validation collects every query failure as a `FieldError` in field order
+//! (`prefix`, then `limit`) rather than stopping at the first, `limit` is
+//! **clamped** to 1,000 rather than rejected for being large, unknown query
+//! parameters are ignored, and an invalid cursor short-circuits everything.
 
 use std::collections::HashMap;
 
 use base64::Engine as _;
-use http_common::{zod, FieldError};
+use http_common::FieldError;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row as _};
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 
-const DEFAULT_LIMIT: f64 = 100.0;
-const MAX_LIMIT: f64 = 1000.0;
+const DEFAULT_LIMIT: u32 = 100;
+const MAX_LIMIT: u32 = 1000;
 
-/// Captured legacy zod custom messages for the `prefix` query parameter.
+/// Rejection messages for the `prefix` query parameter.
 const PREFIX_REQUIRED: &str = "Prefix is required";
 const PREFIX_TOO_LONG: &str = "Prefix must be at most 64 characters";
 const PREFIX_PATTERN: &str = "Prefix must be letters/digits, optionally followed by a dot and digits (e.g. \"alice\", \"alice.\", \"alice.10\")";
 
-/// JS-style ISO-8601 with milliseconds (`2026-01-01T00:00:00.000Z`) — the
-/// only date shape the legacy backend ever emitted (`Date#toISOString`).
-pub(crate) mod js_iso {
+/// RFC 3339 timestamps in UTC (`2026-01-01T00:00:00Z`).
+pub(crate) mod rfc3339 {
     use serde::Serializer;
-    use time::format_description::BorrowedFormatItem;
-    use time::macros::format_description;
+    use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
 
-    const FORMAT: &[BorrowedFormatItem<'_>] =
-        format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z");
-
-    /// Serialize as UTC with exactly three subsecond digits.
+    /// Serialize as UTC.
     pub fn serialize<S: Serializer>(
         value: &OffsetDateTime,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         let utc = value.to_offset(time::UtcOffset::UTC);
-        serializer.serialize_str(&utc.format(FORMAT).map_err(serde::ser::Error::custom)?)
+        serializer.serialize_str(&utc.format(&Rfc3339).map_err(serde::ser::Error::custom)?)
     }
 }
 
 /// Query parameters accepted by the public search endpoint (documentation
-/// mirror — the handler validates a raw parameter map to reproduce the
-/// legacy zod error bodies).
+/// mirror — the handler validates a raw parameter map so it can report every
+/// failing rule, not just the first).
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
@@ -62,8 +54,6 @@ pub struct SearchQuery {
     pub limit: Option<u32>,
     /// Opaque continuation cursor from an earlier response.
     pub cursor: Option<String>,
-    /// Compatibility flag; indexed rows have no truthful event position.
-    pub include_onchain_data: Option<bool>,
 }
 
 /// One assigned username in the shipping mobile response shape.
@@ -74,23 +64,19 @@ pub struct SearchUsername {
     #[schema(example = "5Example")]
     pub account_id: String,
     /// Full username when present, otherwise `base.digits` with the digits
-    /// rendered as an integer (`alice.1` for stored digits `01`) — the
-    /// frozen legacy quirk (`NumberFromString` decode before rendering).
+    /// rendered as an integer (`alice.1` for stored digits `01`).
     #[schema(example = "alice.12")]
     pub username: String,
     /// Assignment state, always `ASSIGNED` for this projection.
     #[schema(example = "ASSIGNED")]
     pub status: &'static str,
-    /// On-chain event position, always null because the snapshot has none.
-    #[schema(value_type = Option<Object>)]
-    pub onchain_data: Option<serde_json::Value>,
     /// Time the projection first observed the account.
-    #[serde(with = "js_iso")]
-    #[schema(value_type = String, format = DateTime, example = "2026-07-11T10:00:00.000Z")]
+    #[serde(with = "rfc3339")]
+    #[schema(value_type = String, format = DateTime, example = "2026-07-11T10:00:00Z")]
     pub created_at: OffsetDateTime,
     /// Time the projection last refreshed the account.
-    #[serde(with = "js_iso")]
-    #[schema(value_type = String, format = DateTime, example = "2026-07-11T10:01:00.000Z")]
+    #[serde(with = "rfc3339")]
+    #[schema(value_type = String, format = DateTime, example = "2026-07-11T10:01:00Z")]
     pub updated_at: OffsetDateTime,
 }
 
@@ -107,7 +93,7 @@ pub struct SearchResponse {
 /// Search validation, cursor, or database failure.
 #[derive(Debug, thiserror::Error)]
 pub enum SearchError {
-    /// Query validation failed (legacy zod field errors, in field order).
+    /// Query validation failed (field errors, in field order).
     #[error("invalid query parameters")]
     InvalidQuery(Vec<FieldError>),
     /// Cursor decoding or validation failed.
@@ -133,8 +119,8 @@ struct SearchRow {
 
 /// Search assigned usernames using a stable, deterministic continuation tuple.
 ///
-/// Takes the raw query-parameter map so validation failures can reproduce the
-/// captured zod bodies (which report every failing rule, not just the first).
+/// Takes the raw query-parameter map so a validation failure can report every
+/// failing rule, not just the first.
 ///
 /// Rows whose on-chain `identifier_key` predates chat-spec RFC-0004 (any type
 /// byte other than `0x00`/X25519) are omitted — the app cannot message those
@@ -149,9 +135,8 @@ pub async fn search(
     let cursor = validated.cursor;
 
     // The response `username` renders lite digits through `::text` (numeric),
-    // reproducing the legacy integer render; the v1 digits-length bound hides
-    // lite rows whose digit suffix is longer than two characters, exactly as
-    // the legacy store's `v1DigitsLengthBound` did.
+    // so stored digits `01` render as `alice.1`; the digits-length bound hides
+    // lite rows whose digit suffix is longer than two characters.
     //
     // The `get_byte(identifier_key, 0) = 0` bound hides registrations whose
     // on-chain encryption key predates chat-spec RFC-0004: the app can only
@@ -162,8 +147,8 @@ pub async fn search(
     // of the chain.
     //
     // TODO: remove the `get_byte(identifier_key, 0) = 0` predicate (and the
-    // legacy-row expectation in `tests/pagination_live.rs`) once no assigned
-    // usernames carry a pre-RFC-0004 key any more.
+    // pre-RFC-0004-row expectation in `tests/pagination_live.rs`) once no
+    // assigned usernames carry a pre-RFC-0004 key any more.
     let rows = sqlx::query(
         "SELECT account_id, account_id_ss58,
                 COALESCE(full_username, lite_base || '.' || lite_digits::text)
@@ -244,18 +229,7 @@ struct ValidatedQuery {
     cursor: Option<Cursor>,
 }
 
-/// The legacy `z.coerce.number()` front half: JS `Number(string)` semantics,
-/// approximated (empty/whitespace → 0, unparseable → NaN). Exotic JS forms
-/// (`0x…`, `Infinity`) are beyond the captured contract.
-fn js_number(raw: &str) -> f64 {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return 0.0;
-    }
-    trimmed.parse::<f64>().unwrap_or(f64::NAN)
-}
-
-/// The legacy prefix regex `^[a-zA-Z0-9]+(\.\d*)?$`.
+/// The prefix grammar `^[a-zA-Z0-9]+(\.\d*)?$`.
 fn prefix_matches(prefix: &str) -> bool {
     let (head, tail) = match prefix.find('.') {
         Some(index) => (&prefix[..index], Some(&prefix[index + 1..])),
@@ -266,11 +240,11 @@ fn prefix_matches(prefix: &str) -> bool {
         && tail.is_none_or(|digits| digits.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-/// Validate the raw query map against the frozen legacy dialect.
+/// Validate the raw query map.
 ///
-/// Order matters twice: the cursor is checked first (the legacy cursor
-/// middleware ran before zod, so a bad cursor wins over a missing prefix),
-/// and field errors collect in zod field order (`prefix`, then `limit`).
+/// Order matters twice: the cursor is checked first, so a bad cursor wins over
+/// a missing prefix, and field errors collect in field order (`prefix`, then
+/// `limit`).
 fn validate(params: &HashMap<String, String>) -> Result<ValidatedQuery, SearchError> {
     let cursor = params
         .get("cursor")
@@ -282,28 +256,28 @@ fn validate(params: &HashMap<String, String>) -> Result<ValidatedQuery, SearchEr
     let prefix = params.get("prefix");
     match prefix {
         None => errors.push(FieldError {
-            detail: zod::invalid_input("string", "undefined"),
-            pointer: "#/prefix".to_string(),
+            message: http_common::error::expected("string", "nothing"),
+            field: "prefix".to_string(),
         }),
         Some(prefix) => {
-            // zod reports every failing rule on the field, in chain order
-            // (min, max, regex) — an empty prefix yields two errors.
+            // Every failing rule on the field is reported, in rule order
+            // (min, max, pattern) — an empty prefix yields two errors.
             if prefix.is_empty() {
                 errors.push(FieldError {
-                    detail: PREFIX_REQUIRED.to_string(),
-                    pointer: "#/prefix".to_string(),
+                    message: PREFIX_REQUIRED.to_string(),
+                    field: "prefix".to_string(),
                 });
             }
             if prefix.chars().count() > 64 {
                 errors.push(FieldError {
-                    detail: PREFIX_TOO_LONG.to_string(),
-                    pointer: "#/prefix".to_string(),
+                    message: PREFIX_TOO_LONG.to_string(),
+                    field: "prefix".to_string(),
                 });
             }
             if !prefix_matches(prefix) {
                 errors.push(FieldError {
-                    detail: PREFIX_PATTERN.to_string(),
-                    pointer: "#/prefix".to_string(),
+                    message: PREFIX_PATTERN.to_string(),
+                    field: "prefix".to_string(),
                 });
             }
         }
@@ -311,31 +285,24 @@ fn validate(params: &HashMap<String, String>) -> Result<ValidatedQuery, SearchEr
 
     let limit = match params.get("limit") {
         None => DEFAULT_LIMIT,
-        Some(raw) => {
-            let number = js_number(raw);
-            if number.is_nan() {
+        Some(raw) => match raw.trim().parse::<u32>() {
+            Ok(0) => {
                 errors.push(FieldError {
-                    detail: zod::invalid_input("number", "NaN"),
-                    pointer: "#/limit".to_string(),
+                    message: http_common::error::MUST_BE_POSITIVE.to_string(),
+                    field: "limit".to_string(),
                 });
-            } else if number.fract() != 0.0 {
-                errors.push(FieldError {
-                    detail: zod::invalid_input("int", "number"),
-                    pointer: "#/limit".to_string(),
-                });
-            } else if number <= 0.0 {
-                errors.push(FieldError {
-                    detail: zod::TOO_SMALL_POSITIVE_NUMBER.to_string(),
-                    pointer: "#/limit".to_string(),
-                });
+                DEFAULT_LIMIT
             }
-            number
-        }
+            Ok(limit) => limit,
+            Err(_) => {
+                errors.push(FieldError {
+                    message: http_common::error::expected("a positive integer", raw),
+                    field: "limit".to_string(),
+                });
+                DEFAULT_LIMIT
+            }
+        },
     };
-
-    // `includeOnchainData` is accepted for wire compatibility but inert: the
-    // projection has no truthful event position (recorded divergence). The
-    // legacy coercion quirk (`"false"` → true) is documented by fixture.
 
     if !errors.is_empty() {
         return Err(SearchError::InvalidQuery(errors));
@@ -343,9 +310,8 @@ fn validate(params: &HashMap<String, String>) -> Result<ValidatedQuery, SearchEr
 
     Ok(ValidatedQuery {
         prefix: prefix.cloned().unwrap_or_default(),
-        // The legacy handler clamps (`Math.min(limit ?? 100, 1000)`) — an
-        // over-large limit is a 200, never a 400.
-        limit: limit.min(MAX_LIMIT) as u32,
+        // An over-large limit clamps to a full page — a 200, never a 400.
+        limit: limit.min(MAX_LIMIT),
         cursor,
     })
 }
@@ -367,7 +333,6 @@ fn row_from_db(row: sqlx::postgres::PgRow) -> Result<SearchRow, SearchError> {
             account_id: row.try_get("account_id_ss58")?,
             username: row.try_get("wire_username")?,
             status: "ASSIGNED",
-            onchain_data: None,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
         },
@@ -429,7 +394,6 @@ mod tests {
                 account_id: format!("5Account{index}"),
                 username: format!("alice.{index}"),
                 status: "ASSIGNED",
-                onchain_data: None,
                 created_at: datetime!(2026-07-11 10:00 UTC),
                 updated_at: datetime!(2026-07-11 10:01 UTC),
             },
@@ -445,7 +409,7 @@ mod tests {
     fn field_errors(result: Result<super::ValidatedQuery, SearchError>) -> Vec<(String, String)> {
         match result {
             Err(SearchError::InvalidQuery(errors)) => {
-                errors.into_iter().map(|e| (e.pointer, e.detail)).collect()
+                errors.into_iter().map(|e| (e.field, e.message)).collect()
             }
             other => panic!("expected InvalidQuery, got {other:?}", other = other.err()),
         }
@@ -474,14 +438,10 @@ mod tests {
         let plain = validate(&params(&[("prefix", "ali")])).expect("valid query");
         assert_eq!(plain.limit, 100);
 
-        // The legacy zod schema ignores unknown parameters (the Android
-        // client still sends `status=ASSIGNED`).
-        let with_unknown = validate(&params(&[
-            ("prefix", "ali"),
-            ("status", "ASSIGNED"),
-            ("includeOnchainData", "true"),
-        ]))
-        .expect("unknown params ignored");
+        // Unknown parameters are ignored (the Android client still sends
+        // `status=ASSIGNED`).
+        let with_unknown = validate(&params(&[("prefix", "ali"), ("status", "ASSIGNED")]))
+            .expect("unknown params ignored");
         assert_eq!(with_unknown.prefix, "ali");
     }
 
@@ -493,37 +453,36 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_prefix_and_limit_with_captured_messages() {
-        // Empty prefix reports BOTH the min and the regex rule (captured).
+    fn rejects_invalid_prefix_and_limit() {
+        // Empty prefix reports BOTH the min and the pattern rule.
         assert_eq!(
             field_errors(validate(&params(&[("prefix", "")]))),
             vec![
-                ("#/prefix".to_string(), "Prefix is required".to_string()),
-                ("#/prefix".to_string(), super::PREFIX_PATTERN.to_string()),
+                ("prefix".to_string(), "Prefix is required".to_string()),
+                ("prefix".to_string(), super::PREFIX_PATTERN.to_string()),
             ]
         );
         assert_eq!(
             field_errors(validate(&params(&[]))),
             vec![(
-                "#/prefix".to_string(),
-                "Invalid input: expected string, received undefined".to_string()
+                "prefix".to_string(),
+                "expected string, received nothing".to_string()
             )]
         );
         assert_eq!(
             field_errors(validate(&params(&[("prefix", "foo-bar")]))),
-            vec![("#/prefix".to_string(), super::PREFIX_PATTERN.to_string())]
+            vec![("prefix".to_string(), super::PREFIX_PATTERN.to_string())]
         );
 
-        // limit failures, in the captured coercion order.
         for (raw, detail) in [
-            ("abc", "Invalid input: expected number, received NaN"),
-            ("1.5", "Invalid input: expected int, received number"),
-            ("0", "Too small: expected number to be >0"),
-            ("-1", "Too small: expected number to be >0"),
+            ("abc", "expected a positive integer, received abc"),
+            ("1.5", "expected a positive integer, received 1.5"),
+            ("-1", "expected a positive integer, received -1"),
+            ("0", "must be greater than 0"),
         ] {
             assert_eq!(
                 field_errors(validate(&params(&[("prefix", "ali"), ("limit", raw)]))),
-                vec![("#/limit".to_string(), detail.to_string())]
+                vec![("limit".to_string(), detail.to_string())]
             );
         }
 
@@ -536,20 +495,16 @@ mod tests {
             ]))),
             vec![
                 (
-                    "#/prefix".to_string(),
+                    "prefix".to_string(),
                     "Prefix must be at most 64 characters".to_string()
                 ),
-                (
-                    "#/limit".to_string(),
-                    "Too small: expected number to be >0".to_string()
-                ),
+                ("limit".to_string(), "must be greater than 0".to_string()),
             ]
         );
     }
 
     #[test]
     fn invalid_cursor_wins_over_other_validation_failures() {
-        // Legacy ran the cursor middleware before zod validation.
         assert!(matches!(
             validate(&params(&[("cursor", "%%nope%%")])),
             Err(SearchError::InvalidCursor)
@@ -557,13 +512,12 @@ mod tests {
     }
 
     #[test]
-    fn golden_non_empty_response_matches_mobile_wire_shape() {
+    fn non_empty_response_matches_the_documented_shape() {
         let response = SearchResponse {
             usernames: vec![SearchUsername {
                 account_id: "5Example".to_string(),
                 username: "alice.12".to_string(),
                 status: "ASSIGNED",
-                onchain_data: None,
                 created_at: datetime!(2026-07-11 10:00 UTC),
                 updated_at: datetime!(2026-07-11 10:01 UTC),
             }],
@@ -577,9 +531,8 @@ mod tests {
                     "accountId": "5Example",
                     "username": "alice.12",
                     "status": "ASSIGNED",
-                    "onchainData": null,
-                    "createdAt": "2026-07-11T10:00:00.000Z",
-                    "updatedAt": "2026-07-11T10:01:00.000Z"
+                    "createdAt": "2026-07-11T10:00:00Z",
+                    "updatedAt": "2026-07-11T10:01:00Z"
                 }],
                 "nextCursor": "eyJvcGFxdWUiOiJjdXJzb3IifQ"
             })
@@ -587,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn golden_empty_response_matches_mobile_wire_shape() {
+    fn empty_response_matches_the_documented_shape() {
         let response = SearchResponse {
             usernames: vec![],
             next_cursor: None,

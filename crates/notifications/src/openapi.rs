@@ -13,7 +13,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 
 /// The frozen `POST /api/v1/notify` request body.
 #[derive(Deserialize, ToSchema)]
-#[allow(dead_code)] // documentation-only mirror of the frozen wire shape
+#[allow(dead_code)] // documentation-only mirror of the wire shape
 pub struct NotifyRequestDoc {
     /// Recipient device token (APNs hex or FCM token); platform is auto-detected.
     #[schema(
@@ -40,7 +40,7 @@ pub struct NotifyRequestDoc {
 
 /// The frozen `200` push-result body (echoed from the provider).
 #[derive(Serialize, ToSchema)]
-#[allow(dead_code)] // documentation-only mirror of the frozen wire shape
+#[allow(dead_code)] // documentation-only mirror of the wire shape
 pub struct NotifyResponseDoc {
     /// Whether the provider accepted the push.
     #[schema(example = true)]
@@ -64,7 +64,7 @@ pub struct NotifyResponseDoc {
 
 /// One per-device push error inside the `200` response.
 #[derive(Serialize, ToSchema)]
-#[allow(dead_code)] // documentation-only mirror of the frozen wire shape
+#[allow(dead_code)] // documentation-only mirror of the wire shape
 pub struct NotifyErrorDoc {
     /// Device token the error is about.
     pub device: String,

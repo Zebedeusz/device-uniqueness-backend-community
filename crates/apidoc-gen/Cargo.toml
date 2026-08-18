@@ -13,7 +13,7 @@ name = "apidoc-gen"
 path = "src/main.rs"
 
 [dependencies]
-identity-service = { path = "../identity-service" }
+device-attestation = { path = "../device-attestation" }
 username-indexer = { path = "../username-indexer" }
 invite-tickets = { path = "../invite-tickets" }
 turn = { path = "../turn" }

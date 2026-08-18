@@ -10,7 +10,7 @@ autobins = false
 # Dev-only tool, NOT deployed (absent from docker-bake.hcl's `all` group, like
 # apidoc-gen). Renders the committed edge configs — the `(routes)` snippet in
 # gateway/Caddyfile and the `routes:` list in helm/values.yaml — from the one
-# route table in `ibv2::routes::table`. Run via `just routes`.
+# route table in `dub::routes::table`. Run via `just routes`.
 #
 # The `committed_artifacts_are_in_sync` test fails if either file is stale, the
 # same guard `apidoc-gen` puts on docs/api-reference.
@@ -19,7 +19,7 @@ name = "routegen"
 path = "src/main.rs"
 
 [dependencies]
-ibv2 = { path = "../ibv2" }
+dub = { path = "../dub" }
 anyhow.workspace = true
 
 [lints]

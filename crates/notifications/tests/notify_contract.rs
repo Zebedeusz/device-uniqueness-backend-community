@@ -2,7 +2,7 @@
 //!
 //! Replays representative iOS and Android requests with a real (verifier-signed)
 //! JWT against fake providers, and locks the frozen response contract including
-//! the legacy provider-failure `200` behavior.
+//! the provider-failure `200` behavior.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -85,14 +85,16 @@ async fn rejects_requests_without_a_bearer_token() {
         .await
         .unwrap();
     assert_eq!(res.status(), 401);
-    assert_eq!(res.headers()["content-type"], "application/problem+json");
+    assert_eq!(res.headers()["content-type"], "application/json");
     let body: Value = res.json().await.unwrap();
-    assert_eq!(body["title"], "Missing Authorization Header");
-    assert_eq!(body["status"], 401);
+    assert_eq!(
+        body["error"],
+        "Missing Authorization header. Include a valid Bearer token."
+    );
 }
 
 #[tokio::test]
-async fn rejects_invalid_bodies_with_problem_details() {
+async fn rejects_invalid_bodies_with_field_errors() {
     let base = spawn(ios_success(), android_success()).await;
     let res = reqwest::Client::new()
         .post(format!("{base}/api/v1/notify"))
@@ -102,13 +104,13 @@ async fn rejects_invalid_bodies_with_problem_details() {
         .await
         .unwrap();
     assert_eq!(res.status(), 400);
-    assert_eq!(res.headers()["content-type"], "application/problem+json");
+    assert_eq!(res.headers()["content-type"], "application/json");
     let body: Value = res.json().await.unwrap();
-    assert_eq!(body["title"], "Invalid Body Property Value");
-    assert_eq!(body["errors"][0]["pointer"], "#/message");
+    assert_eq!(body["error"], "The request body contains invalid values.");
+    assert_eq!(body["fields"][0]["field"], "message");
     assert_eq!(
-        body["errors"][0]["detail"],
-        "Invalid input: expected string, received undefined"
+        body["fields"][0]["message"],
+        "expected string, received nothing"
     );
 }
 
@@ -219,18 +221,19 @@ async fn rate_limits_the_authenticated_subject_with_429() {
     assert_eq!(send().await.unwrap().status(), 200);
     let limited = send().await.unwrap();
     assert_eq!(limited.status(), 429);
-    assert_eq!(
-        limited.headers()["content-type"],
-        "application/problem+json"
-    );
+    assert_eq!(limited.headers()["content-type"], "application/json");
     assert!(limited.headers().contains_key("retry-after"));
     let body: Value = limited.json().await.unwrap();
-    assert_eq!(body["title"], "Too Many Requests");
-    assert_eq!(body["status"], 429);
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|error| error.starts_with("Rate limit exceeded.")),
+        "{body}"
+    );
 }
 
 #[tokio::test]
-async fn malformed_json_is_the_plain_text_400() {
+async fn malformed_json_is_a_json_400() {
     let base = spawn(ios_success(), android_success()).await;
     let res = reqwest::Client::new()
         .post(format!("{base}/api/v1/notify"))
@@ -241,8 +244,9 @@ async fn malformed_json_is_the_plain_text_400() {
         .await
         .unwrap();
     assert_eq!(res.status(), 400);
-    assert_eq!(res.headers()["content-type"], "text/plain;charset=UTF-8");
-    assert_eq!(res.text().await.unwrap(), "Malformed JSON in request body");
+    assert_eq!(res.headers()["content-type"], "application/json");
+    let body: Value = res.json().await.unwrap();
+    assert_eq!(body["error"], "Malformed JSON in request body");
 }
 
 #[tokio::test]

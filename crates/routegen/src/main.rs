@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context as _};
-use ibv2::routes::table;
+use dub::routes::table;
 
 /// The Caddy snippet body, between the markers inside `(routes) { … }`.
 const CADDYFILE: &str = "gateway/Caddyfile";

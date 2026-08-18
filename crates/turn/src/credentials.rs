@@ -105,7 +105,7 @@ impl Issuer {
         let expiry = now_unix + self.ttl_secs;
         let mut mac = Hmac::<sha2::Sha256>::new_from_slice(&self.secret)
             .expect("HMAC accepts any key length");
-        mac.update(b"ibv2/turn-proof-credential-id/v1\0");
+        mac.update(b"dub/turn-proof-credential-id/v1\0");
         mac.update(
             &u64::try_from(product_id.len())
                 .expect("product id length fits u64")

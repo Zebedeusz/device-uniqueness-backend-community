@@ -1,3 +1,9 @@
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Registration queue — balance-priority FIFO for username claims
 
 > Stage: active. Keep this plan current while working: when a scope item is
@@ -69,7 +75,7 @@ queued usernames on-chain in batches every N seconds.
 ## Reservation outbox + chain-writer
 - What exists: `POST /api/v1/usernames` inserts a `RESERVED` row
   (`usernames/register.rs`, `chain/outbox.rs`); single-instance
-  `identity-chain-writer` claims due rows and submits `PeopleLite.attest`
+  `device-attestation-chain-writer` claims due rows and submits `PeopleLite.attest`
   (`chain/writer.rs`).
 - ✅ Demo: compose stack registers a username end-to-end.
 - Gaps: no waiting state — every valid claim is immediately writer-eligible.
@@ -111,7 +117,7 @@ queued usernames on-chain in batches every N seconds.
         `RESERVED`.
   - [x] Advancer loop wiring (`QUEUE_ADVANCE_INTERVAL_SECS`, default 6);
         compose + `.env.example`. *(Initially hosted inside the
-        `identity-chain-writer` process; superseded by Phase 4's standalone
+        `device-attestation-chain-writer` process; superseded by Phase 4's standalone
         service.)*
 - **✅ Demo**: seed queued rows across groups; watch the writer log promote
   4 per iteration in slot order and the usernames land on-chain
@@ -129,7 +135,7 @@ queued usernames on-chain in batches every N seconds.
         the subject has no queued claim.
   - [x] OpenAPI annotations + regenerated `docs/api-reference` artifacts.
   - [x] Gateway: no route change needed (`/api/v1/registration/*` falls
-        through to identity-api) — verified against `gateway/Caddyfile`.
+        through to device-attestation-api) — verified against `gateway/Caddyfile`.
 - **✅ Demo**: queued subject polls the endpoint and sees position drop each
   iteration; unqueued subject gets `404`.
 - **Risks / failure modes**: snapshot simulation cost on hot polling — O(queue
@@ -149,15 +155,15 @@ queued usernames on-chain in batches every N seconds.
   falls back to the original direct registration behavior (user decision).
 - **Scope checklist**:
   - [x] Standalone `registration-queue` bin/compose service (third
-        identity-service binary; Dockerfile + compose + `.env.example`).
+        device-attestation binary; Dockerfile + compose + `.env.example`).
   - [x] Shared lease helpers (`chain/lease.rs`); the advancer holds the
         `registration-queue-advancer` lease — single-instance guard **and**
         liveness signal (`QUEUE_LEASE_TTL_SECS`, default 30, must exceed the
         iteration interval).
-  - [x] **Intake fallback**: `identity-api` queues a claim only while the
+  - [x] **Intake fallback**: `device-attestation-api` queues a claim only while the
         advancer lease is fresh; disabled, dead, or probe-error → direct
         `RESERVED` insert with the original wire (no queue fields).
-  - [x] **Drain fallback**: `identity-chain-writer` promotes stranded
+  - [x] **Drain fallback**: `device-attestation-chain-writer` promotes stranded
         `QUEUED` rows itself once the lease has been expired/absent longer
         than `QUEUE_FALLBACK_AFTER_SECS` (default 60) — claims queued before
         the service died still register.
@@ -222,7 +228,7 @@ queued usernames on-chain in batches every N seconds.
       value could strand a row that the API still reports — now impossible
       to store.
 - [x] **Boundary script pins the fallback wires**: `QUEUE_ENABLED` on
-      identity-api and `QUEUE_FALLBACK_AFTER_SECS` on the writer are now
+      device-attestation-api and `QUEUE_FALLBACK_AFTER_SECS` on the writer are now
       required compose keys, so a compose refactor can't silently drop the
       resilience knobs.
 
@@ -276,7 +282,7 @@ findings were visibility and hygiene:
 
 - **Queue advancer topology (was architecture.md open decision 1) — decided
   by the user 2026-07-27:** the queue is its own runtime service
-  (`registration-queue` bin, still inside the identity-service crate/secret
+  (`registration-queue` bin, still inside the device-attestation crate/secret
   boundary) and an **isolated failure domain**: its lease doubles as the
   liveness signal. *Fallback clause amended 2026-08-03
   (`docs/plans/active/queue-down-free-lane.md`):* originally both intake and
@@ -324,7 +330,7 @@ findings were visibility and hygiene:
   attestation/PoUD slice. Note for that slice: `GET
   /api/v1/usernames/payment-status` currently matches the gateway's
   `@username_reads` matcher (GET on `/api/v1/usernames/*` → indexer) and
-  will need its own gateway route to identity-api.
+  will need its own gateway route to device-attestation-api.
 - Queue metrics/alerts (depth, wait time per group) — production-hardening
   slice.
 - Event-driven balance updates (storage subscription) — only if per-iteration

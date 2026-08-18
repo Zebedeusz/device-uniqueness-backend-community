@@ -115,12 +115,12 @@ pub async fn tick_pool(
     let available = tickets::count_available(pool, dim, network)
         .await
         .context("counting available tickets")?;
-    metrics::gauge!("ibv2_invite_pool_depth", "dim" => dim.as_str()).set(available as f64);
+    metrics::gauge!("dub_invite_pool_depth", "dim" => dim.as_str()).set(available as f64);
     // Read before the early return that skips a full pool: that is exactly when
     // nobody is watching and the quota drains unnoticed.
     match chain.available_invites(dim, &identity.inviter).await {
         Ok(invites) => {
-            metrics::gauge!("ibv2_inviter_available_invites", "dim" => dim.as_str())
+            metrics::gauge!("dub_inviter_available_invites", "dim" => dim.as_str())
                 .set(invites as f64);
         }
         Err(error) => {
@@ -262,14 +262,14 @@ pub async fn run_loop(
 /// Outcomes [`record_submit_outcome`] can emit, for the zero-init below.
 const SUBMIT_OUTCOMES: [&str; 3] = ["ok", "retry", "terminal"];
 
-/// Count ticket-registration outcomes on the shared `ibv2_chain_submit_total`
+/// Count ticket-registration outcomes on the shared `dub_chain_submit_total`
 /// family, under this service's own lane. `count` is per item for a finalized
 /// batch and `1` for a failed tick.
 fn record_submit_outcome(outcome: &'static str, count: u32) {
     if count == 0 {
         return;
     }
-    metrics::counter!("ibv2_chain_submit_total", "lane" => "invite", "outcome" => outcome)
+    metrics::counter!("dub_chain_submit_total", "lane" => "invite", "outcome" => outcome)
         .increment(u64::from(count));
 }
 
@@ -277,20 +277,20 @@ fn record_submit_outcome(outcome: &'static str, count: u32) {
 /// than as an absent series indistinguishable from a dead process.
 fn zero_init_submit_outcomes() {
     for outcome in SUBMIT_OUTCOMES {
-        metrics::counter!("ibv2_chain_submit_total", "lane" => "invite", "outcome" => outcome)
+        metrics::counter!("dub_chain_submit_total", "lane" => "invite", "outcome" => outcome)
             .absolute(0);
     }
 }
 
 /// Sample the fee-paying account's balance once per tick, on the family the
-/// identity writer also reports to — `role` is what separates the budgets.
+/// device-attestation writer also reports to — `role` is what separates the budgets.
 /// Best-effort: a failed read must not stop the pool.
 async fn record_inviter_balance(chain: &ChainClient, identity: &InviterIdentity) {
     let account = AccountId32(identity.signer.public_bytes());
     match chain.free_balance(&account).await {
         Ok(balance) => {
             metrics::gauge!(
-                "ibv2_account_free_balance_planck",
+                "dub_account_free_balance_planck",
                 "role" => "inviter",
                 "chain" => "people"
             )
@@ -399,10 +399,8 @@ impl MaintainerConfig {
         use std::str::FromStr as _;
 
         // Namespaced: this worker shares its sibling API's database, and a bare
-        // DATABASE_URL means four different instances across the workspace.
-        // The bare name is still accepted for one release, with a WARN.
-        let database_url =
-            http_common::config::required_renamed("INVITE_TICKETS_DATABASE_URL", "DATABASE_URL")?;
+        // DATABASE_URL would mean four different instances across the workspace.
+        let database_url = http_common::config::required_var("INVITE_TICKETS_DATABASE_URL")?;
         let people_rpc_url = required_env("PEOPLE_RPC_URL")?;
         let network_raw = required_env("PEOPLE_NETWORK")?;
         let network = Network::from_str(&network_raw)

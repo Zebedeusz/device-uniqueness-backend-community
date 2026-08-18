@@ -1,18 +1,13 @@
-//! HTTP surface for `turn-api`: the frozen issue route plus the shared axum
+//! HTTP surface for `turn-api`: the issue route plus the shared axum
 //! primitives (state, errors — the rest lives in `http-common`).
 //!
-//! Route behavior — including its quirks — is the legacy contract, golden-
-//! captured from the real TypeScript route (`tests/fixtures/legacy-wire.json`):
-//! - `POST /api/v1/turn/issue`: auth (401, the shared middleware ran first in
-//!   legacy too) → body-parse (unparseable/empty JSON → the Hono plain-text
-//!   400; **missing JSON content-type → 201**, because legacy skipped
-//!   validation and the handler optional-chained the absent body — unlike
-//!   dim/invite, where the same skip crashed into a 500) → body-validate
-//!   (400 problem details carrying zod v4 messages; `regionHint` accepts
+//! Route behavior:
+//! - `POST /api/v1/turn/issue`: auth (401) → body-parse (a present-but-
+//!   unparseable body → 400; an empty body is an empty command) →
+//!   body-validate (400 with per-field `fields`; `regionHint` accepts
 //!   string/null/absent and is then **ignored** — reserved) → per-subject
 //!   rate limit (429) → mint → **201** (not 200).
-//! - Unmatched paths and wrong methods: the Hono default `404 Not Found`
-//!   plain-text body.
+//! - Unmatched paths and wrong methods: the JSON `404`.
 //!
 //! Credential shape (the coturn REST-API construction) lives in
 //! [`crate::credentials`]; the `servers` array echoes `ICE_SERVERS` verbatim.
@@ -25,8 +20,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
-use http_common::problem::hono_not_found;
-use http_common::{health, layers, zod, AuthSubject};
+use http_common::error::not_found;
+use http_common::{health, layers, AuthSubject};
 
 use self::error::{AppError, AppResult, FieldError};
 use self::state::AppState;
@@ -36,34 +31,34 @@ use self::state::AppState;
 /// siblings in the `all-in-one` role — six copies of `/livez`, six fallbacks and
 /// six middleware stacks cannot coexist in one router.
 ///
-/// The in-prefix `fallback(hono_not_found)` on the method router stays here: it
+/// The in-prefix `fallback(not_found)` on the method router stays here: it
 /// is this surface's own dialect for a wrong method, and it must win inside
 /// `/api/v1/turn` however the router is assembled.
 ///
 /// The proof routes are present only when proof-authorized issuance is enabled.
 /// A hex proof is ~1.6 KB, so an 8 KB cap bounds every legitimate proof request.
 pub fn router(state: AppState) -> Router {
-    let mut api = Router::new().route("/issue", post(issue_credentials).fallback(hono_not_found));
+    let mut api = Router::new().route("/issue", post(issue_credentials).fallback(not_found));
     if state.proof.is_some() {
         api = api.route(
             "/issue-with-proof",
             post(proof_routes::issue_with_proof)
                 .layer(axum::extract::DefaultBodyLimit::max(8 * 1024))
-                .fallback(hono_not_found),
+                .fallback(not_found),
         );
     }
     Router::new().nest("/api/v1/turn", api).with_state(state)
 }
 
 /// Assemble the full standalone service: [`router`] plus health at root, the
-/// service-wide Hono 404, and the production middleware stack.
+/// service-wide JSON 404, and the production middleware stack.
 pub fn routes(state: AppState) -> Router {
     let health = health::router("turn", readiness).with_state(state.clone());
     layers::standard_layers(
         Router::new()
             .merge(health)
             .merge(router(state))
-            .fallback(hono_not_found),
+            .fallback(not_found),
     )
 }
 
@@ -84,21 +79,20 @@ fn check_rate_limit(state: &AppState, subject: &str) -> Result<(), AppError> {
     }
 }
 
-/// Validate the request body against the frozen schema: an object whose
-/// optional `regionHint` is a string or null, reproducing the legacy zod v4
-/// messages and pointers. The value itself is ignored (reserved).
+/// Validate the request body: an object whose optional `regionHint` is a
+/// string or null. The value itself is ignored (reserved).
 fn validate_body(body: &serde_json::Value) -> Result<(), Vec<FieldError>> {
     if !body.is_object() {
         return Err(vec![FieldError {
-            detail: zod::invalid_input("object", zod::type_name(body)),
-            pointer: "#/".to_string(),
+            message: http_common::error::expected("object", http_common::error::type_name(body)),
+            field: "".to_string(),
         }]);
     }
     match body.get("regionHint") {
         None | Some(serde_json::Value::Null) | Some(serde_json::Value::String(_)) => Ok(()),
         Some(other) => Err(vec![FieldError {
-            detail: zod::invalid_input("string", zod::type_name(other)),
-            pointer: "#/regionHint".to_string(),
+            message: http_common::error::expected("string", http_common::error::type_name(other)),
+            field: "regionHint".to_string(),
         }]),
     }
 }
@@ -116,47 +110,33 @@ fn validate_body(body: &serde_json::Value) -> Result<(), Vec<FieldError>> {
 under the secret shared with the TURN relay (the coturn REST-API construction), `servers` \
 echoes the configured ICE server list.",
          body = crate::openapi::IssueResponse),
-        (status = 400, description = "Body validation failed (RFC 9457 problem details with \
-per-field `errors`); or plain-text `Malformed JSON in request body` when the body is present \
-but not JSON. A request with no JSON content-type skips validation entirely and succeeds \
-(legacy quirk).",
+        (status = 400, description = "Body validation failed (with per-field `fields`), or \
+`Malformed JSON in request body` when a body is present but not JSON. An empty body is \
+accepted — every field is optional.",
          example = json!({
-             "type": "https://problems-registry.smartbear.com/invalid-body-property-value",
-             "title": "Invalid Body Property Value",
-             "detail": "The request body contains an invalid body property value.",
-             "status": 400,
-             "errors": [{ "detail": "Invalid input: expected string, received number", "pointer": "#/regionHint" }]
+             "error": "The request body contains invalid values.",
+             "fields": [{ "field": "regionHint", "message": "expected string, received number" }]
          })),
         (status = 401, description = "Missing/malformed `Authorization` header or failed token \
-verification (RFC 9457 problem details).",
+verification.",
          example = json!({
-             "type": "https://problems-registry.smartbear.com/unauthorized",
-             "title": "Invalid Token",
-             "detail": "Token verification failed. The token may be expired or malformed.",
-             "status": 401
+             "error": "Token verification failed. The token may be expired or malformed."
          })),
-        (status = 429, description = "Per-subject rate limit exceeded (RFC 9457 problem \
-details, with `Retry-After`).",
-         example = json!({
-             "type": "https://problems-registry.smartbear.com/too-many-requests",
-             "title": "Too Many Requests",
-             "detail": "Rate limit exceeded. Please retry after 60 seconds.",
-             "status": 429
-         })),
+        (status = 429, description = "Per-subject rate limit exceeded (with `Retry-After`).",
+         example = json!({ "error": "Rate limit exceeded. Please retry after 60 seconds." })),
     )
 )]
 pub(crate) async fn issue_credentials(
     State(state): State<AppState>,
     auth: AuthSubject,
-    body: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
+    body: axum::body::Bytes,
 ) -> AppResult<(StatusCode, Json<serde_json::Value>)> {
-    match body {
-        // Legacy quirk: without a JSON content-type, Hono skipped validation
-        // and the handler tolerated the absent body — a 201, not an error.
-        Err(axum::extract::rejection::JsonRejection::MissingJsonContentType(_)) => {}
-        // A present-but-unparseable body is the Hono plain-text 400.
-        Err(_) => return Err(AppError::MalformedJson),
-        Ok(Json(body)) => validate_body(&body).map_err(AppError::InvalidBody)?,
+    // The content type is ignored; an empty body is an empty command, since
+    // every field is optional. Anything else must parse as JSON.
+    if !body.is_empty() {
+        let body: serde_json::Value =
+            serde_json::from_slice(&body).map_err(|_| AppError::MalformedJson)?;
+        validate_body(&body).map_err(AppError::InvalidBody)?;
     }
 
     check_rate_limit(&state, &auth.subject)?;
@@ -198,11 +178,8 @@ mod tests {
     fn rejects_non_string_region_hints() {
         let errors = validate_body(&json!({ "regionHint": 5 })).unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].pointer, "#/regionHint");
-        assert_eq!(
-            errors[0].detail,
-            "Invalid input: expected string, received number"
-        );
+        assert_eq!(errors[0].field, "regionHint");
+        assert_eq!(errors[0].message, "expected string, received number");
     }
 
     #[test]
@@ -213,10 +190,10 @@ mod tests {
             (json!(null), "null"),
         ] {
             let errors = validate_body(&body).unwrap_err();
-            assert_eq!(errors[0].pointer, "#/");
+            assert_eq!(errors[0].field, "");
             assert_eq!(
-                errors[0].detail,
-                format!("Invalid input: expected object, received {received}")
+                errors[0].message,
+                format!("expected object, received {received}")
             );
         }
     }

@@ -765,7 +765,7 @@ async fn proof_routes_absent_when_disabled() {
 }
 
 #[tokio::test]
-async fn wrong_method_returns_hono_not_found() {
+async fn wrong_method_returns_the_json_not_found() {
     let app = app(Some((proof_config(), None)));
     let response = app
         .oneshot(
@@ -781,5 +781,8 @@ async fn wrong_method_returns_hono_not_found() {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("body");
-    assert_eq!(body.as_ref(), b"404 Not Found");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).expect("json"),
+        serde_json::json!({ "error": "Not found" })
+    );
 }

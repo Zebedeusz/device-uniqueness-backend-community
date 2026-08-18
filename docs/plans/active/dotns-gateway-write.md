@@ -1,13 +1,19 @@
 > Stage: active. Keep this plan current while working. When a scope item is finished, check its box `[ ]`→`[x]`. When a phase's ✅ demo passes, mark the phase done, with date. The plan file is the source of truth, not memory.
 
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Context
 
 Since paritytech/individuality#755 there are **two independent username stores on two chains, with no bridge between them**:
 
-1. **People chain `Resources::UsernameOwnerOf`** — the deprecated pre-#755 home. `PeopleLite.attest` → `register_lite_consumer` → `Resources` (`individuality/runtimes/next-people-paseo/src/people.rs:1052` binds `LiteConsumerRegistrar = Resources`). This is all `identity-chain-writer` does today (`crates/identity-service/src/chain/writer.rs:646`).
+1. **People chain `Resources::UsernameOwnerOf`** — the deprecated pre-#755 home. `PeopleLite.attest` → `register_lite_consumer` → `Resources` (`individuality/runtimes/next-people-paseo/src/people.rs:1052` binds `LiteConsumerRegistrar = Resources`). This is all `device-attestation-chain-writer` does today (`crates/device-attestation/src/chain/writer.rs:646`).
 2. **Asset Hub `dotns-gateway` + the dotNS contracts** — what clients actually read. Written **only** by the `reserve_name` extrinsic (`individuality/pallets/dotns-gateway/src/lib.rs:317`).
 
-The only People→AH XCM in individuality is ring-root propagation, not usernames. So a lite username registered through this backend exists on People and **does not exist in dotNS**. The legacy TypeScript backend closed the gap with a separate dotns daemon (`pop-dotns-testing/src/reserveNameBackend.ts`: *"Without this block the inserted row stays ahStatus='PENDING' and the dotns daemon never submits"*). This repo has no equivalent. `grep -c dotns crates/identity-service/src/chain/writer.rs` is 0. The `Reservation` struct the writer selects (`crates/identity-service/src/chain/outbox.rs:260`) does not even carry the dotns columns.
+The only People→AH XCM in individuality is ring-root propagation, not usernames. So a lite username registered through this backend exists on People and **does not exist in dotNS**. The legacy TypeScript backend closed the gap with a separate dotns daemon (`pop-dotns-testing/src/reserveNameBackend.ts`: *"Without this block the inserted row stays ahStatus='PENDING' and the dotns daemon never submits"*). This repo has no equivalent. `grep -c dotns crates/device-attestation/src/chain/writer.rs` is 0. The `Reservation` struct the writer selects (`crates/device-attestation/src/chain/outbox.rs:260`) does not even carry the dotns columns.
 
 Everything `reserve_name` needs is **already in Postgres**, collected at intake and never used:
 
@@ -36,7 +42,7 @@ PreviewNet is the mechanism `individuality` `main` implements (`pallets/dotns-ga
 
 # Goals
 
-- `identity-chain-writer` submits `DotnsGateway::reserve_name` on Asset Hub for every registration that carries a `dotns` block and has landed on People. It submits the **PreviewNet-shaped, `signed_at` variant**.
+- `device-attestation-chain-writer` submits `DotnsGateway::reserve_name` on Asset Hub for every registration that carries a `dotns` block and has landed on People. It submits the **PreviewNet-shaped, `signed_at` variant**.
 - The local run against the deployed PreviewNet chains (`.local/previewnet.env`) ends with the label resolvable through the dotNS contracts. Today that run reaches *"registration assigned on-chain"* and then has no AH record.
 - The deployed `identity-previewnet.dotspark.app` environment does the same end to end.
 - Pointed at an Asset Hub whose `reserve_name` is a different shape, the writer **parks the dotNS lane** rather than mis-encoding a call. It keeps attesting on People.
@@ -50,7 +56,7 @@ PreviewNet is the mechanism `individuality` `main` implements (`pallets/dotns-ga
 - **No dotNS reads.** `username-indexer` keeps projecting People only. Nothing queries the contracts back into the search index.
 - **No re-signing.** Only the client holds the candidate key. The backend can never refresh an expired reservation signature.
 - **No backfill.** Rows created before this slice are never submitted to Asset Hub.
-- **No second chain in `identity-api`.** Intake shape-checks the block; it never opens an AH connection.
+- **No second chain in `device-attestation-api`.** Intake shape-checks the block; it never opens an AH connection.
 - No new deployable service and no `docker-compose.yml` host ports.
 
 # Design principles
@@ -64,8 +70,8 @@ PreviewNet is the mechanism `individuality` `main` implements (`pallets/dotns-ga
 # User journey
 
 1. A client registers a username and includes the optional `dotns` block (signature, `signedAt`, optional `reservedUsername`), bound to whatever `GET /api/v1/attester` returned.
-2. `identity-api` validates the block's shape and freshness bounds and returns `202`. It does **not** verify the reservation signature — see Phase 5.
-3. `identity-chain-writer` lands `PeopleLite.attest` on People. The row reaches `ASSIGNED`.
+2. `device-attestation-api` validates the block's shape and freshness bounds and returns `202`. It does **not** verify the reservation signature — see Phase 5.
+3. `device-attestation-chain-writer` lands `PeopleLite.attest` on People. The row reaches `ASSIGNED`.
 4. The same writer pass submits `DotnsGateway::reserve_name` on Asset Hub. The row reaches `dotns_status = RESERVED`.
 5. The label resolves through the dotNS contracts. The candidate holds the lite NFT, the chat key is persisted, and any `reservedBaseLabel` is parked for a later full-person claim.
 
@@ -79,8 +85,8 @@ A lane is **(signing account, chain)**. Adding Asset Hub adds a second lane on t
 
 The guarantee is kept structurally, not by convention:
 
-- The AH lane lives **inside the existing `identity-chain-writer` process**, in the same sequential row loop, behind the same `writer_lease` row (`people-chain-writer`). The lease is per process, not per chain. One lease therefore still means one submitter on both lanes.
-- `identity-chain-writer` stays `deploy: replicas: 1` and stays on the "don't scale" list in `AGENTS.md`.
+- The AH lane lives **inside the existing `device-attestation-chain-writer` process**, in the same sequential row loop, behind the same `writer_lease` row (`people-chain-writer`). The lease is per process, not per chain. One lease therefore still means one submitter on both lanes.
+- `device-attestation-chain-writer` stays `deploy: replicas: 1` and stays on the "don't scale" list in `AGENTS.md`.
 - A second cached nonce (`next_nonce_ah`) sits beside `next_nonce`, reset to a chain re-fetch on any error. That is the identical discipline `writer.rs` already applies.
 - **No second process and no second lease name.** A separate dotns worker would need its own lease. Nothing would order its submit against the People `ASSIGNED` transition it depends on.
 
@@ -161,26 +167,26 @@ Two non-obvious compatibilities, both verified in source:
 
 ## Expiry: chain-sourced, terminal, never retried
 
-Chain constants, read from PreviewNet AH metadata at connect and logged: `MaxValiditySeconds = 259200` (3 days), `MaxFutureSkewSeconds = 30`. **Both are enforced** before an extrinsic is spent: aged out → `EXPIRED` (terminal), future-dated → deferred behind `dotns_not_before` without spending an attempt. identity-api's `DOTNS_MAX_FUTURE_SKEW_SECS` is a separate value on a separate process, so it cannot be the only guard on the skew bound. Paseo next AH declares neither constant, because its `reserve_name` has no freshness window; the shape assertion means the writer never reaches this read on that runtime, so the read can be hard rather than optional.
+Chain constants, read from PreviewNet AH metadata at connect and logged: `MaxValiditySeconds = 259200` (3 days), `MaxFutureSkewSeconds = 30`. **Both are enforced** before an extrinsic is spent: aged out → `EXPIRED` (terminal), future-dated → deferred behind `dotns_not_before` without spending an attempt. device-attestation-api's `DOTNS_MAX_FUTURE_SKEW_SECS` is a separate value on a separate process, so it cannot be the only guard on the skew bound. Paseo next AH declares neither constant, because its `reserve_name` has no freshness window; the shape assertion means the writer never reaches this read on that runtime, so the read can be hard rather than optional.
 
 - **Intake is the real guard.** `DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS = 600` means a row arrives with ~3 days of writer headroom, against a drain measured in seconds. A row can only expire if it was *parked*: writer down for days, or `QUEUED` behind the registration queue.
 - **The writer checks locally before every submit** (`now > signed_at + MaxValiditySeconds`) and marks `DOTNS_EXPIRED`. A distinct terminal state. Never a retry, never a wasted extrinsic, never a wasted allowance.
 - **`DOTNS_EXPIRED` is a fact to expose, not an error to recover from.** The backend cannot re-sign; only the client holds the candidate key. It gets a metric and a `warn!`. A client-facing re-claim path is deferred until that metric is ever non-zero (see Later).
 
-One default changes with it: **`DOTNS_MAX_FUTURE_SKEW_SECS` 600 → 30**, to match the chain. At 600, a signature up to 570 s in the chain's future passes intake and fails `ReservationSignatureFromFuture` on chain. The existing retry ladder (`2^attempt` capped at 64 s, 8 attempts ≈ 254 s) can exhaust *before the clock catches up*, converting a perfectly valid reservation into a terminal failure. The golden fixtures pin `Config::test_default()` at 600 (`crates/identity-service/src/config.rs:277`), so `register-400-dotns-future` still replays byte-identically.
+One default changes with it: **`DOTNS_MAX_FUTURE_SKEW_SECS` 600 → 30**, to match the chain. At 600, a signature up to 570 s in the chain's future passes intake and fails `ReservationSignatureFromFuture` on chain. The existing retry ladder (`2^attempt` capped at 64 s, 8 attempts ≈ 254 s) can exhaust *before the clock catches up*, converting a perfectly valid reservation into a terminal failure. The golden fixtures pin `Config::test_default()` at 600 (`crates/device-attestation/src/config.rs:277`), so `register-400-dotns-future` still replays byte-identically.
 
 # Foundations / Already shipped (✅)
 
 ## Single-writer outbox + lease
 
-- What exists: the `RESERVED → SUBMITTING → ASSIGNED/RETRY_AFTER/FAILED_TERMINAL` machine in `crates/identity-service/src/chain/outbox.rs`. The `LEASE_HELD` guard on every writer mutation. The sequential row loop, cached-nonce reset, mid-submit lease renewal, and reconcile-don't-resubmit (`writer.rs:355-497`).
+- What exists: the `RESERVED → SUBMITTING → ASSIGNED/RETRY_AFTER/FAILED_TERMINAL` machine in `crates/device-attestation/src/chain/outbox.rs`. The `LEASE_HELD` guard on every writer mutation. The sequential row loop, cached-nonce reset, mid-submit lease renewal, and reconcile-don't-resubmit (`writer.rs:355-497`).
 - ✅ Demo: a registration reaches `ASSIGNED` with a tx hash on either environment.
 - Gaps: none for People. The dotNS lane reuses all of it verbatim.
 
 ## dotNS intake
 
 - What exists: `POST /api/v1/usernames` accepts and persists the `dotns` block. `DOTNS_GATEWAY_ENABLED` gating, freshness bounds, `reservedUsername` pattern (`register.rs:838-1008`), stored in `username_reservations` (`migrations/0002_usernames.sql:25-28`). Golden fixtures cover the enabled/disabled/future/stale cases.
-- ✅ Demo: `cargo test -p identity-service --test legacy_wire`.
+- ✅ Demo: `cargo test -p device-attestation --test legacy_wire`.
 - Gaps (pre-slice): the signature is **never verified**, only its hex shape. Nothing reads the columns back. This slice adds verification in the writer, not in intake.
 
 ## Cross-runtime signing
@@ -219,12 +225,12 @@ Not a coding phase. Recorded so nobody waits on an ask. Both target environments
 
 - **Goal**: the backend can decide, with no chain, whether a stored `dotns_signature` will be accepted.
 - **Scope checklist**:
-  - [x] New `crates/identity-service/src/dotns.rs`: `reservation_message(candidate, attester, base, chat_key, reserved, signed_at) -> Vec<u8>`, encoding SCALE `(Vec<u8> "pop:dotns-gateway:reserve", [u8;32], [u8;32], Vec<u8> base, Vec<u8> chat_key, Option<Vec<u8>> reserved, u64)`. Plus `verify_reservation_signature(...)` over sr25519. Mirrors `Pallet::construct_reservation_message` (`dotns-gateway/src/lib.rs:344`), `build_reservation_message` (truapi `host_logic/dotns_gateway.rs`) and `buildReservationMessage` (`pop-dotns-testing/src/reservation.ts`). All three describe the **PreviewNet** mechanism. The older proof-of-ownership variant is not implemented.
+  - [x] New `crates/device-attestation/src/dotns.rs`: `reservation_message(candidate, attester, base, chat_key, reserved, signed_at) -> Vec<u8>`, encoding SCALE `(Vec<u8> "pop:dotns-gateway:reserve", [u8;32], [u8;32], Vec<u8> base, Vec<u8> chat_key, Option<Vec<u8>> reserved, u64)`. Plus `verify_reservation_signature(...)` over sr25519. Mirrors `Pallet::construct_reservation_message` (`dotns-gateway/src/lib.rs:344`), `build_reservation_message` (truapi `host_logic/dotns_gateway.rs`) and `buildReservationMessage` (`pop-dotns-testing/src/reservation.ts`). All three describe the **PreviewNet** mechanism. The older proof-of-ownership variant is not implemented.
   - [x] `check_reserve_name_shape(fields) -> Result<…>` lives here too. A pure function over the metadata field names, so the boot guard is testable without a chain.
   - [x] The base is `BaseLabel::lite_base()`, the bytes before the first `.`. Never the full label.
   - [x] Golden-vector test from a captured `pop-dotns-testing` run: exact message bytes **and** a passing verify. Both `None` and `Some(reserved)` shapes. The Rust encoder matched the TypeScript bytes on the first run.
   - [x] Negative cases: wrong attester, full label instead of base, `reserved` `Some`↔`None` mismatch, tampered `signed_at`, non-64-byte signature.
-- **✅ Demo passed 2026-08-06**: `cargo test -p identity-service dotns` green, 6 tests. The golden vector's hex is identical to the bytes `pop-dotns-testing`'s TypeScript encoder produces for the same inputs.
+- **✅ Demo passed 2026-08-06**: `cargo test -p device-attestation dotns` green, 6 tests. The golden vector's hex is identical to the bytes `pop-dotns-testing`'s TypeScript encoder produces for the same inputs.
 - **Risks / failure modes**:
   - `Vec<u8>` vs fixed-size encoding for the two 32-byte accounts (raw, no length prefix) and the 65-byte chat key (length-prefixed). The exact trap the golden vector exists to catch.
 
@@ -232,8 +238,8 @@ Not a coding phase. Recorded so nobody waits on an ask. Both target environments
 
 - **Goal**: the run that today ends at *"registration assigned on-chain"* ends with the label in dotNS.
 - **Scope checklist**:
-  - [x] `crates/identity-service/src/chain/asset_hub.rs` — `AssetHubClient` beside `ChainClient`, reusing `chain_client::connect` verbatim. Surface: `online()`, `health()`, `lite_label_owner(label)`, `attestation_allowance(account)`, `validity_window()` with both constants from metadata. All dynamic.
-  - [x] Migration `crates/identity-service/migrations/0008_dotns_outbox.sql`: `dotns_status`, `dotns_tx_hash`, `dotns_attempt`, `dotns_not_before`, `dotns_last_error`, plus an index on `(dotns_status, dotns_not_before)`. **No backfill.** The column comment records that `NULL` covers both "no dotns block" and "predates this slice".
+  - [x] `crates/device-attestation/src/chain/asset_hub.rs` — `AssetHubClient` beside `ChainClient`, reusing `chain_client::connect` verbatim. Surface: `online()`, `health()`, `lite_label_owner(label)`, `attestation_allowance(account)`, `validity_window()` with both constants from metadata. All dynamic.
+  - [x] Migration `crates/device-attestation/migrations/0008_dotns_outbox.sql`: `dotns_status`, `dotns_tx_hash`, `dotns_attempt`, `dotns_not_before`, `dotns_last_error`, plus an index on `(dotns_status, dotns_not_before)`. **No backfill.** The column comment records that `NULL` covers both "no dotns block" and "predates this slice".
   - [x] `outbox.rs`: add `dotns_signature` / `dotns_signed_at` to `Reservation` and `SELECT_COLS`. `insert_with` sets `dotns_status='PENDING'` when the request carried a dotns block. Add `claim_dotns_due` and `mark_dotns_submitting/reserved/retry/failed/expired`, all behind the existing `LEASE_HELD` clause. Extend `depth_by_status`'s sibling for the dotns column.
   - [x] `writer.rs`: `build_reserve_name_tx(r, candidate, proxy_for)` mirroring `build_registration_tx`, either direct or wrapped in `Proxy.proxy(real, None, DotnsGateway::reserve_name{…})`. Plus `next_nonce_ah`, a dotNS pass after the People pass in the same row loop, and the standalone `claim_dotns_due` scan.
   - [x] Pre-submit gates, cheapest first. Each one avoids an extrinsic:
@@ -259,10 +265,10 @@ Not a coding phase. Recorded so nobody waits on an ask. Both target environments
 
 - **Goal**: `https://identity-previewnet.dotspark.app` registers into dotNS; `https://identity.dotspark.app` is provably untouched.
 - **Scope checklist**:
-  - [x] `docker-compose.yml`: add `DOTNS_GATEWAY_ENABLED` and `ASSET_HUB_RPC_URL` to the `identity-chain-writer` allowlist (`ATTESTER_ACCOUNT` is already there). Reuse `CHAIN_WRITER_MAX_ATTEMPTS` / `CHAIN_WRITER_FINALIZE_SECS` for the AH lane. No parallel knobs until one is measurably needed.
-  - [x] `scripts/verify_compose_boundaries.sh`: move `DOTNS_GATEWAY_ENABLED` out of the writer's `forbid_key` loop and `require_key` it on **both** `identity-api` and `identity-chain-writer`. That is the `QUEUE_ENABLED` precedent, for the same reason: a split value is exactly the intake-accepts-but-nothing-submits gap this slice exists to close. Keep the two intake-only knobs (`DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS`, `DOTNS_MAX_FUTURE_SKEW_SECS`) forbidden everywhere but `identity-api`. `require_key identity-chain-writer ASSET_HUB_RPC_URL` and `ATTESTER_ACCOUNT` (and the same on `identity-api`, which serves it). `forbid_key ASSET_HUB_RPC_URL` on every other service; it is not a secret, but the allowlists are the ownership map.
-  - [x] Metrics, in the existing `log_attester_resources` / `record_outbox_gauges` pass. Same process, same exporter, so `observability/prometheus.yml` needs nothing. New series: `ibv2_dotns_outbox_depth{status}`, `ibv2_dotns_attester_allowance`, and `ibv2_account_free_balance_planck{role="signer",chain="asset-hub"}`. A `warn!` below the allowance floor, as People already has.
-  - [x] Lane **off** by default, opt-in per environment. *(Superseded 2026-08-07 — see the amendment on the paseo-next-v2 item below. The shipped defaults are now a matched PreviewNet pair with the lane on; the code fallback stays off.)* `config.rs` and `writer.rs` both default `DOTNS_GATEWAY_ENABLED` to `false` (they must match, or intake accepts blocks nothing submits). `ASSET_HUB_RPC_URL=wss://previewnet.substrate.dev/asset-hub` (`pop-dotns-testing/endpoints.json`, `previewnet` profile) stays a `.env.example`/`docker-compose.yml` convenience default, but it is not an instruction to enable the lane. Rationale: `PEOPLE_RPC_URL` defaults to Paseo next, so an on-by-default lane paired that endpoint with PreviewNet's Asset Hub — attesting usernames on one network and claiming `LiteLabelOwner` for their labels on another. That claim is global and unrecoverable; only the client can re-sign. The deployed previewnet `.env` (`~/identity-backend-previewnet`) therefore sets `DOTNS_GATEWAY_ENABLED=true` explicitly. **Note this also turns that environment's intake on for the first time**, so new `202`s start carrying dotns blocks.
+  - [x] `docker-compose.yml`: add `DOTNS_GATEWAY_ENABLED` and `ASSET_HUB_RPC_URL` to the `device-attestation-chain-writer` allowlist (`ATTESTER_ACCOUNT` is already there). Reuse `CHAIN_WRITER_MAX_ATTEMPTS` / `CHAIN_WRITER_FINALIZE_SECS` for the AH lane. No parallel knobs until one is measurably needed.
+  - [x] `scripts/verify_compose_boundaries.sh`: move `DOTNS_GATEWAY_ENABLED` out of the writer's `forbid_key` loop and `require_key` it on **both** `device-attestation-api` and `device-attestation-chain-writer`. That is the `QUEUE_ENABLED` precedent, for the same reason: a split value is exactly the intake-accepts-but-nothing-submits gap this slice exists to close. Keep the two intake-only knobs (`DOTNS_INTAKE_FRESHNESS_MAX_AGE_SECS`, `DOTNS_MAX_FUTURE_SKEW_SECS`) forbidden everywhere but `device-attestation-api`. `require_key device-attestation-chain-writer ASSET_HUB_RPC_URL` and `ATTESTER_ACCOUNT` (and the same on `device-attestation-api`, which serves it). `forbid_key ASSET_HUB_RPC_URL` on every other service; it is not a secret, but the allowlists are the ownership map.
+  - [x] Metrics, in the existing `log_attester_resources` / `record_outbox_gauges` pass. Same process, same exporter, so `observability/prometheus.yml` needs nothing. New series: `dub_dotns_outbox_depth{status}`, `dub_dotns_attester_allowance`, and `dub_account_free_balance_planck{role="signer",chain="asset-hub"}`. A `warn!` below the allowance floor, as People already has.
+  - [x] Lane **off** by default, opt-in per environment. *(Superseded 2026-08-07 — see the amendment on the paseo-next-v2 item below. The shipped defaults are now a matched PreviewNet pair with the lane on; the code fallback stays off.)* `config.rs` and `writer.rs` both default `DOTNS_GATEWAY_ENABLED` to `false` (they must match, or intake accepts blocks nothing submits). `ASSET_HUB_RPC_URL=wss://previewnet.substrate.dev/asset-hub` (`pop-dotns-testing/endpoints.json`, `previewnet` profile) stays a `.env.example`/`docker-compose.yml` convenience default, but it is not an instruction to enable the lane. Rationale: `PEOPLE_RPC_URL` defaults to Paseo next, so an on-by-default lane paired that endpoint with PreviewNet's Asset Hub — attesting usernames on one network and claiming `LiteLabelOwner` for their labels on another. That claim is global and unrecoverable; only the client can re-sign. The deployed previewnet `.env` (`~/dub-previewnet`) therefore sets `DOTNS_GATEWAY_ENABLED=true` explicitly. **Note this also turns that environment's intake on for the first time**, so new `202`s start carrying dotns blocks.
   - [ ] **Not done — server-side, and now the blocking half.** paseo-next-v2's `.env` needs an explicit `DOTNS_GATEWAY_ENABLED=false` **before** its next deploy. Off is no longer what omission gives you. Without it the writer connects to PreviewNet AH from a Paseo-People environment; with `ASSET_HUB_RPC_URL` pointed at Paseo AH instead, the boot assertion stops that writer rather than letting it submit a mis-shaped call. Either way it is the `.env` that has to say so.
 
     > **Amended 2026-08-07 — the defaults were flipped, and this item is now hard-blocking.** The repo defaults moved to a matched PreviewNet pair: `PEOPLE_RPC_URL` → `wss://previewnet.substrate.dev/people` and `DOTNS_GATEWAY_ENABLED` → `true`, in `.env.example` and in all seven `docker-compose.yml` services. The Rust `env_bool` fallback in `config.rs`/`writer.rs` deliberately **stays `false`**: a bare process has no URL pairing to make the lane safe, and every real path (compose, `.env`) passes the value explicitly. The opt-in assertion in `config.rs`'s minimal-environment test is unchanged and still passes.
@@ -298,7 +304,7 @@ Ships alone. It is the only wire change in the slice.
 
 # Contracts (guardrails)
 
-- **One writer per nonce lane, lane = (signing account, chain).** This slice adds a second *lane* to the same process and the same `writer_lease` row. It does not add a second process, a second lease name, or a second replica. `identity-chain-writer` stays `replicas: 1` and stays on `AGENTS.md`'s don't-scale list.
+- **One writer per nonce lane, lane = (signing account, chain).** This slice adds a second *lane* to the same process and the same `writer_lease` row. It does not add a second process, a second lease name, or a second replica. `device-attestation-chain-writer` stays `replicas: 1` and stays on `AGENTS.md`'s don't-scale list.
 - A dotNS failure **never** changes the People `status`. `ASSIGNED` + `DOTNS_FAILED_TERMINAL` / `DOTNS_EXPIRED` is a legitimate resting state.
 - `reserve_name` is never submitted for a row that is not `ASSIGNED` on People. The label is a global claim.
 - `ATTESTER_ACCOUNT` equals the extrinsic's signed origin on both chains, by construction — proxying is derived from it, not configured alongside it.
@@ -322,9 +328,9 @@ Ships alone. It is the only wire change in the slice.
 - `assert_reserve_name_shape` over both field-name lists captured 2026-08-06. PreviewNet's accepted, Paseo next's rejected with the offending fields named. A literal list, like `KNOWN_RUNTIMES`, so no metadata is vendored;
 - the unchanged replay of the existing dotns fixtures, and that an unverifiable `dotns.signature` still yields a username (Phase 5).
 
-**Live Postgres**, `#[ignore]`-gated on `IDENTITY_TEST_DATABASE_URL` exactly like `queue_live.rs`. A new `crates/identity-service/tests/dotns_live.rs` covers the new columns, `claim_dotns_due` (only `ASSIGNED` + `PENDING`/`RETRY_AFTER`), the lease-guarded transitions, and the no-backfill property: a row inserted with `dotns_status` left `NULL` is never claimed.
+**Live Postgres**, `#[ignore]`-gated on `DEVICE_ATTESTATION_TEST_DATABASE_URL` exactly like `queue_live.rs`. A new `crates/device-attestation/tests/dotns_live.rs` covers the new columns, `claim_dotns_due` (only `ASSIGNED` + `PENDING`/`RETRY_AFTER`), the lease-guarded transitions, and the no-backfill property: a row inserted with `dotns_status` left `NULL` is never claimed.
 
-> **Fixed 2026-08-13 — the suite existed but nothing ran it.** `dotns_live.rs` was written and green, and was never added to `scripts/run_live_suites.sh`'s `db` catalog. That script *is* the gate (`.github/workflows/check.yml:28` invokes it directly), so all three tests were dead code in CI, in `just test-live-db`, and in `coverage-db`. Being `#[ignore]`d, they were also silently skipped by `just check`, so nothing anywhere reported them missing. `dotns_live` now sits beside `outbox_live` in the identity-service loop and the catalog comment reads **14 suites / 38 ignored tests**, matching a full local run. This is the failure mode the comment's own "keep this list here so local tests, CI, and coverage all execute the same catalog" exists to prevent — a new `*_live.rs` file is not wired up by being written.
+> **Fixed 2026-08-13 — the suite existed but nothing ran it.** `dotns_live.rs` was written and green, and was never added to `scripts/run_live_suites.sh`'s `db` catalog. That script *is* the gate (`.github/workflows/check.yml:28` invokes it directly), so all three tests were dead code in CI, in `just test-live-db`, and in `coverage-db`. Being `#[ignore]`d, they were also silently skipped by `just check`, so nothing anywhere reported them missing. `dotns_live` now sits beside `outbox_live` in the device-attestation loop and the catalog comment reads **14 suites / 38 ignored tests**, matching a full local run. This is the failure mode the comment's own "keep this list here so local tests, CI, and coverage all execute the same catalog" exists to prevent — a new `*_live.rs` file is not wired up by being written.
 
 **Live chain — deliberately not in CI.** AH submission needs a funded attester holding gateway allowance, and CI has neither. That is the same reason People submission is not in CI today. It is covered instead by:
 
@@ -332,7 +338,7 @@ Ships alone. It is the only wire change in the slice.
 - the Phase 3 local previewnet run, cross-checked with `pop-dotns-testing`'s contract-side assertions. Those read the dotNS contracts from the opposite side of the dispatcher, and would catch a pallet write that never reached the contract;
 - the Phase 4 deployed demo.
 
-What that leaves uncovered, stated rather than hidden: nothing automated fails if previewnet AH is re-wiped or the attester loses its allowance. The `ibv2_dotns_attester_allowance` gauge and its floor warning are the standing signal.
+What that leaves uncovered, stated rather than hidden: nothing automated fails if previewnet AH is re-wiped or the attester loses its allowance. The `dub_dotns_attester_allowance` gauge and its floor warning are the standing signal.
 
 # Later / Deferred
 
@@ -345,6 +351,6 @@ What that leaves uncovered, stated rather than hidden: nothing automated fails i
   - **`NameReserved` / `NameRegistered` events** — `NameReserved` carries `candidate, attester, lite_label, chat_key, reserved_base_label`, i.e. every field an `assigned_usernames` row needs (`chat_key` *is* the `identifier_key`), with `full_username` from `NameRegistered`. Same finalized-block loop, different pallet on a different chain. This is the path if it is ever built.
   - The dotNS contracts themselves — six `ReviveApi_call` dry-runs per account (truapi's `resolve_labels`) with **no enumeration primitive**. Ruled out for a prefix search over ~37 k rows.
 
-  Deferred because measured 2026-08-06 previewnet AH has seen ~9 `reserve_name` calls ever against ~174 People lite registrations. People is therefore a strict superset, and indexing dotNS would add zero rows today. Revisit when a second attester writes to the same Asset Hub. The divergence this slice *creates* runs the other way: a row that ends `ASSIGNED` + `DOTNS_FAILED_TERMINAL`/`EXPIRED` is advertised by search but unresolvable in dotNS. That is a cross-database concern, watched by `ibv2_dotns_outbox_depth`, not an indexer read.
+  Deferred because measured 2026-08-06 previewnet AH has seen ~9 `reserve_name` calls ever against ~174 People lite registrations. People is therefore a strict superset, and indexing dotNS would add zero rows today. Revisit when a second attester writes to the same Asset Hub. The divergence this slice *creates* runs the other way: a row that ends `ASSIGNED` + `DOTNS_FAILED_TERMINAL`/`EXPIRED` is advertised by search but unresolvable in dotNS. That is a cross-database concern, watched by `dub_dotns_outbox_depth`, not an indexer read.
 - **A typed Asset Hub codegen** in `chain-types`. Revisit if a second crate needs the AH surface, or if the dynamic call ever fails in a way types would have caught.
 - **Separate AH lane tuning** (`DOTNS_MAX_ATTEMPTS`, `DOTNS_FINALIZE_SECS`). Revisit if the two lanes' timings measurably diverge.

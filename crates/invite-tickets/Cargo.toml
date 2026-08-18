@@ -11,7 +11,7 @@ autobins = false
 # frozen claim wire mapping). Its two deployable services — the N-replica
 # `invite-tickets-api` and the single-instance `invite-tickets-pool` that
 # generates keypairs and registers them on People Chain — are roles of the
-# `ibv2` binary (`crates/ibv2`), entered through this crate's `routes()` and
+# `dub` binary (`crates/dub`), entered through this crate's `routes()` and
 # `pool::run()`.
 [lib]
 path = "src/lib.rs"

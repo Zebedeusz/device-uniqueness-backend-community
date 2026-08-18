@@ -6,7 +6,7 @@
 # Caddyfile's map, nothing more.
 #
 # Prerequisite (once per host, owned by no project):
-#   docker network create ibv2-edge
+#   docker network create dub-edge
 #
 # Production:  docker compose -f gateway/docker-compose.yml -p edge up -d
 # Local:
@@ -36,7 +36,7 @@ services:
       - GATEWAY_ADDRESS
       - PREVIEW_GATEWAY_ADDRESS
       - GATEWAY_DOCS_ROOT
-      - IDENTITY_UPSTREAM
+      - DEVICE_ATTESTATION_UPSTREAM
       - USERNAME_INDEXER_UPSTREAM
       - INVITE_TICKETS_UPSTREAM
       - TURN_UPSTREAM
@@ -62,7 +62,7 @@ services:
 networks:
   edge:
     external: true
-    name: ${EDGE_NETWORK:-ibv2-edge}
+    name: ${EDGE_NETWORK:-dub-edge}
 
 volumes:
   caddy_data:

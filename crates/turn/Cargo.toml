@@ -10,7 +10,7 @@ autobins = false
 # turn is a library (domain: coturn REST-API ephemeral credential minting +
 # proof-authorized issuance). Its
 # one deployable service, the stateless N-replica `turn-api`, is a role of the
-# `ibv2` binary (`crates/ibv2`), entered through this crate's `routes()`. No
+# `dub` binary (`crates/dub`), entered through this crate's `routes()`. No
 # database; the only chain-facing state is the
 # background-refreshed ring-root cache for the proof routes.
 [lib]

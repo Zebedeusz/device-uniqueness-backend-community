@@ -1,5 +1,5 @@
-# Shared axum primitives for the frozen legacy wire dialects, extracted once a
-# second service needed the same HTTP scaffolding (the same lazy-extraction rule
+# Shared axum primitives for the services' HTTP surface, extracted once a
+# second service needed the same scaffolding (the same lazy-extraction rule
 # that produced `jwt-verify`/`chain-client`).
 # Transport-shape only: no domain logic, no DB schema, no chain types.
 [package]

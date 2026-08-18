@@ -2,6 +2,12 @@
 > box `[ ]`→`[x]`; when a phase's ✅ demo passes, mark the phase done (with date). The plan file is
 > the source of truth, not memory.
 
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Invite tickets — synchronous invitation-credential claim service
 
 The shipping iOS/Android apps obtain Game / ProofOfInk credentials via
@@ -38,8 +44,8 @@ client consumer). This slice ports the claim route and the ticket-pool maintaine
 
 - User journey drives order: the claim API ships first (pool seeded by hand for the demo), the
   maintainer second.
-- Verify-only JWT: gate on identity-service's Ed25519 JWKS via the shared `crates/jwt-verify`;
-  never mint tokens, never call identity-service synchronously, never read its tables.
+- Verify-only JWT: gate on device-attestation's Ed25519 JWKS via the shared `crates/jwt-verify`;
+  never mint tokens, never call device-attestation synchronously, never read its tables.
 - Per-service persistence: this service owns the `invite_tickets` table in its **own** Postgres.
   Pools are keyed `(dim, network)`; the atomic claim UPDATE is the only concurrency guard.
 - One signer = one nonce lane = one submitting instance. The maintainer is the only
@@ -49,7 +55,7 @@ client consumer). This slice ports the claim route and the ticket-pool maintaine
 
 # User journey
 
-1. The app, holding an identity-service JWT, POSTs `/api/v1/invitation-ticket/claim` with
+1. The app, holding an device-attestation JWT, POSTs `/api/v1/invitation-ticket/claim` with
    `{who, dim}` (`who` = user SS58, `dim` = `Game` | `ProofOfInk`).
 2. The service atomically claims the oldest `available` ticket in the `(dim, network)` pool, signs
    the user's decoded account id with the ticket's private key, and returns the frozen 200 body
@@ -85,7 +91,7 @@ Legacy sources: `apps/identity-backend/src/routes/v1/invitation-ticket.{routes,s
 
 # Foundations / Already shipped
 
-- **identity-service patterns to copy**: axum + tower-http stack, fail-fast `Config::from_env`,
+- **device-attestation patterns to copy**: axum + tower-http stack, fail-fast `Config::from_env`,
   auto-run sqlx migrations, utoipa OpenAPI generation (`just openapi`), compose wiring.
 - **On `anp/game-invite` (unmerged as of 2026-07-22)**: `crates/jwt-verify` (Ed25519
   JWKS/public-key verification), `crates/chain-client` (reconnecting connect + `WriterSigner`,
@@ -106,10 +112,10 @@ Legacy sources: `apps/identity-backend/src/routes/v1/invitation-ticket.{routes,s
 - **Scope checklist**:
   - [x] (2026-07-22) `crates/jwt-verify`, `crates/chain-client`, and the `chain-types` metadata
         refresh materialized onto `anp/claim` from the dim-tickets branch, unmodified —
-        identity-service deliberately untouched (it keeps its local copies until the dim-tickets
+        device-attestation deliberately untouched (it keeps its local copies until the dim-tickets
         branch merges and dedupes). Landing on **main** happens through the PR merge order:
         dim-tickets first or this branch first, either carries them.
-  - [x] (2026-07-22) identity-service and username-indexer build and pass against the refreshed
+  - [x] (2026-07-22) device-attestation and username-indexer build and pass against the refreshed
         metadata (full workspace gate green: fmt + clippy `-D warnings` + 70 tests).
 - **✅ Demo**: `just check` green on main with `Game.set_invite_ticket` /
   `ProofOfInk.set_invite_ticket` constructible from `chain-types`.
@@ -218,15 +224,15 @@ Legacy sources: `apps/identity-backend/src/routes/v1/invitation-ticket.{routes,s
         `invite-tickets-pool` (`replicas: 1`); the inviter SURI reaches only the pool service's
         environment; api `/readyz` gates on its DB only (no chain). Dockerfile builds both bins;
         deploy.md carries the Caddy route + secret boundary; runbook carries the failure modes.
-  - [x] (2026-08-04) Prove identity-service, username-indexer, and the others stay healthy with
+  - [x] (2026-08-04) Prove device-attestation, username-indexer, and the others stay healthy with
         this service stopped, and vice versa. Ran against the full compose stack: with
-        `invite-tickets-{api,pool,postgres}` stopped, all five sibling APIs (identity-api,
+        `invite-tickets-{api,pool,postgres}` stopped, all five sibling APIs (device-attestation-api,
         username-indexer, dim-tickets-api, turn-api, notify-relay) answered `/readyz` 200 on
         9 polls over 45s (0 failures) and the workers stayed up; with ALL siblings stopped
-        (identity-api, chain-writer, registration-queue, username-indexer, dim-tickets-api/writer,
+        (device-attestation-api, chain-writer, registration-queue, username-indexer, dim-tickets-api/writer,
         turn-api, notify-relay), invite-tickets-api answered `/readyz` 200 on 6 polls over 30s and
         served a real authenticated claim (frozen 200 body) from its own DB — JWT verified
-        offline via the dev public key, no identity-service needed.
+        offline via the dev public key, no device-attestation needed.
   - [x] (2026-08-04) End-to-end smoke vs the legacy backend: contract-equal responses proven
         live. The REAL legacy backend (repo `main`, superset of capture commit `c8369d9`; bun,
         `TZ=UTC`, `JWT_AUTH_ENFORCED=true`, throwaway migrated Postgres) and `invite-tickets-api`

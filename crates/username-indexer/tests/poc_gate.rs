@@ -2,10 +2,7 @@
 //! without a database. The accepted-solution and replay paths need a real
 //! Postgres and live in `poc_gate_live.rs`.
 //!
-//! Error bodies are transcribed from the legacy middleware source
-//! (`paritytech/identity-backend`, `src/middleware/proof-of-compute.middleware.ts`)
-//! — the capture harness never exercised this route because legacy never wired
-//! the middleware onto one.
+//! Error bodies are the shared JSON envelope (`{"error": …}`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -189,10 +186,10 @@ async fn issues_a_puzzle_this_server_can_verify() {
 }
 
 #[tokio::test]
-async fn wrong_method_on_search_keeps_the_frozen_404_with_the_gate_on() {
+async fn wrong_method_on_search_is_404_with_the_gate_on() {
     // The gate must wrap the GET handler only. Layering the whole method router
-    // would answer a wrong-method request with the gate's 402 and silently
-    // change the frozen Hono dialect the moment the flag flips.
+    // would answer a wrong-method request with the gate's 402 the moment the
+    // flag flips.
     for method in ["PUT", "POST", "DELETE", "PATCH"] {
         let response = app(true)
             .await
@@ -207,12 +204,12 @@ async fn wrong_method_on_search_keeps_the_frozen_404_with_the_gate_on() {
             .expect("response");
         let observed = Observed::from(response).await;
         assert_eq!(observed.status, 404, "{method} must not hit the gate");
-        assert_eq!(observed.body, "404 Not Found");
+        assert_eq!(observed.json(), serde_json::json!({ "error": "Not found" }));
     }
 }
 
 #[tokio::test]
-async fn dropped_username_endpoints_keep_the_frozen_404_with_the_gate_on() {
+async fn dropped_username_endpoints_are_404_with_the_gate_on() {
     for uri in ["/api/v1/usernames", "/api/v1/usernames/alice.1"] {
         let response = app(true)
             .await
@@ -227,7 +224,7 @@ async fn dropped_username_endpoints_keep_the_frozen_404_with_the_gate_on() {
             .expect("response");
         let observed = Observed::from(response).await;
         assert_eq!(observed.status, 404, "{uri} must not hit the gate");
-        assert_eq!(observed.body, "404 Not Found");
+        assert_eq!(observed.json(), serde_json::json!({ "error": "Not found" }));
     }
 }
 
@@ -269,7 +266,7 @@ async fn issue_route_is_absent_when_the_gate_is_disabled() {
     let observed = Observed::from(response).await;
 
     assert_eq!(observed.status, 404);
-    assert_eq!(observed.body, "404 Not Found");
+    assert_eq!(observed.json(), serde_json::json!({ "error": "Not found" }));
 }
 
 #[tokio::test]
@@ -280,7 +277,7 @@ async fn disabled_gate_leaves_anonymous_search_untouched() {
     assert_eq!(observed.status, 500);
     assert_eq!(
         observed.json(),
-        serde_json::json!({ "error": "Oops! Something went wrong." })
+        serde_json::json!({ "error": "Internal server error. Please try again." })
     );
 }
 
@@ -288,17 +285,11 @@ async fn disabled_gate_leaves_anonymous_search_untouched() {
 async fn anonymous_search_without_a_proof_is_402() {
     let observed = search(true, &[]).await;
     assert_eq!(observed.status, 402);
-    assert_eq!(
-        observed.content_type.as_deref(),
-        Some("application/problem+json")
-    );
+    assert_eq!(observed.content_type.as_deref(), Some("application/json"));
     assert_eq!(
         observed.json(),
         serde_json::json!({
-            "type": "https://problems-registry.smartbear.com/payment-required",
-            "title": "Payment Required",
-            "detail": "Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header.",
-            "status": 402
+            "error": "Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header."
         })
     );
 }
@@ -307,18 +298,10 @@ async fn anonymous_search_without_a_proof_is_402() {
 async fn malformed_proof_header_is_400() {
     let observed = search(true, &[("proof-of-compute", "not base64!!".to_string())]).await;
     assert_eq!(observed.status, 400);
-    assert_eq!(
-        observed.content_type.as_deref(),
-        Some("application/problem+json")
-    );
+    assert_eq!(observed.content_type.as_deref(), Some("application/json"));
     assert_eq!(
         observed.json(),
-        serde_json::json!({
-            "type": "https://problems-registry.smartbear.com/bad-request",
-            "title": "Bad Request",
-            "detail": "The Proof-Of-Compute header is malformed.",
-            "status": 400
-        })
+        serde_json::json!({ "error": "The Proof-Of-Compute header is malformed." })
     );
 }
 
@@ -343,7 +326,7 @@ async fn foreign_checksum_is_402() {
     let observed = search(true, &[("proof-of-compute", forged)]).await;
     assert_eq!(observed.status, 402);
     assert_eq!(
-        observed.json()["detail"],
+        observed.json()["error"],
         serde_json::json!(
             "The proof checksum does not match; the puzzle was not issued by this server."
         )
@@ -360,7 +343,7 @@ async fn expired_puzzle_is_402() {
     .await;
     assert_eq!(observed.status, 402);
     assert_eq!(
-        observed.json()["detail"],
+        observed.json()["error"],
         serde_json::json!("The proof of compute puzzle has expired; request a new one.")
     );
 }
@@ -385,7 +368,7 @@ async fn unsolved_puzzle_is_402() {
     let observed = search(true, &[("proof-of-compute", unsolved)]).await;
     assert_eq!(observed.status, 402);
     assert_eq!(
-        observed.json()["detail"],
+        observed.json()["error"],
         serde_json::json!("The proof of compute solution does not meet the required difficulty.")
     );
 }
@@ -403,7 +386,7 @@ async fn valid_bearer_bypasses_the_puzzle() {
     assert_eq!(observed.status, 500);
     assert_eq!(
         observed.json(),
-        serde_json::json!({ "error": "Oops! Something went wrong." })
+        serde_json::json!({ "error": "Internal server error. Please try again." })
     );
 }
 
@@ -419,7 +402,7 @@ async fn invalid_bearer_falls_through_to_the_puzzle_requirement() {
         let observed = search(true, &[("authorization", header.clone())]).await;
         assert_eq!(observed.status, 402, "expected 402 for {header}");
         assert_eq!(
-            observed.json()["detail"],
+            observed.json()["error"],
             serde_json::json!("Proof of compute required. Request a puzzle from POST /api/v1/poc/issue and present the solved proof in the Proof-Of-Compute header.")
         );
     }

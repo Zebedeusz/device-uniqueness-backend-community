@@ -1,9 +1,9 @@
-# Identity Backend V2
+# Device Uniqueness Backend
 
 Rust backend that proves a device and registers a username on Polkadot's People Chain, plus the sibling services the app depends on. Each service owns its Postgres database (where it has one) and deploys independently behind a single-URL [gateway](gateway/Caddyfile).
 
-- **`identity-api`** — HTTP API: auth handshake (challenge → attestation → JWT + refresh), username registration with free/paid lanes (`POST /api/v1/usernames`, availability, payment status, queue status), attester key, JWKS, health.
-- **`identity-chain-writer`** — single-instance worker that drains the reservation outbox onto the chain.
+- **`device-attestation-api`** — HTTP API: auth handshake (challenge → attestation → JWT + refresh), username registration with free/paid lanes (`POST /api/v1/usernames`, availability, payment status, queue status), attester key, JWKS, health.
+- **`device-attestation-chain-writer`** — single-instance worker that drains the reservation outbox onto the chain.
 - **`registration-queue`** — single-instance queue advancer; while `QUEUE_ENABLED` is on, it is the only path out of the registration queue.
 - **`username-indexer`** — finalized-chain username projection and public prefix search, plus the optional proof-of-compute gate.
 - **`invite-tickets-api`** / **`invite-tickets-pool`** — synchronous invitation-ticket claim and its keypair-pool maintainer.
@@ -16,12 +16,12 @@ Current architecture and scope: [docs/architecture.md](docs/architecture.md) · 
 ## Run locally
 
 ```bash
-docker network create ibv2-edge   # once; shared with the edge project
+docker network create dub-edge   # once; shared with the edge project
 docker compose up                 # nothing is published — the edge does that
 
 # to reach a service directly, layer the loopback-only debug overlay:
 docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
-#   identity 127.0.0.1:8080 · indexer :8081
+#   device-attestation 127.0.0.1:8080 · indexer :8081
 #   invite-tickets :8083 · turn :8084 · notify :8085
 ```
 
@@ -54,11 +54,11 @@ account, no token:
 
 ```bash
 docker pull paritytech/device-uniqueness-backend:stable
-docker run paritytech/device-uniqueness-backend:stable --role identity-api
+docker run paritytech/device-uniqueness-backend:stable --role device-attestation-api
 ```
 
-Every service and worker is a `--role` of the single `ibv2` binary the image holds
-(`ibv2 --list-roles` prints the eight); what makes a container a given service is its
+Every service and worker is a `--role` of the single `dub` binary the image holds
+(`dub --list-roles` prints the eight); what makes a container a given service is its
 role, not a different image. The same digests are on
 `ghcr.io/paritytech/device-uniqueness-backend` — `vX.Y.Z` and `stable` exist on both;
 **`latest` is ghcr-only**, because it tracks `main` and unreleased work is not what an
@@ -73,8 +73,8 @@ Images are multi-arch (amd64 + arm64). Three kinds of tag, and the difference ma
 | `stable` | the newest release | "track releases, not `main`" |
 | `latest` | tip of `main` | our own test server; **contains unreleased work** |
 
-Each release also attaches `ibv2-<version>-<target>.tar.gz` — the single `ibv2` binary
-for x86_64/aarch64 Linux and Apple Silicon — and an `ibv2-compose-*.tar.gz` bundle with
+Each release also attaches `dub-<version>-<target>.tar.gz` — the single `dub` binary
+for x86_64/aarch64 Linux and Apple Silicon — and a `dub-compose-*.tar.gz` bundle with
 `docker-compose.yml`, `.env.example` and the gateway config. That compose file needs no
 source tree: the `build:` stanzas are gone and the image is pinned to that release, so
 `docker compose up -d` starts the stack as-is. The build graph is one target — see

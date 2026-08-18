@@ -32,7 +32,7 @@ for f in "${files[@]}"; do
   # reference, which is well past the environment size limit.
   rendered_file="$(mktemp)"
   trap 'rm -f "$rendered_file"' EXIT
-  "$HELM" template ibv2 helm -f "$f" --set global.imageTag=verify-only > "$rendered_file" || {
+  "$HELM" template dub helm -f "$f" --set global.imageTag=verify-only > "$rendered_file" || {
     echo "helm template failed for $f" >&2; exit 1; }
 
   RENDERED_FILE="$rendered_file" VALUES_FILE="$f" CHART_VALUES="$f" python3 - <<'PY' || status=1
@@ -128,7 +128,7 @@ SUBSET = {
     # why MERGED below re-checks the union rather than letting the five vanish
     # unaccounted for.
     "helm/values-small.yaml": {
-        "identity-api", "username-indexer",
+        "device-attestation-api", "username-indexer",
         "invite-tickets-api", "turn-api", "notify-relay",
     },
 }
@@ -138,7 +138,7 @@ SUBSET = {
 # would deploy a process missing a surface's configuration and only find out at
 # runtime.
 MERGED = {"all-in-one": {
-    "identity-api", "username-indexer",
+    "device-attestation-api", "username-indexer",
     "invite-tickets-api", "turn-api", "notify-relay",
 }}
 expected_absent = SUBSET.get(os.environ["CHART_VALUES"], set())

@@ -12,15 +12,15 @@ global:
   scrape_interval: 30s
   scrape_timeout: 10s
   external_labels:
-    monitor: identity-backend-v2
+    monitor: dub
 
 scrape_configs:
   - job_name: paseo-next-v2
     metrics_path: /metrics
     static_configs:
       - targets:
-          - identity-api-paseo-next-v2:9090
-          - identity-chain-writer-paseo-next-v2:9090
+          - device-attestation-api-paseo-next-v2:9090
+          - device-attestation-chain-writer-paseo-next-v2:9090
           - registration-queue-paseo-next-v2:9090
           - username-indexer-paseo-next-v2:9090
           - invite-tickets-api-paseo-next-v2:9090
@@ -40,8 +40,8 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - identity-api-previewnet:9090
-          - identity-chain-writer-previewnet:9090
+          - device-attestation-api-previewnet:9090
+          - device-attestation-chain-writer-previewnet:9090
           - username-indexer-previewnet:9090
         labels:
           env_id: previewnet

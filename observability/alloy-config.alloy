@@ -36,14 +36,14 @@ discovery.relabel "containers" {
   // per-request environment to read.
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
-    regex         = "identity-backend-v2"
+    regex         = "dub-paseo-next-v2"
     replacement   = "paseo-next-v2"
     target_label  = "env_id"
   }
 
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
-    regex         = "identity-previewnet"
+    regex         = "dub-previewnet"
     replacement   = "previewnet"
     target_label  = "env_id"
   }

@@ -9,7 +9,7 @@
 
 # Non-goals
 - Changing search semantics, the response/cursor shape, or any mobile contract.
-- Touching `identity-service`, the chain-writer, or the registration path.
+- Touching `device-attestation`, the chain-writer, or the registration path.
 - Replacing polling entirely — it stays as an always-on safety net.
 - Client-facing real-time (pushing updates to the app) or sub-second SLAs.
 
@@ -21,7 +21,7 @@
 - The single-writer advisory lock is preserved — replicas stay safe.
 
 # User journey
-1. A user registers a lite username through `identity-service`.
+1. A user registers a lite username through `device-attestation`.
 2. The registration finalizes on People Chain.
 3. `username-indexer` is notified of the finalized block within seconds.
 4. It indexes the new consumer immediately (checkpoint → head).
@@ -39,7 +39,7 @@
 - ✅ Demo: `/readyz` reports `freshness` with `lastFinalizedNumber` / `lastSyncedAt`.
 
 ## Reconnecting RPC transport
-- What exists: `ChainClient` is built on subxt's `ReconnectingRpcClient` (`crates/username-indexer/src/chain.rs`); `identity-service` has a recovery test.
+- What exists: `ChainClient` is built on subxt's `ReconnectingRpcClient` (`crates/username-indexer/src/chain.rs`); `device-attestation` has a recovery test.
 - Gaps: reconnection restores the **transport**, not subscription continuity — a finalized stream can miss notifications across a reconnect, so gap recovery must come from the checkpoint catch-up.
 
 ## Checkpoint + bootstrap-on-empty
@@ -55,7 +55,7 @@
   - [ ] Keep the `SYNC_INTERVAL_SECS` timer running concurrently as a safety-net trigger; both feed the same advisory-locked engine (duplicate triggers are harmless — idempotent).
   - [ ] Update `Freshness`/logging to record stream-driven passes distinctly from timer passes.
   - [ ] Add a config toggle (e.g. `FINALIZED_SUBSCRIPTION`) that falls back to polling-only when off or when the stream can't be established.
-- **✅ Demo**: register a username via `identity-service`; it appears in `GET /api/v1/usernames/search` within a few seconds (well under the poll interval), verified on staging/prod.
+- **✅ Demo**: register a username via `device-attestation`; it appears in `GET /api/v1/usernames/search` within a few seconds (well under the poll interval), verified on staging/prod.
 - **Risks / failure modes**:
   - Silent stream stall → mitigated by the retained timer (still catches up).
   - Stream error/close → fall back to the timer + reconnecting client (Phase 2 hardens rebuild).

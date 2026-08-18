@@ -1,7 +1,7 @@
 # Build graph for THE service image.
 #
 # One target, because there is one image: every service and worker is a role of
-# the single `ibv2` binary it holds (`--role <name>`, selected by the compose
+# the single `dub` binary it holds (`--role <name>`, selected by the compose
 # `command:` / chart `args:`). This replaced ten targets that differed only in
 # which binary they copied — see docs/plans/active/one-image-one-binary.md.
 #
@@ -67,19 +67,19 @@ target "_common" {
   cache-to   = cache_to()
 }
 
-# The target name, the Dockerfile stage and the binary are all `ibv2`.
-target "ibv2" {
+# The target name, the Dockerfile stage and the binary are all `dub`.
+target "dub" {
   inherits = ["_common"]
-  target   = "ibv2"
+  target   = "dub"
   tags     = tags_for()
   output   = output_for()
 }
 
 # The deployable set. Every compose service and chart workload runs this image
 # with a different `--role`; scripts/verify_role_split.sh checks the roles they
-# name against `ibv2 --list-roles`.
+# name against `dub --list-roles`.
 group "all" {
-  targets = ["ibv2"]
+  targets = ["dub"]
 }
 
 # Default for a bare `docker buildx bake`.

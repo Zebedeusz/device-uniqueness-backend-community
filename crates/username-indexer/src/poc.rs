@@ -1,16 +1,15 @@
 //! Proof-of-compute: stateless puzzle issuance and one-shot verification for
 //! `GET /api/v1/usernames/search`.
 //!
-//! The gate is **either-or**: a valid identity-service JWT satisfies the route
+//! The gate is **either-or**: a valid device-attestation JWT satisfies the route
 //! just as a solved puzzle does, so the shipping mobile apps — both of which
 //! authenticate search — need no client change.
 //!
-//! The wire contract is ported byte-for-byte from the legacy TypeScript backend
-//! (`paritytech/identity-backend`, `src/proof-of-compute/*`,
-//! `src/middleware/proof-of-compute.middleware.ts`). Two deliberate divergences:
-//! replay protection is a Postgres consume ([`store`]) rather than legacy's
-//! per-process map, so it holds across replicas; and the bearer bypass is
-//! actually wired, which legacy intended but never installed on a route.
+//! The puzzle construction (HKDF-derived HMAC key, `sessionId:timestamp:
+//! difficulty:counter:checksum`, leading-zero-bit work) is the protocol the
+//! Desktop/host clients already implement. Replay protection is a Postgres
+//! consume ([`store`]) rather than a per-process map, so it holds across
+//! replicas.
 
 pub mod puzzle;
 pub mod solution;
@@ -22,10 +21,10 @@ use uuid::Uuid;
 pub use puzzle::{derive_secret, Puzzle};
 pub use solution::Solution;
 
-/// Puzzle validity, seconds — legacy's `POC_SESSION_TTL` default.
+/// Puzzle validity, seconds.
 const SESSION_TTL_SECS: i64 = 60;
-/// Tolerance for client/server clock skew, seconds — legacy's `POC_CLOCK_SKEW`
-/// default. Frozen with the TTL: both exist to match legacy, not to be tuned.
+/// Tolerance for client/server clock skew, seconds. Fixed with the TTL: both
+/// are part of the protocol the clients implement, not tuning knobs.
 const CLOCK_SKEW_SECS: i64 = 30;
 
 /// How long a solved puzzle stays valid, in milliseconds.

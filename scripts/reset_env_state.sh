@@ -40,8 +40,8 @@
 # Usage:
 #   scripts/reset_env_state.sh --project <name> --confirm <name> [--include-indexer] [--dry-run]
 #
-#   --project          compose project to act on (`identity-backend-v2` for the
-#                      primary stack, `identity-previewnet` for PreviewNet).
+#   --project          compose project to act on (`dub-paseo-next-v2` for the
+#                      primary stack, `dub-previewnet` for PreviewNet).
 #   --confirm          must repeat --project exactly. The whole guardrail: this
 #                      command is destructive and both environments run from the
 #                      same compose file on one host, so naming the target twice
@@ -110,9 +110,43 @@ if [[ -z "$(compose ps --all --quiet 2>/dev/null)" ]]; then
   die "compose project '$project' has no containers here; wrong name or wrong checkout?"
 fi
 
-# Identity database. `-T` because this runs unattended in a deploy shell.
-identity_psql() {
-  compose exec -T postgres psql -qAt -U identity -d identity -c "$1"
+# The role and database this environment's device-attestation volume actually
+# holds. Read from the rendered compose document rather than hardcoded: an
+# environment whose volume predates the identity -> device_attestation rename
+# keeps the old names by setting DEVICE_ATTESTATION_DB_* in its `.env` (see
+# docs/runbook.md, "One-time: the identity -> device-attestation rename").
+# `docker compose config` applies that `.env`; this shell never sees it. Scoped
+# to the `postgres` service because two other Postgres services in the same file
+# also set POSTGRES_USER.
+postgres_env() {
+  local key="$1"
+  compose config 2>/dev/null | awk -v key="$key:" '
+    $0 == "  postgres:" { in_service = 1; next }
+    in_service && /^  [a-zA-Z0-9_-]+:$/ { exit }
+    in_service && $1 == key {
+      # Everything after the key, not $2: a role or database name may contain a
+      # space, and losing the rest of it would silently name a different one.
+      value = $0
+      sub(/^[[:space:]]*[A-Za-z0-9_]+:[[:space:]]*/, "", value)
+      gsub(/^["\047]|["\047]$/, "", value)
+      print value
+      exit
+    }
+  '
+}
+
+db_user="$(postgres_env POSTGRES_USER)"
+db_name="$(postgres_env POSTGRES_DB)"
+# Empty means the rendering changed shape, and the psql calls below would then
+# fall back to libpq's defaults (the invoking user, against a database of the
+# same name) and report zero rows for tables that are simply elsewhere.
+if [[ -z "$db_user" || -z "$db_name" ]]; then
+  die "could not read the 'postgres' service's POSTGRES_USER/POSTGRES_DB from the rendered compose file"
+fi
+
+# Device-attestation database. `-T` because this runs unattended in a deploy shell.
+device_attestation_psql() {
+  compose exec -T postgres psql -qAt -U "$db_user" -d "$db_name" -c "$1"
 }
 
 indexer_psql() {
@@ -122,11 +156,12 @@ indexer_psql() {
 
 count() {
   local table="$1"
-  identity_psql "SELECT count(*) FROM $table" | tr -d '[:space:]'
+  device_attestation_psql "SELECT count(*) FROM $table" | tr -d '[:space:]'
 }
 
 echo "project:        $project"
-echo "identity rows:  username_reservations=$(count username_reservations)" \
+echo "database:       $db_name (role $db_user)"
+echo "device-attestation rows:  username_reservations=$(count username_reservations)" \
      "payment_requests=$(count payment_requests)" \
      "writer_lease=$(count writer_lease)"
 echo "preserved:      app_attest_keys=$(count app_attest_keys)" \
@@ -150,15 +185,15 @@ fi
 # registration-queue) is a no-op, so both are unconditional.
 echo
 echo "stopping writers…"
-compose stop identity-chain-writer registration-queue >/dev/null 2>&1 || true
+compose stop device-attestation-chain-writer registration-queue >/dev/null 2>&1 || true
 
-deleted_reservations="$(identity_psql \
+deleted_reservations="$(device_attestation_psql \
   "WITH gone AS (DELETE FROM username_reservations RETURNING 1) SELECT count(*) FROM gone" \
   | tr -d '[:space:]')"
-deleted_payments="$(identity_psql \
+deleted_payments="$(device_attestation_psql \
   "WITH gone AS (DELETE FROM payment_requests RETURNING 1) SELECT count(*) FROM gone" \
   | tr -d '[:space:]')"
-identity_psql "DELETE FROM writer_lease" >/dev/null
+device_attestation_psql "DELETE FROM writer_lease" >/dev/null
 
 echo "deleted:        username_reservations=$deleted_reservations" \
      "payment_requests=$deleted_payments writer_lease=all"

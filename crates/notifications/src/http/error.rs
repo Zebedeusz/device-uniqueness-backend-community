@@ -1,21 +1,19 @@
-//! HTTP error type for the notifications relay — every error dialect is shared,
-//! rendered via `http-common` (RFC-9457 problem details, matching the legacy
-//! `/api/v1/notify` route: 400 problem+json with per-field `errors`, 401 from
-//! the shared JWT middleware, 429 problem+json with `Retry-After`). Provider
-//! failures do **not** flow through here — they are `200` responses with
+//! HTTP error type for the notifications relay — every status renders the
+//! shared JSON envelope from `http-common` (400 with per-field `fields`, 401
+//! from the shared JWT middleware, 429 with `Retry-After`). Provider failures
+//! do **not** flow through here — they are `200` responses with
 //! `success: false`.
 
 use axum::response::{IntoResponse, Response};
-use http_common::problem;
 pub use http_common::FieldError;
 
-/// A handler error mapped to the frozen HTTP response.
+/// A handler error mapped to its HTTP response.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    /// Request body failed validation (400 problem details with `errors`).
+    /// Request body failed validation (400 with per-field `fields`).
     #[error("invalid request body")]
     InvalidBody(Vec<FieldError>),
-    /// Request body was not parseable JSON (400 plain text, the Hono dialect).
+    /// Request body was not parseable JSON (400).
     #[error("malformed JSON body")]
     MalformedJson,
     /// Authenticated subject exceeded the notify rate limit (429).
@@ -29,9 +27,11 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
-            AppError::InvalidBody(errors) => problem::invalid_body(&errors),
-            AppError::MalformedJson => problem::malformed_json(),
-            AppError::RateLimited { retry_after_secs } => problem::rate_limited(retry_after_secs),
+            AppError::InvalidBody(errors) => http_common::error::invalid_body(&errors),
+            AppError::MalformedJson => http_common::error::malformed_json(),
+            AppError::RateLimited { retry_after_secs } => {
+                http_common::error::rate_limited(retry_after_secs)
+            }
         }
     }
 }

@@ -34,7 +34,7 @@ const PEOPLE_LITE: [u8; 32] = *b"pop:polkadot.network/people-lite";
 /// The attestation message prefix from `pallets/people-lite` (30 bytes).
 const ATTEST_PREFIX: &[u8] = b"pop:people-lite:register using";
 /// Test message for standalone demo runs.
-const MESSAGE: &[u8] = b"ibv2-turn-experiment/message";
+const MESSAGE: &[u8] = b"dub-turn-experiment/message";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

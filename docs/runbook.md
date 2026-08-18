@@ -2,21 +2,21 @@
 
 Operating the running deployment. From-zero setup: [deploy.md](deploy.md).
 
-Test deployment: `https://identity.dotspark.app` on `ubuntu@51.15.134.8`, repo at `~/identity-backend-v2`.
+Test deployment: `https://identity.dotspark.app` on `ubuntu@51.15.134.8`, repo at `~/dub-paseo-next-v2`.
 
-Two compose projects share the host: the environment (the project name declared in `docker-compose.yml` (`identity-backend-v2`), from `docker-compose.yml`) and the public edge (`-p edge`, from `gateway/docker-compose.yml`). **Every command below needs its project**, or it will act on the wrong stack — or on none. The edge is the only container publishing a port; service ports exist locally only under the debug overlay.
+Two compose projects share the host: the environment (`-p dub-paseo-next-v2`, which is also the name declared in `docker-compose.yml`) and the public edge (`-p edge`, from `gateway/docker-compose.yml`). **Every command below needs its project**, or it will act on the wrong stack — or on none. The edge is the only container publishing a port; service ports exist locally only under the debug overlay.
 
 ## Deploys
 
 Push to `main` → CI tests, builds the one service image
-(`ghcr.io/paritytech/device-uniqueness-backend:<sha>`, holding the one `ibv2` binary; each
+(`ghcr.io/paritytech/device-uniqueness-backend:<sha>`, holding the one `dub` binary; each
 container is pinned to its role by its compose `command:` / chart `args:`), and the server
 pulls + restarts (health-gated). Watch with `gh run watch`.
 
 Manual restart, on the images CI already built for this checkout:
 
 ```bash
-cd ~/identity-backend-v2 && git pull
+cd ~/dub-paseo-next-v2 && git pull
 export IMAGE_REPO=ghcr.io/paritytech/device-uniqueness-backend
 export IMAGE_TAG=$(git rev-parse HEAD)
 sudo -E docker compose pull
@@ -43,11 +43,11 @@ logs — so "is everything ready, is the writer moving, what is it complaining a
 page with one time range. It is loopback-only, so tunnel first:
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 ibv2       # Grafana (Prometheus 9091 / Alloy 12345 likewise)
-open http://127.0.0.1:3000/d/ibv2-overview   # anonymous read-only; no login needed
+ssh -N -L 3000:127.0.0.1:3000 dub       # Grafana (Prometheus 9091 / Alloy 12345 likewise)
+open http://127.0.0.1:3000/d/dub-overview   # anonymous read-only; no login needed
 ```
 
-The dashboard is committed (`observability/grafana/dashboards/ibv2-overview.json`) and
+The dashboard is committed (`observability/grafana/dashboards/dub-overview.json`) and
 provisioned read-only: edit the file in the repo and restart Grafana, don't click —
 and **increment its `version` once per change**, because Grafana skips re-importing a
 provisioned dashboard whose version has not risen, so an edit silently does nothing.
@@ -57,10 +57,10 @@ questions go to **Explore**, which anonymous viewers may use:
 
 ```logql
 {env_id="paseo-next-v2"}                              # one environment, everything
-{service="identity-chain-writer"}                     # one service, both environments
+{service="device-attestation-chain-writer"}                     # one service, both environments
 {level=~"WARN|ERROR"}                                 # every service, only trouble
-{service="identity-api"} | json | status>=500         # JSON fields are queryable
-{service="identity-api"} | json | span_request_id="<uuid>"   # one request end to end
+{service="device-attestation-api"} | json | status>=500         # JSON fields are queryable
+{service="device-attestation-api"} | json | span_request_id="<uuid>"   # one request end to end
 ```
 
 Labels are `env_id` (the deployment this container belongs to, spelled as the
@@ -81,8 +81,8 @@ is broken:
 curl -fsS https://identity.dotspark.app/readyz                    # gates on Postgres + People Chain RPC
 curl -fsS 'https://identity.dotspark.app/api/v1/usernames/search?prefix=a'   # the indexer, through the edge
 sudo docker compose ps
-sudo docker compose logs -f identity-api
-sudo docker compose logs -f identity-chain-writer
+sudo docker compose logs -f device-attestation-api
+sudo docker compose logs -f device-attestation-chain-writer
 sudo docker compose logs -f username-indexer
 sudo docker compose -f gateway/docker-compose.yml -p edge logs -f caddy
 ```
@@ -113,7 +113,7 @@ Healthy writer startup: `connected signer=0x…` then `acquired writer lease`.
 `username_reservations` is the source of truth (`RESERVED → SUBMITTING → ASSIGNED | RETRY_AFTER | FAILED_TERMINAL`); the chain is reconciled to it.
 
 ```bash
-sudo docker compose exec -T postgres psql -U identity -d identity \
+sudo docker compose exec -T postgres psql -U device_attestation -d device_attestation \
   -c "select id, full_username, status, attempt, tx_hash, left(last_error,120) as err
       from username_reservations order by id desc limit 10;"
 ```
@@ -136,7 +136,7 @@ upgrade; if that line is ever missing from its `.env`, the lane is live there an
 the fix is to add it and redeploy.
 
 ```bash
-sudo docker compose exec -T postgres psql -U identity -d identity \
+sudo docker compose exec -T postgres psql -U device_attestation -d device_attestation \
   -c "select id, full_username, status, dotns_status, dotns_attempt, dotns_tx_hash,
              left(dotns_last_error,120) as err
       from username_reservations where dotns_status is not null
@@ -164,15 +164,15 @@ sudo docker compose exec -T postgres psql -U identity -d identity \
   a failure: the client's `signedAt` is further ahead of the chain's clock than
   `MaxFutureSkewSeconds` allows. It clears itself once `dotns_not_before` passes,
   and costs no attempt. A steady stream of these means client clock skew.
-- Watch `ibv2_dotns_lane_connected` (`1` up, `0` parked), `ibv2_dotns_outbox_depth{status}`,
-  `ibv2_dotns_attester_allowance`, and
-  `ibv2_account_free_balance_planck{role="signer",chain="asset-hub"}`. A parked lane
+- Watch `dub_dotns_lane_connected` (`1` up, `0` parked), `dub_dotns_outbox_depth{status}`,
+  `dub_dotns_attester_allowance`, and
+  `dub_account_free_balance_planck{role="signer",chain="asset-hub"}`. A parked lane
   with a rising `PENDING` depth is the expected shape while Asset Hub is down; a
   connected lane with a rising `PENDING` depth is not. The allowance
   is a **second budget**, separate from People's. Either hitting zero stops
   registration in its own half. `reserve_name` is fee-free only when it succeeds, so
   a run of failures drains the signer's Asset Hub balance.
-- `ibv2_account_free_balance_planck` carries `chain` on **every** series, People
+- `dub_account_free_balance_planck` carries `chain` on **every** series, People
   included. A selector written as `{role="signer"}` alone matches both chains —
   always pin `chain="people"` or `chain="asset-hub"` in alerts and dashboards.
 
@@ -195,7 +195,7 @@ usernames with `/readyz` green. A checkpoint predating the column is adopted, no
 rebuilt (`adopted an unstamped checkpoint` at INFO) — so the deploy that introduces the
 guard does not rebuild healthy projections.
 
-**The identity database needs a decision, so it is a script.** Its outbox is not
+**The device-attestation database needs a decision, so it is a script.** Its outbox is not
 derivable from anything: `username_reservations` rows name usernames no chain will
 confirm, and each one keeps occupying a discriminator regardless of status, because
 availability unions the whole table with no status filter. A base with 100 historical
@@ -206,10 +206,10 @@ stdout).
 
 ```bash
 # report only; deletes nothing, stops nothing
-scripts/reset_env_state.sh --project identity-previewnet --confirm identity-previewnet --dry-run
+scripts/reset_env_state.sh --project dub-previewnet --confirm dub-previewnet --dry-run
 
 # stop the writers, clear the outbox + payment quotes + lease, restart
-scripts/reset_env_state.sh --project identity-previewnet --confirm identity-previewnet
+scripts/reset_env_state.sh --project dub-previewnet --confirm dub-previewnet
 ```
 
 `--confirm` must repeat `--project`. Both environments run from the same compose file
@@ -224,13 +224,13 @@ proxy delegation, signer funding, invite pools. That sequence is in
 ## Writer rules
 
 - **Exactly one instance.** A nonce lane is (signing account, chain). Never
-  `--scale identity-chain-writer`. It holds two lanes on one account, People and
+  `--scale device-attestation-chain-writer`. It holds two lanes on one account, People and
   Asset Hub. That is safe because nonces are per chain, and both sit behind the
   same single lease.
 - Restart-safe: reconciles `SUBMITTING` rows on both chains against chain state
   instead of resubmitting.
 - **One dotNS condition refuses to start:** `DOTNS_GATEWAY_ENABLED` on with no
-  `ASSET_HUB_RPC_URL`. That is a config error — identity-api would accept blocks
+  `ASSET_HUB_RPC_URL`. That is a config error — device-attestation-api would accept blocks
   nothing submits — and is not restart-fixable; correct the `.env`.
   The attester identity needs no separate check: `ATTESTER_ACCOUNT` names the
   authority and proxying is derived from it, so the writer's signing origin
@@ -239,17 +239,17 @@ proxy delegation, signer funding, invite pools. That sequence is in
   on the first pass rather than at boot, and re-dialled every 30s while down, so
   an unreachable endpoint or a `reserve_name` shape mismatch (Paseo next still
   runs the older proof-of-ownership variant) leaves rows in `PENDING` and keeps
-  People registrations flowing. Watch `ibv2_dotns_lane_connected`: `1` = up,
+  People registrations flowing. Watch `dub_dotns_lane_connected`: `1` = up,
   `0` = parked, absent = lane disabled. The parking `warn!` names the cause and
   is logged once per distinct cause, not once per pass — check the first
   occurrence, not the latest.
-- Restart alone: `sudo docker compose restart identity-chain-writer`. `restart` reuses the
+- Restart alone: `sudo docker compose restart device-attestation-chain-writer`. `restart` reuses the
   existing container, so it never changes the image; a version change is a project-wide
   `up -d` (see [Deploys](#deploys)).
 
 ## Config / secrets
 
-- Everything is in `~/identity-backend-v2/.env` (mode 600); apply changes with `sudo docker compose up -d`.
+- Everything is in `~/dub-paseo-next-v2/.env` (mode 600); apply changes with `sudo docker compose up -d`.
 - Rotating `JWT_ED25519_SECRET` invalidates outstanding JWTs (clients re-authenticate).
 - A new writer key must be an authorized attester (or proxy) with funds.
 - Rotating `TURN_SECRET` invalidates outstanding TURN credentials (≤ `TURN_TTL_SECS` old): update
@@ -257,14 +257,79 @@ proxy delegation, signer funding, invite pools. That sequence is in
 - Rotating `POC_HMAC_SECRET` invalidates outstanding puzzles (≤ 90s old): in-flight solvers get
   `402` "checksum does not match" and simply request a new puzzle. Safe to rotate at any time.
 
-## Database backup (manual)
+## One-time: the identity → device-attestation rename
 
-No automatic backups (testnet). Before anything risky:
+The release that renamed this service also renamed its Postgres role and database
+(`identity` → `device_attestation`) and its config key
+(`IDENTITY_DATABASE_URL` → `DEVICE_ATTESTATION_DATABASE_URL`). **An existing environment does
+not migrate itself**: the `POSTGRES_USER`/`POSTGRES_DB` values in `docker-compose.yml` are read
+by the postgres image *only when it initialises an empty data directory*, so a volume that
+already holds data keeps the old names no matter what compose says.
+
+The config key must be set to its new name: `IDENTITY_DATABASE_URL` (and the bare
+`DATABASE_URL` before it) are no longer read, so an environment still setting either fails fast at
+boot naming `DEVICE_ATTESTATION_DATABASE_URL`. The **database** is the part that needs a
+decision:
+
+**Option A — leave the database alone (no downtime).** The role and database names are private to
+this deployment; nothing outside reads them. Keep the existing `identity` role and database and
+point the three database vars at them in `~/dub-paseo-next-v2/.env`:
 
 ```bash
-sudo docker compose exec -T postgres pg_dump -U identity identity | gzip > ~/identity-$(date +%Y%m%d-%H%M%S).sql.gz
+DEVICE_ATTESTATION_DB_USER=identity
+DEVICE_ATTESTATION_DB_PASSWORD=<password>
+DEVICE_ATTESTATION_DB_NAME=identity
+```
+
+Then `sudo docker compose up -d`. No SQL, no stop. These three are what the `postgres` service
+initialises with *and* what each service's `DEVICE_ATTESTATION_DATABASE_URL` is built from, so
+compose's rendering follows the volume instead of contradicting it. This is the recommended
+option for an environment that is already running.
+
+Note that `DEVICE_ATTESTATION_DATABASE_URL` itself is **not** the knob here — setting it in
+`.env` does nothing to the containers, which compose their own from the three vars above. The
+`.env` entry is for running a binary on the host.
+
+**Option B — rename in place (needs a stop).** `ALTER DATABASE ... RENAME` refuses to run while
+anything is connected, so the three services that share this database must be down first. Take a
+backup ([Database backup](#database-backup-manual)) before starting:
+
+```bash
+# 1. stop only the three services that hold connections to this database
+sudo docker compose stop device-attestation-api device-attestation-chain-writer registration-queue
+
+# 2. rename from the maintenance database, not from the one being renamed
+sudo docker compose exec -T postgres psql -U identity -d postgres <<'SQL'
+ALTER DATABASE identity RENAME TO device_attestation;
+ALTER ROLE identity RENAME TO device_attestation;
+ALTER ROLE device_attestation WITH PASSWORD 'device_attestation';
+SQL
+
+# 3. bring them back — the compose defaults already name device_attestation,
+#    so there is nothing to set. If this environment ever set the
+#    DEVICE_ATTESTATION_DB_* vars (Option A), REMOVE them from
+#    ~/dub-paseo-next-v2/.env first or they will point back at the old names.
+sudo docker compose up -d
+```
+
+Step 2's password reset is **not optional if this deployment predates scram-sha-256**: an
+MD5-hashed password uses the role name as its salt, so renaming the role silently invalidates it
+and every connection then fails authentication. Resetting it is harmless when the hash is
+scram-sha-256 (which survives a rename), so do it either way.
+
+Locally there is nothing to preserve — `sudo docker compose down -v` drops the volumes and the
+next `up` initialises them under the new names.
+
+## Database backup (manual)
+
+No automatic backups (testnet). Before anything risky — and on an environment that took Option A
+above, substitute the role and database this deployment actually kept (`identity`) for
+`device_attestation` in both commands:
+
+```bash
+sudo docker compose exec -T postgres pg_dump -U device_attestation device_attestation | gzip > ~/device-attestation-$(date +%Y%m%d-%H%M%S).sql.gz
 # restore into an empty DB:
-gunzip -c ~/identity-<timestamp>.sql.gz | sudo docker compose exec -T postgres psql -U identity -d identity
+gunzip -c ~/device-attestation-<timestamp>.sql.gz | sudo docker compose exec -T postgres psql -U device_attestation -d device_attestation
 ```
 
 The edge's `edge_caddy_data` volume holds the TLS certificates and the ACME account key. Losing
@@ -295,7 +360,7 @@ sudo docker run --rm -v edge_caddy_data:/data -v ~:/backup alpine \
   `{$VAR}` placeholder, which must also join the `environment:` pass-through list in
   `gateway/docker-compose.yml` — needs `up -d` and accepts that brief interruption.
 - Migrated routes go to their service's container alias (`username-indexer-paseo-next-v2:8080`, …);
-  everything unhandled goes to `identity-api-<ENV_ID>`. `/api/v1/poc*` goes to the indexer
+  everything unhandled goes to `device-attestation-api-<ENV_ID>`. `/api/v1/poc*` goes to the indexer
   alongside the username reads it gates.
 - Certificates live in the `edge_caddy_data` volume and renew automatically.
   `https://<domain>/docs` serves `docs/api-reference/` mounted from the checkout — a `git pull`
@@ -305,7 +370,7 @@ sudo docker run --rm -v edge_caddy_data:/data -v ~:/backup alpine \
 
 ## Proof-of-compute gate (public search)
 
-Off by default. When on, `GET /api/v1/usernames/search` needs **either** a valid identity-service
+Off by default. When on, `GET /api/v1/usernames/search` needs **either** a valid device-attestation
 JWT **or** a solved puzzle from `POST /api/v1/poc/issue`; both shipping mobile apps authenticate
 search, so only anonymous callers (the Desktop/host path, and Android's `DISABLE_AUTH` nightly
 build) have to mine. An unverifiable bearer is treated as anonymous — this route never returns 401.
@@ -313,7 +378,7 @@ build) have to mine. An unverifiable bearer is treated as anonymous — this rou
 Enable (username-indexer only):
 
 ```bash
-# in ~/identity-backend-v2/.env
+# in ~/dub-paseo-next-v2/.env
 POC_ENABLED=true
 POC_HMAC_SECRET=<random, >=32 chars>   # required when enabled; boot fails without it
 sudo docker compose up -d username-indexer
@@ -342,17 +407,17 @@ it only with a measurement from the slowest expected client.
 | `readyz`: `chain: down` | People Chain RPC unreachable/changed — check `PEOPLE_RPC_URL`. |
 | Claims returning 422 `Pool exhausted` | The ticket pool drained: check `invite-tickets-pool` logs (`ticket batch finalized … registered=0` = inviter out of `AvailableInvites` quota or unauthorized; `pool tick failed` = RPC/signer trouble). Pool size is logged each tick — treat sustained `available < ~10% of POOL_TARGET_SIZE` as the alert threshold; claims keep serving until depletion. |
 | `invite-tickets-pool` logs `another maintainer instance holds the pool lock` | A second replica or a stuck deploy overlap — scale back to exactly one. |
-| Writer logs `queue advancer is down with claims queued; holding the throttle` | The registration queue is enabled but the `registration-queue` service is dead (lease stale/absent), so free-lane claims are parking as `QUEUED` and nothing is draining — this is deliberate: the queue is the free lane's throughput control and a dead queue never falls back to unthrottled direct registration. Restart it (`sudo docker compose restart registration-queue`); the queue resumes fair draining on its own. To retire the queue instead, set `QUEUE_ENABLED=false` for **both** identity-api and identity-chain-writer (writer last) — the writer then drains the leftovers after `QUEUE_FALLBACK_AFTER_SECS`. Treat a warning that persists past one restart as a page. |
-| Queue behaving oddly: `QUEUED` rows draining with the advancer down, or a stranded-queue warning while intake goes direct | `QUEUE_ENABLED` is split between identity-api and identity-chain-writer (writer off + api on = the janitor silently drains a queue the api is still filling — the throttle is gone; writer on + api off = warnings about leftovers no new claim joins). The values must match; `scripts/verify_compose_boundaries.sh` pins both wires. |
+| Writer logs `queue advancer is down with claims queued; holding the throttle` | The registration queue is enabled but the `registration-queue` service is dead (lease stale/absent), so free-lane claims are parking as `QUEUED` and nothing is draining — this is deliberate: the queue is the free lane's throughput control and a dead queue never falls back to unthrottled direct registration. Restart it (`sudo docker compose restart registration-queue`); the queue resumes fair draining on its own. To retire the queue instead, set `QUEUE_ENABLED=false` for **both** device-attestation-api and device-attestation-chain-writer (writer last) — the writer then drains the leftovers after `QUEUE_FALLBACK_AFTER_SECS`. Treat a warning that persists past one restart as a page. |
+| Queue behaving oddly: `QUEUED` rows draining with the advancer down, or a stranded-queue warning while intake goes direct | `QUEUE_ENABLED` is split between device-attestation-api and device-attestation-chain-writer (writer off + api on = the janitor silently drains a queue the api is still filling — the throttle is gone; writer on + api off = warnings about leftovers no new claim joins). The values must match; `scripts/verify_compose_boundaries.sh` pins both wires. |
 | Rows stuck in `RETRY_AFTER` with wasm-trap errors | Invalid payload for `PeopleLite.attest`, or attester/proxy authorization missing on-chain. |
 | Any lane logging `The extrinsic payload is not compatible with the live chain` | The runtime changed shapes under the vendored metadata (a wipe or upgrade). Refresh `crates/chain-types/metadata/people.scale` with the `subxt metadata` command in the `chain-types` crate docs, `subxt diff` the old and new blobs to see what moved, then rebuild and deploy. |
 | Every extrinsic failing with `Transaction has a bad signature`, nonce back at 0 | The chain was reset: the process still holds the old genesis hash, captured when its client connected. Restart the service — reconnecting alone does not re-read it. Then re-check funding, proxy delegation and attestation allowance, which the reset also cleared. |
 | Writer exits at boot | Bad `CHAIN_WRITER_SIGNER_SURI` or DB unreachable. |
-| Username search fails while identity routes work | Check the indexer's logs and its Caddy route; for a direct `readyz`, layer the debug overlay and curl `127.0.0.1:8081`. |
+| Username search fails while device-attestation routes work | Check the indexer's logs and its Caddy route; for a direct `readyz`, layer the debug overlay and curl `127.0.0.1:8081`. |
 | `turn-api` exits at boot with `TURN_PROOF_PRODUCTS: must list at least one product id` | The proof route is enabled (`TURN_PROOF_ENABLED=true`) with no accepted product. Every proof is made under a product-scoped context, so the list is required: set `TURN_PROOF_PRODUCTS` in the server `.env`, or turn the feature off. |
 | TURN 201s minted but relay rejects the credentials | `TURN_SECRET`/`TURN_AUTH_ALGORITHM` drifted from the relay's coturn config — they must match exactly; rotate both together. `turn-api` itself is stateless (readyz never gates on anything). |
-| Public search suddenly returning `402` | The proof-of-compute gate is on (`POC_ENABLED`). Expected for anonymous callers; if authenticated clients see it, the indexer's verify-only JWT material is wrong — compare `JWT_ED25519_PUBLIC_KEY`/`JWT_JWKS_JSON` against identity-api's `/.well-known/jwks.json`. |
+| Public search suddenly returning `402` | The proof-of-compute gate is on (`POC_ENABLED`). Expected for anonymous callers; if authenticated clients see it, the indexer's verify-only JWT material is wrong — compare `JWT_ED25519_PUBLIC_KEY`/`JWT_JWKS_JSON` against device-attestation-api's `/.well-known/jwks.json`. |
 | `402` "puzzle has already been used" on a first attempt | The client is reusing a puzzle (one solve = one request) or a proxy is retrying. Each request needs a fresh `POST /api/v1/poc/issue`. |
 | `spent_puzzles` growing without bound | The pruner logs `pruning expired spent puzzles failed`; check indexer logs and DB health. Rows are harmless but unbounded until it recovers. |
 | Down after reboot | Shouldn't happen (`restart: unless-stopped`); if it does: `sudo docker compose up -d` and `sudo docker compose -f gateway/docker-compose.yml -p edge up -d`. |
-| Edge answers 502 for everything | The environment project is down, or its `ENV_ID` no longer matches the Caddyfile upstream suffix: `sudo docker network inspect ibv2-edge` and compare the aliases. |
+| Edge answers 502 for everything | The environment project is down, or its `ENV_ID` no longer matches the Caddyfile upstream suffix: `sudo docker network inspect dub-edge` and compare the aliases. |

@@ -4,15 +4,15 @@ service, which is also its image repo, its Dockerfile stage, its bake target and
 its compose service — the same string end to end, so a rename cannot half-land.
 */}}
 
-{{- define "ibv2.labels" -}}
+{{- define "dub.labels" -}}
 app.kubernetes.io/name: {{ .name }}
 app.kubernetes.io/instance: {{ .root.Release.Name }}
-app.kubernetes.io/part-of: identity-backend-v2
+app.kubernetes.io/part-of: dub
 app.kubernetes.io/managed-by: {{ .root.Release.Service }}
-ibv2.parity.io/env-id: {{ .root.Values.global.envId | quote }}
+dub.parity.io/env-id: {{ .root.Values.global.envId | quote }}
 {{- end -}}
 
-{{- define "ibv2.selectorLabels" -}}
+{{- define "dub.selectorLabels" -}}
 app.kubernetes.io/name: {{ .name }}
 app.kubernetes.io/instance: {{ .root.Release.Name }}
 {{- end -}}
@@ -22,7 +22,7 @@ THE image: one repo, one tag, for every workload. What makes a workload that
 service is its `--role` arg, not its image — so there is deliberately no
 per-workload image or tag override (see the plan's Contracts).
 */}}
-{{- define "ibv2.image" -}}
+{{- define "dub.image" -}}
 {{- $g := .root.Values.global -}}
 {{- printf "%s:%s" $g.imageRepo $g.imageTag -}}
 {{- end -}}
@@ -36,7 +36,7 @@ The env block for a workload, assembled from three disjoint sources:
 plus INVITER_ADDRESS, which is per-workload because an inviter owns a nonce
 lane and must not be shared with another submitter.
 */}}
-{{- define "ibv2.env" -}}
+{{- define "dub.env" -}}
 {{- $root := .root -}}
 {{- $w := .workload -}}
 {{- range $key := $w.globalEnv | default list }}
@@ -80,7 +80,7 @@ workloads disagreeing about a paired flag, a plaintext secret in git history.
 CI can be bypassed; `helm template` cannot — the deploy tooling renders this
 chart every time, so a `fail` here is the last check that always runs.
 */}}
-{{- define "ibv2.validate" -}}
+{{- define "dub.validate" -}}
 {{- $g := .Values.global -}}
 
 {{- if not $g.imageTag }}
@@ -101,7 +101,7 @@ chart every time, so a `fail` here is the last check that always runs.
      `{singleton: false, replicas: 3}` would then render three writers on one
      signing account with nothing to stop it. Membership is asserted in both
      directions below, so neither a missing flag nor a spurious one passes. */}}
-{{- $singletons := list "identity-chain-writer" "registration-queue" "invite-tickets-pool" -}}
+{{- $singletons := list "device-attestation-chain-writer" "registration-queue" "invite-tickets-pool" -}}
 
 {{/* ── Topology ─────────────────────────────────────────────────────────────
 
@@ -117,7 +117,7 @@ chart every time, so a `fail` here is the last check that always runs.
      gated on an explicit acknowledgement rather than on a workload being
      enabled. See "Deployment topologies" in docs/architecture.md. */}}
 {{- $merged := list "all-in-one" -}}
-{{- $perService := list "identity-api" "username-indexer" "invite-tickets-api" "turn-api" "notify-relay" -}}
+{{- $perService := list "device-attestation-api" "username-indexer" "invite-tickets-api" "turn-api" "notify-relay" -}}
 {{- $mergedOn := list -}}
 {{- $perServiceOn := list -}}
 {{- range $name, $w := $enabled }}
@@ -222,8 +222,8 @@ chart every time, so a `fail` here is the last check that always runs.
 {{- if not $g.env.ASSET_HUB_RPC_URL }}
 {{- fail "DOTNS_GATEWAY_ENABLED is true but ASSET_HUB_RPC_URL is empty — the writer would accept dotNS intake it can never submit" }}
 {{- end }}
-{{- if not (hasKey $enabled "identity-chain-writer") }}
-{{- fail "DOTNS_GATEWAY_ENABLED is true but identity-chain-writer is not deployed — intake would be accepted and never submitted" }}
+{{- if not (hasKey $enabled "device-attestation-chain-writer") }}
+{{- fail "DOTNS_GATEWAY_ENABLED is true but device-attestation-chain-writer is not deployed — intake would be accepted and never submitted" }}
 {{- end }}
 {{- end }}
 

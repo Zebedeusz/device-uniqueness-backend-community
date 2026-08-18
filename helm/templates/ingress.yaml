@@ -15,7 +15,7 @@ kind: Middleware
 metadata:
   name: strip-{{ $r.name }}
   labels:
-    {{- include "ibv2.labels" (dict "name" (printf "strip-%s" $r.name) "root" $root) | nindent 4 }}
+    {{- include "dub.labels" (dict "name" (printf "strip-%s" $r.name) "root" $root) | nindent 4 }}
 spec:
   stripPrefix:
     prefixes: [{{ $r.stripPrefix | quote }}]
@@ -25,9 +25,9 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: identity-backend-v2
+  name: dub
   labels:
-    {{- include "ibv2.labels" (dict "name" "identity-backend-v2" "root" $root) | nindent 4 }}
+    {{- include "dub.labels" (dict "name" "dub" "root" $root) | nindent 4 }}
   annotations:
     # external-dns publishes the record; the legacy chart points it at the
     # cluster's Traefik. TODO with SRE: the legacy staging ingress also carries
@@ -115,7 +115,7 @@ kind: Middleware
 metadata:
   name: redirect-to-https
   labels:
-    {{- include "ibv2.labels" (dict "name" "redirect-to-https" "root" $root) | nindent 4 }}
+    {{- include "dub.labels" (dict "name" "redirect-to-https" "root" $root) | nindent 4 }}
 spec:
   redirectScheme:
     scheme: https
@@ -124,9 +124,9 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: identity-backend-v2-redirect
+  name: dub-redirect
   labels:
-    {{- include "ibv2.labels" (dict "name" "identity-backend-v2-redirect" "root" $root) | nindent 4 }}
+    {{- include "dub.labels" (dict "name" "dub-redirect" "root" $root) | nindent 4 }}
 spec:
   entryPoints: [web]
   routes:
@@ -135,7 +135,7 @@ spec:
       # A service is required even though the middleware short-circuits, so it
       # must be one this topology actually renders.
       services:
-        - name: {{ if $mergedTopology }}all-in-one{{ else }}identity-api{{ end }}
+        - name: {{ if $mergedTopology }}all-in-one{{ else }}device-attestation-api{{ end }}
           port: 80
       middlewares:
         - name: redirect-to-https

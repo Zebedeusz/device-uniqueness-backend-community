@@ -15,9 +15,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 pub use http_common::config::ConfigError;
-use http_common::config::{
-    jwt_verifier_from_env, parse_renamed, parse_var, positive, required_renamed, required_var,
-};
+use http_common::config::{jwt_verifier_from_env, parse_var, positive, required_var};
 
 use crate::tickets::Network;
 
@@ -59,10 +57,11 @@ impl std::fmt::Debug for Config {
 impl Config {
     /// Read and validate configuration from the environment.
     ///
-    /// Fails (rather than defaulting) for `DATABASE_URL`, `PEOPLE_NETWORK`,
-    /// and the JWT key material (`JWT_JWKS_JSON` or `JWT_ED25519_PUBLIC_KEY`).
+    /// Fails (rather than defaulting) for `INVITE_TICKETS_DATABASE_URL`,
+    /// `PEOPLE_NETWORK`, and the JWT key material (`JWT_JWKS_JSON` or
+    /// `JWT_ED25519_PUBLIC_KEY`).
     pub fn from_env() -> Result<Self, ConfigError> {
-        let database_url = required_renamed("INVITE_TICKETS_DATABASE_URL", "DATABASE_URL")?;
+        let database_url = required_var("INVITE_TICKETS_DATABASE_URL")?;
 
         let network_raw = required_var("PEOPLE_NETWORK")?;
         let network = Network::from_str(&network_raw).map_err(|_| ConfigError::Invalid {
@@ -72,15 +71,11 @@ impl Config {
 
         let rate_limit: u32 = positive(
             "INVITE_TICKETS_RATE_LIMIT",
-            parse_renamed("INVITE_TICKETS_RATE_LIMIT", "RATE_LIMIT", "30")?,
+            parse_var("INVITE_TICKETS_RATE_LIMIT", "30")?,
         )?;
         let rate_window_secs: u64 = positive(
             "INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS",
-            parse_renamed(
-                "INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS",
-                "RATE_LIMIT_WINDOW_SECS",
-                "60",
-            )?,
+            parse_var("INVITE_TICKETS_RATE_LIMIT_WINDOW_SECS", "60")?,
         )?;
         Ok(Self {
             bind_addr: parse_var("BIND_ADDR", "0.0.0.0:8080")?,

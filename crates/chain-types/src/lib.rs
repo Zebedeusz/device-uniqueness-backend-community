@@ -4,7 +4,7 @@
 //! Static [`subxt`] codegen generated from vendored People Chain metadata. It is
 //! the single canonical chain-facing type surface for the workspace: the read
 //! path (`Resources::UsernameOwnerOf`, the reservation queue, `PeopleLite::AttestationAllowance`),
-//! the identity-chain-writer's registration/attestation calls, and the
+//! the device-attestation-chain-writer's registration/attestation calls, and the
 //! invite-tickets service's `Game`/`ProofOfInk` invite-ticket calls all build
 //! against it.
 //! The online transport and signing live in adapter crates, never here.
@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(query.entry_name(), "AttestationAllowance");
     }
 
-    /// The identity-chain-writer can construct the `Resources::register_lite_person`
+    /// The device-attestation-chain-writer can construct the `Resources::register_lite_person`
     /// registration call from the generated API.
     #[test]
     fn builds_register_lite_person_call() {

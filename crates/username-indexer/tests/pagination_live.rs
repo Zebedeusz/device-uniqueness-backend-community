@@ -34,7 +34,7 @@ const X25519_KEY: [u8; 65] = [0u8; 65];
 
 /// Pre-RFC-0004 uncompressed P-256 key (SEC1 `0x04` prefix) — search must
 /// hide rows carrying one.
-const LEGACY_P256_KEY: [u8; 65] = {
+const PRE_RFC0004_P256_KEY: [u8; 65] = {
     let mut key = [0x11u8; 65];
     key[0] = 0x04;
     key
@@ -172,12 +172,12 @@ async fn seed(pool: &PgPool) {
     insert_row(
         pool,
         ACCOUNTS[5],
-        "acc-legacy",
+        "acc-pre-rfc0004",
         "zqaaa.1",
         "zqaaa",
         "1",
         None,
-        LEGACY_P256_KEY,
+        PRE_RFC0004_P256_KEY,
     )
     .await;
 }

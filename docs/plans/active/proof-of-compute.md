@@ -2,6 +2,12 @@
 > box `[ ]`→`[x]`; when a phase's ✅ demo passes, mark the phase done (with date). The plan file is
 > the source of truth, not memory.
 
+> **Superseded in part (2026-08-18).** The V1 wire dialects this plan captured and froze were
+> removed: every service now renders one JSON error envelope (`{error}`, plus `fields` on per-field
+> validation), and the `legacy_wire.rs` replay suites plus their `legacy-wire.json` fixtures are
+> deleted. Phases below that describe capturing, freezing, or replaying those bodies are historical
+> record, not current behavior — see `CHANGELOG.md` (Unreleased → Removed).
+
 # Proof-of-compute gate — puzzle issuance + public-read gate
 
 Karim's V2 proposal lists a **proof-of-compute gate** as a required supporting capability of the
@@ -88,7 +94,7 @@ Two facts that shape the plan:
 - **The owner is `username-indexer`** — the only gated surface lives there, it already owns the
   public-read anti-abuse layer (`crates/username-indexer/src/http/middleware.rs`, whose module doc
   already says "there is no JWT and no proof-of-compute here") and it has its own Postgres for the
-  consume. No cross-service secret sharing, no synchronous call to identity-service.
+  consume. No cross-service secret sharing, no synchronous call to device-attestation.
 - **Reuse before rebuild**: dialect bodies go in `crates/http-common/src/problem.rs` (where the
   frozen dialects live), config uses the crate's existing `required`/`parse_var` fail-fast helpers,
   the route sits inside the existing `layers::standard_layers` + `hono_not_found` router, and
@@ -189,7 +195,7 @@ Two facts that shape the plan:
         rejected; difficulty-below-requirement rejected.
   - [x] `crates/username-indexer/examples/poc_solve.rs` — issue → mine → print the ready-to-send
         header value (the dogfooding tool for Phases 4–5, mirroring
-        `identity-service/examples/auth_smoke.rs`).
+        `device-attestation/examples/auth_smoke.rs`).
 - **✅ Demo**: `cargo test -p username-indexer poc` green; `cargo run -p username-indexer
   --example poc_solve` against a locally running indexer mines a solution at the default 16 bits
   and prints a header that the verifier unit-accepts. Record the observed mine time.
@@ -290,7 +296,7 @@ Two facts that shape the plan:
   - [x] (2026-07-29) `.env.example`: the five `POC_*` vars documented on the username-indexer
         section, flag off by default. Still to do: `docker-compose.yml` wiring, and
         `scripts/verify_compose_boundaries.sh` updated — `scripts/verify_compose_boundaries.sh` updated — the PoC secret asserted
-        **indexer-only** (must not leak into identity-api), and the indexer's current
+        **indexer-only** (must not leak into device-attestation-api), and the indexer's current
         "no JWT material at all" assertion (`scripts/verify_compose_boundaries.sh:88-89`) relaxed to
         **public verification material only**: `JWT_ED25519_PUBLIC_KEY` / `JWT_JWKS_JSON` allowed,
         `JWT_ED25519_SECRET` still forbidden.
@@ -355,14 +361,14 @@ Two facts that shape the plan:
   `JWT_ED25519_SECRET` stays forbidden there, and it never mints a token.
 - `POC_HMAC_SECRET` lives only in `username-indexer`; the compose boundary script proves no other
   service receives it.
-- No shared tables, no synchronous cross-service call: the indexer does not read identity-service
+- No shared tables, no synchronous cross-service call: the indexer does not read device-attestation
   state to verify a puzzle or a token.
 - `docs/api-reference/{openapi.json,index.html}` are regenerated with `just openapi`, never hand-edited.
 
 # Key decisions (decide early)
 
 - **Owner service — `username-indexer` (recommended, assumed by this plan).** The alternative is
-  issuing in `identity-service` and verifying in the indexer, which would require the same symmetric
+  issuing in `device-attestation` and verifying in the indexer, which would require the same symmetric
   secret in two services for zero benefit. Reversing this later means moving a route and a
   migration, so confirm before Phase 1.
 - **JWT-or-puzzle rather than puzzle-for-everyone.** Evidence-backed: both shipping apps already

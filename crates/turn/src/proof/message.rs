@@ -24,7 +24,7 @@ use blake2::{Blake2b, Digest as _};
 type Blake2b256 = Blake2b<U32>;
 
 /// Separates this digest from any other use of the same member key.
-const LABEL: &[u8] = b"ibv2/turn-credential/v1";
+const LABEL: &[u8] = b"dub/turn-credential/v1";
 
 /// Why a submitted request was not accepted as fresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

@@ -2,7 +2,7 @@
 //!
 //! Fail-fast, like the sibling services (via the shared `http-common` helpers):
 //! a missing or malformed value stops the process loudly at boot. The relay is
-//! stateless and DB-free, so the only required material is the identity-service
+//! stateless and DB-free, so the only required material is the device-attestation
 //! JWT **public** key (or JWKS) it verifies bearer tokens against.
 
 use std::net::SocketAddr;

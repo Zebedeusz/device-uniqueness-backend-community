@@ -14,7 +14,7 @@
 #   * the image has an ENTRYPOINT and no CMD, so a container with no args fails
 #     loudly instead of defaulting into somebody else's service.
 #
-# The role list is sourced from the BINARY (`ibv2 --list-roles`), never from a
+# The role list is sourced from the BINARY (`dub --list-roles`), never from a
 # second hand-written list here, so this gate cannot disagree with what the
 # process actually accepts.
 #
@@ -48,17 +48,17 @@ grep -qE "^FROM .* AS ${image_target}\$" Dockerfile ||
 # 2. The image must NOT pick a role for itself. An ENTRYPOINT with no CMD is
 #    what makes an argument-less container fail loudly; a CMD here would be a
 #    default role, which is the drift this gate exists to prevent.
-grep -qE '^ENTRYPOINT \["ibv2"\]$' Dockerfile ||
-  fail 'Dockerfile has no `ENTRYPOINT ["ibv2"]`'
+grep -qE '^ENTRYPOINT \["dub"\]$' Dockerfile ||
+  fail 'Dockerfile has no `ENTRYPOINT ["dub"]`'
 ! grep -qE '^CMD ' Dockerfile ||
   fail "Dockerfile sets a CMD; the image must not default to a role (the deployment picks it)"
 
 # 3. The roles the binary actually accepts. `cargo run` rather than a built
 #    artifact so this stays offline and needs no prior `docker build`.
-mapfile -t roles < <(cargo run --quiet -p ibv2 -- --list-roles | sort) ||
-  fail "ibv2 --list-roles failed"
+mapfile -t roles < <(cargo run --quiet -p dub -- --list-roles | sort) ||
+  fail "dub --list-roles failed"
 [ "${#roles[@]}" -eq 8 ] ||
-  fail "ibv2 accepts ${#roles[@]} roles, expected 10"
+  fail "dub accepts ${#roles[@]} roles, expected 8"
 
 # 4. Compose: every service that runs the image names a role, exactly once, and
 #    its service name IS that role.
@@ -80,7 +80,7 @@ for svc in "${compose_services[@]}"; do
   role="${cmd[1]}"
 
   printf '%s\n' "${roles[@]}" | grep -qx "$role" ||
-    fail "compose service '$svc' names role '$role', which ibv2 does not accept"
+    fail "compose service '$svc' names role '$role', which dub does not accept"
   [ "$role" = "$svc" ] ||
     fail "compose service '$svc' runs role '$role' — the service name must BE the role, or a rename half-lands"
   [ -z "${seen_role[$role]:-}" ] ||
@@ -108,11 +108,11 @@ mapfile -t refs < <(jq -r '.services | to_entries[]
 #    The chart carries workloads for BOTH shapes (the eight per-service ones and
 #    the merged `all-in-one`), enabling one set or the other. So the declared
 #    workloads are the union; which of them may be enabled TOGETHER is the
-#    chart's own `ibv2.validate` exclusivity assertion, which fails to render a
+#    chart's own `dub.validate` exclusivity assertion, which fails to render a
 #    mix. Checking the union here and the exclusivity there keeps each check
 #    where it can actually see what it is checking.
-mapfile -t merged_roles < <(cargo run --quiet -p ibv2 -- --list-merged-roles | sort) ||
-  fail "ibv2 --list-merged-roles failed"
+mapfile -t merged_roles < <(cargo run --quiet -p dub -- --list-merged-roles | sort) ||
+  fail "dub --list-merged-roles failed"
 [ "${#merged_roles[@]}" -ge 1 ] || fail "no merged roles"
 
 # Disjoint: a role in both topologies would make the exclusivity rule meaningless.
@@ -125,7 +125,7 @@ if [ -f helm/values.yaml ]; then
   chart_workloads="$(python3 -c "import yaml; print('\n'.join(sorted((yaml.safe_load(open('helm/values.yaml')).get('workloads') or {}).keys())))")"
   expected="$(printf '%s\n%s\n' "$(printf '%s\n' "${roles[@]}")" "$(printf '%s\n' "${merged_roles[@]}")" | sort)"
   [ "$chart_workloads" = "$expected" ] || {
-    echo "role split: chart workloads and ibv2 roles differ" >&2
+    echo "role split: chart workloads and dub roles differ" >&2
     diff <(printf '%s\n' "$chart_workloads") <(printf '%s\n' "$expected") | sed 's/^/  /' >&2
     exit 1
   }
@@ -159,12 +159,12 @@ name="$(jq -r --arg t "$image_target" '.target[$t].output[0].name // ""' <<<"$di
 if [ "${RUNTIME_CHECK:-}" = "1" ]; then
   ref="${refs[0]}"
   binaries="$(docker run --rm --entrypoint ls "$ref" /usr/local/bin | tr -d '\r')"
-  [ "$binaries" = "ibv2" ] ||
-    fail "image contains [$(echo $binaries)] — exactly one binary, ibv2, is the whole point"
+  [ "$binaries" = "dub" ] ||
+    fail "image contains [$(echo $binaries)] — exactly one binary, dub, is the whole point"
 
   entrypoint="$(docker inspect --format '{{join .Config.Entrypoint " "}}' "$ref")"
-  [ "$entrypoint" = "ibv2" ] ||
-    fail "image entrypoint is '$entrypoint' (expected 'ibv2')"
+  [ "$entrypoint" = "dub" ] ||
+    fail "image entrypoint is '$entrypoint' (expected 'dub')"
   shipped_cmd="$(docker inspect --format '{{join .Config.Cmd " "}}' "$ref")"
   [ -z "$shipped_cmd" ] ||
     fail "image ships CMD '$shipped_cmd'; it must not default to a role"

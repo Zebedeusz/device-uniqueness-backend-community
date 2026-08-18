@@ -4,7 +4,7 @@
 apiVersion: 1
 
 providers:
-  - name: identity-backend-v2
+  - name: dub
     orgId: 1
     type: file
     disableDeletion: false

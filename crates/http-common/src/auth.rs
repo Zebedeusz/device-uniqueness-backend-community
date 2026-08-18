@@ -5,16 +5,16 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 
-use crate::problem;
+use crate::error;
 
 /// State that can hand out the shared verify-only JWT verifier.
 pub trait HasJwtVerifier {
-    /// The verifier for identity-service access tokens.
+    /// The verifier for device-attestation access tokens.
     fn jwt_verifier(&self) -> &jwt_verify::Verifier;
 }
 
 /// An authenticated subject, extracted from a verified `Authorization: Bearer`
-/// JWT (identity-service tokens, verified via the shared `jwt-verify` crate).
+/// JWT (device-attestation tokens, verified via the shared `jwt-verify` crate).
 pub struct AuthSubject {
     /// `0x`-hex sr25519 public key of the caller (the JWT subject).
     pub subject: String,
@@ -28,8 +28,7 @@ pub struct AuthSubject {
     pub app_from_official_store: Option<bool>,
 }
 
-/// An auth rejection, rendered as the legacy middleware's three 401
-/// problem-details variants.
+/// An auth rejection, rendered as one of three 401 bodies.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     /// No `Authorization` header at all.
@@ -46,15 +45,15 @@ pub enum AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         match self {
-            AuthError::MissingHeader => problem::missing_auth_header(),
-            AuthError::InvalidHeader => problem::invalid_auth_header(),
-            AuthError::InvalidToken => problem::invalid_token(),
+            AuthError::MissingHeader => error::missing_auth_header(),
+            AuthError::InvalidHeader => error::invalid_auth_header(),
+            AuthError::InvalidToken => error::invalid_token(),
         }
     }
 }
 
-/// Split an `Authorization` header value into its Bearer token, legacy-style
-/// (any whitespace run separates exactly two parts).
+/// Split an `Authorization` header value into its Bearer token (any
+/// whitespace run separates exactly two parts).
 fn bearer_token(header: &str) -> Option<&str> {
     let mut parts = header.split_whitespace();
     match (parts.next(), parts.next(), parts.next()) {
@@ -96,7 +95,7 @@ mod tests {
     fn parses_bearer_scheme_only() {
         assert_eq!(bearer_token("Bearer abc"), Some("abc"));
         assert_eq!(bearer_token("Bearer   abc"), Some("abc"));
-        assert_eq!(bearer_token("bearer abc"), None); // scheme is case-sensitive, as legacy
+        assert_eq!(bearer_token("bearer abc"), None); // the scheme is case-sensitive
         assert_eq!(bearer_token("Basic abc"), None);
         assert_eq!(bearer_token("Bearer"), None);
         assert_eq!(bearer_token("Bearer a b"), None);
