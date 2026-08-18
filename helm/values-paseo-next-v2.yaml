@@ -27,6 +27,13 @@ workloads:
   device-attestation-api:
     env:
       AUTH_ENABLED: "false"
+  turn-api:
+    env:
+      TURN_PROOF_ENABLED: "true"
+      TURN_PROOF_RPC_URL: wss://paseo-people-next-system-rpc.polkadot.io
+      TURN_PROOF_GENESIS: "0x89a63b11fef2c0273fc72c0d864da0793a665dade5db153e0cab995348c5440f"
+      TURN_PROOF_PRODUCTS: dim2.paseo
+      TURN_PROOF_CONTEXT_SUFFIX: "0"
 
 secrets:
   device-attestation-api:

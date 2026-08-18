@@ -1,11 +1,11 @@
 # PreviewNet — a deliberate SUBSET, matching what the host deploy already runs:
-# device-attestation-api, device-attestation-chain-writer, username-indexer and their databases.
+# device-attestation-api, device-attestation-chain-writer, username-indexer,
+# turn-api and the two databases.
 #
 # Not deployed here, and why:
 #   - invite-tickets-*                 — its pool would share a nonce lane
 #     with the primary environment's inviter account
-#   - turn-api, notify-relay           — one instance of each serves every
-#                                        environment
+#   - notify-relay                     — one instance serves every environment
 #   - registration-queue               — QUEUE_ENABLED is off here
 #
 # PreviewNet is the only network whose Asset Hub runs the reserve_name shape
@@ -28,11 +28,12 @@ global:
   inviters:
     invite: ""
 
-# turn-api and notify-relay are NOT deployed here — one instance of each serves
-# every environment — but their routes must still reach those shared instances,
-# exactly as gateway/Caddyfile points this environment's TURN_UPSTREAM and
-# NOTIFY_UPSTREAM at the paseo-next-v2 containers. Naming the namespace keeps
-# those routes live while the workloads stay disabled.
+# notify-relay is NOT deployed here — one instance serves every environment —
+# but its route must still reach the shared instance, exactly as
+# gateway/Caddyfile points this environment's NOTIFY_UPSTREAM at the
+# paseo-next-v2 container. Naming the namespace keeps that route live while the
+# workload stays disabled. TURN is local because its proof verifier is pinned to
+# this environment's People Chain and genesis.
 #
 # (A `routes:` list here would REPLACE the base table, not extend it — Helm does
 # not merge lists. Hence a scalar.)
@@ -50,7 +51,13 @@ workloads:
   registration-queue: { enabled: false }
   invite-tickets-api: { enabled: false }
   invite-tickets-pool: { enabled: false }
-  turn-api: { enabled: false }
+  turn-api:
+    env:
+      TURN_PROOF_ENABLED: "true"
+      TURN_PROOF_RPC_URL: wss://previewnet.substrate.dev/people
+      TURN_PROOF_GENESIS: "0x3138c6d4ce58c760047a413c2a930e919b4673a841ab4890de59aac3bd037f3d"
+      TURN_PROOF_PRODUCTS: dim2.paseo
+      TURN_PROOF_CONTEXT_SUFFIX: "0"
   notify-relay: { enabled: false }
 
 secrets:
@@ -62,3 +69,5 @@ secrets:
     CHAIN_WRITER_SIGNER_SURI: ref+vault://kv/TODO/dub/previewnet#CHAIN_WRITER_SIGNER_SURI
   username-indexer:
     INDEXER_DATABASE_URL: ref+vault://kv/TODO/dub/previewnet#INDEXER_DATABASE_URL
+  turn-api:
+    TURN_SECRET: ref+vault://kv/TODO/dub/previewnet#TURN_SECRET

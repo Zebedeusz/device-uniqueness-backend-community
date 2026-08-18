@@ -119,7 +119,7 @@ compose_env = {
 SUBSET = {
     "helm/values-previewnet.yaml": {
         "registration-queue",
-        "invite-tickets-api", "invite-tickets-pool", "turn-api", "notify-relay",
+        "invite-tickets-api", "invite-tickets-pool", "notify-relay",
     },
     # The SMALL topology: all five per-service HTTP workloads are absent by
     # design, because one `all-in-one` process serves their surfaces. This is a
