@@ -69,8 +69,8 @@ pub struct Row {
     pub priority: u16,
     /// The prefix is stripped before the upstream sees the request.
     pub strip_prefix: bool,
-    /// One instance serves every environment (turn, notify), so the chart keeps
-    /// the route live even where the workload is not deployed.
+    /// One instance serves every environment, so the chart keeps the route live
+    /// even where the workload is not deployed.
     pub shared: bool,
     /// Why this row exists. Rendered into both artifacts, because a route table
     /// without its reasons is the thing people edit wrongly.

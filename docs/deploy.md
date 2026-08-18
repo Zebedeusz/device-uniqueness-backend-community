@@ -367,8 +367,11 @@ and the edge; it shares no database, no signing key, and no chain.
 5. **Teach the shared notification relay about the new issuer.** `notify-relay`
    is shared across environments: set `JWT_JWKS_JSON` on it to a JWKS holding
    **both** environments' public keys. Tokens carry a `kid` derived from the
-   signing key, so each is verified against the right one. Each environment's
-   `turn-api` uses that environment's verifier material and proof-chain pin.
+   signing key, so each is verified against the right one. Each `turn-api` uses
+   its checkout's verifier material and proof-chain pin. The established primary
+   checkout deliberately retains the merged JWKS for compatibility, so its JWT
+   `/turn/issue` route accepts either environment's token; PreviewNet accepts its
+   own issuer only. Proof issuance remains chain-isolated by the RPC/genesis pin.
 6. **Reload the edge** so it picks up the site block. The Caddyfile is a
    read-only bind mount, so a `git pull` already put the new block inside the
    running container: validate it in a throwaway container, then reload in
