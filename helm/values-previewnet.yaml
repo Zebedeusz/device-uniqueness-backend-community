@@ -56,7 +56,7 @@ workloads:
       TURN_PROOF_ENABLED: "true"
       TURN_PROOF_RPC_URL: wss://previewnet.substrate.dev/people
       TURN_PROOF_GENESIS: "0x3138c6d4ce58c760047a413c2a930e919b4673a841ab4890de59aac3bd037f3d"
-      TURN_PROOF_PRODUCTS: dim2.paseo
+      TURN_PROOF_PRODUCTS: dim2.paseo,dim2.test
       TURN_PROOF_CONTEXT_SUFFIX: "0"
   notify-relay: { enabled: false }
 
