@@ -122,6 +122,17 @@ they summarise each release rather than list every change.
     (`identity-backend/proof-of-compute/hmac-v1`) is deliberately untouched: it
     is wire-compatible with the legacy TypeScript service.
 
+### Fixed
+
+- **(API): `GET /api/v1/usernames/search` returns the zero-padded username the
+  chain actually holds.** The wire string was rebuilt from the numeric
+  `lite_digits` column, so a lite suffix registered as `06` went out as `.6` —
+  `talles.06` was served as `talles.6`, a name `UsernameOwnerOf` never answers
+  to and neither display nor exact lookup can use. Search now returns the
+  stored `display_username` verbatim. Rows whose suffix has no leading zero are
+  unchanged; a client holding the unpadded string for a padded account sees a
+  different value ([#44]).
+
 ## [0.2.0] - 2026-08-17
 
 Breaking on three fronts: the image's ten binaries become one `ibv2` binary
@@ -359,6 +370,7 @@ First release published as a multi-arch (amd64 + arm64) image.
 [#31]: https://github.com/paritytech/device-uniqueness-backend/pull/31
 [#32]: https://github.com/paritytech/device-uniqueness-backend/pull/32
 [#33]: https://github.com/paritytech/device-uniqueness-backend/pull/33
+[#44]: https://github.com/paritytech/identity-backend-rust/issues/44
 [#46]: https://github.com/paritytech/device-uniqueness-backend/pull/46
 [#50]: https://github.com/paritytech/device-uniqueness-backend/pull/50
 [#51]: https://github.com/paritytech/device-uniqueness-backend/pull/51

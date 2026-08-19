@@ -1616,7 +1616,7 @@
           },
           "username": {
             "type": "string",
-            "description": "Full username when present, otherwise `base.digits` with the digits\nrendered as an integer (`alice.1` for stored digits `01`).",
+            "description": "The username exactly as the chain holds it: the full username when\npresent, otherwise the lite username with its suffix unchanged\n(`alice.06`, never `alice.6` — the padded form is the only one\n`UsernameOwnerOf` answers to).",
             "example": "alice.12"
           },
           "status": {

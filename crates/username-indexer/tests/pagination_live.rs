@@ -15,8 +15,10 @@
 //! ordering (numeric digit ordering `zqbase.2` before `zqbase.10`, plus a
 //! full-username shadowing case where two lite bases share one display name),
 //! then pages through with a small limit and asserts the global order is stable
-//! and no row appears twice across pages. A row with a pre-RFC-0004 P-256
-//! identifier key is seeded first in sort order and must never surface.
+//! and no row appears twice across pages. A zero-padded lite suffix
+//! (`zqpad.06`) must come back padded — the numeric `lite_digits` column cannot
+//! render it. A row with a pre-RFC-0004 P-256 identifier key is seeded first in
+//! sort order and must never surface.
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,8 +27,10 @@ use sqlx::PgPool;
 
 use username_indexer::search::search;
 
-const ACCOUNTS: [[u8; 32]; 6] = [
-    [0xE1; 32], [0xE2; 32], [0xE3; 32], [0xE4; 32], [0xE5; 32], [0xE6; 32],
+/// Synthetic 32-byte account public keys, one repeated byte each. The values
+/// are arbitrary.
+const ACCOUNTS: [[u8; 32]; 7] = [
+    [0xE1; 32], [0xE2; 32], [0xE3; 32], [0xE4; 32], [0xE5; 32], [0xE6; 32], [0xE7; 32],
 ];
 
 /// RFC-0004 on-chain container: `0x00` X25519 type byte + key + zero padding.
@@ -93,6 +97,7 @@ async fn live_pagination_is_stable_and_non_overlapping() {
             "acc-alpha",
             "acc-beta",
             "acc-gamma",
+            "acc-pad",
             "acc-team-2",
             "acc-team-10"
         ],
@@ -100,8 +105,16 @@ async fn live_pagination_is_stable_and_non_overlapping() {
     );
     assert_eq!(
         usernames,
-        ["zqalpha.1", "zqbeta.1", "zqgamma.3", "Zqteam", "Zqteam"],
-        "numeric digit ordering (2 before 10) and full-username shadowing must hold"
+        [
+            "zqalpha.1",
+            "zqbeta.1",
+            "zqgamma.3",
+            "zqpad.06",
+            "Zqteam",
+            "Zqteam"
+        ],
+        "numeric digit ordering (2 before 10), full-username shadowing, and the \
+         zero-padded chain form must hold"
     );
     let unique: HashSet<&String> = account_ids.iter().collect();
     assert_eq!(
@@ -164,6 +177,19 @@ async fn seed(pool: &PgPool) {
         "zqbase",
         "10",
         Some("Zqteam"),
+        X25519_KEY,
+    )
+    .await;
+    // A zero-padded lite suffix: the chain answers only to `zqpad.06`, so the
+    // wire string must keep the padding the numeric column throws away.
+    insert_row(
+        pool,
+        ACCOUNTS[6],
+        "acc-pad",
+        "zqpad.06",
+        "zqpad",
+        "06",
+        None,
         X25519_KEY,
     )
     .await;

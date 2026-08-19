@@ -63,8 +63,10 @@ pub struct SearchUsername {
     /// People Chain account encoded as SS58.
     #[schema(example = "5Example")]
     pub account_id: String,
-    /// Full username when present, otherwise `base.digits` with the digits
-    /// rendered as an integer (`alice.1` for stored digits `01`).
+    /// The username exactly as the chain holds it: the full username when
+    /// present, otherwise the lite username with its suffix unchanged
+    /// (`alice.06`, never `alice.6` — the padded form is the only one
+    /// `UsernameOwnerOf` answers to).
     #[schema(example = "alice.12")]
     pub username: String,
     /// Assignment state, always `ASSIGNED` for this projection.
@@ -134,8 +136,11 @@ pub async fn search(
     let fetch_limit = i64::from(validated.limit) + 1;
     let cursor = validated.cursor;
 
-    // The response `username` renders lite digits through `::text` (numeric),
-    // so stored digits `01` render as `alice.1`; the digits-length bound hides
+    // The response `username` is `display_username` — the chain form the
+    // projection stored (`full_username`, else the whole `lite_username`).
+    // Rebuilding it from the numeric `lite_digits` column instead would drop a
+    // leading zero (`06::numeric::text` is `6`) and hand out `talles.6` for an
+    // account the chain knows as `talles.06`. The digits-length bound hides
     // lite rows whose digit suffix is longer than two characters.
     //
     // The `get_byte(identifier_key, 0) = 0` bound hides registrations whose
@@ -151,8 +156,7 @@ pub async fn search(
     // assigned usernames carry a pre-RFC-0004 key any more.
     let rows = sqlx::query(
         "SELECT account_id, account_id_ss58,
-                COALESCE(full_username, lite_base || '.' || lite_digits::text)
-                    AS wire_username,
+                display_username AS wire_username,
                 lower(display_username) COLLATE \"C\" AS display_key,
                 lite_base, lite_digits::text AS lite_digits_text,
                 created_at, updated_at
