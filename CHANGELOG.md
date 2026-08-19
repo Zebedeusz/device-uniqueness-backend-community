@@ -13,7 +13,60 @@ they summarise each release rather than list every change.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-19
+
+Breaking on both sides of the wire; read this before upgrading either one.
+**Clients:** the V1 wire dialects are gone — one JSON error envelope replaces the
+problem-details, Hono and zod bodies, and the quirks that came with them — and the
+`dim-tickets` service is removed with its `/api/v1/dim-ticket` routes.
+**Deployments:** `identity` is renamed `device-attestation` down to its Postgres
+role and database, every `ibv2` identifier is now `dub` (metrics, volumes, compose
+projects, the chart), and the pre-namespacing environment variable names that used
+to be accepted with a `WARN` are now a boot failure. The standard topology is eight
+workloads where 0.2.0 had ten.
+
+### Added
+
+- **`POST /api/v1/turn/issue-with-proof` is callable from a browser.** The route
+  answers the `OPTIONS` preflight (`access-control-allow-methods: POST,OPTIONS`,
+  echoing whatever `access-control-request-headers` asks for, `vary` set), and
+  every response the route itself produces carries
+  `access-control-allow-origin: *` — so a web product can read the credentials it
+  just minted. The route is not origin-authorized in the first place (the ring-VRF
+  proof is the authorization), so the wildcard grants a browser exactly what a
+  non-browser client already had. `POST /api/v1/turn/issue` is unchanged and
+  carries no CORS headers: it is a JWT route the apps call, not a page. The 408 the
+  outer timeout synthesizes above the route carries none either ([#67]).
+
 ### Removed
+
+- **BREAKING: the `dim-tickets` service is gone, and with it
+  `/api/v1/dim-ticket`.** Auditing the shipping iOS and Android clients found no
+  consumer: both obtain Game / ProofOfInk credentials through
+  `POST /api/v1/invitation-ticket/claim`, which `invite-tickets` owns and which is
+  untouched. Rather than hand a route nobody calls to a V2 owner, V1 shutdown
+  removes it ([#65]).
+  - **The request and status routes answer the JSON 404.** The edge no longer
+    routes the prefix, so it falls through to `device-attestation-api` like any
+    unknown path. The paths are gone from the OpenAPI document and `/docs`.
+  - **The roles `dim-tickets-api` and `dim-tickets-writer` no longer exist**, so a
+    deployment that still lists them fails the role gate. The standard topology is
+    **eight** workloads (five HTTP services + three single-instance workers) where
+    it was ten, the small topology four where it was five, and `dub --list-roles`
+    prints eight.
+  - **Its Postgres database is orphaned, not migrated.** Nothing reads
+    `dim_tickets` any more; the compose service, its volume and its
+    `DIM_TICKETS_POSTGRES_*` credentials are deleted, and the volume can be removed
+    once you are content to lose the ticket history. Three databases remain where
+    there were four.
+  - Every variable it owned drops out of `.env.example`, `docker-compose.yml` and
+    the chart: `DIM_TICKETS_DATABASE_URL`, `DIM_TICKETS_POSTGRES_*`,
+    `DIM_TICKETS_RATE_LIMIT[_WINDOW_SECS]`, `QUOTA_TIMEOUT_SECS`, the writer's
+    `INVITER_SIGNER_SURI` / `WRITER_*` tunables, and the `DIM_TICKETS_POSTGRES_PORT`
+    / `DIM_PORT` host ports. Setting them is now inert rather than an error.
+  - **One fewer signing account.** `invite-tickets-pool` is the only inviter key
+    left, so the "these two workers must never share an account" constraint the
+    dev defaults worked around no longer has a second party.
 
 - **BREAKING (API): every V1 wire dialect is gone. Error bodies across the whole
   surface are now one JSON envelope.** Nothing reproduces the legacy TypeScript
@@ -61,7 +114,8 @@ they summarise each release rather than list every change.
 - TURN is deployed once per environment instead of shared when personhood-proof
   issuance is enabled. Each issuer pins its own People Chain RPC and genesis,
   so PreviewNet proofs cannot be checked against Paseo roots (or vice versa);
-  `dim2.paseo` is enabled at context suffix `0` in both environment values.
+  `dim2.paseo` is enabled at context suffix `0` in both environment values, and
+  PreviewNet's issuer additionally accepts `dim2.test` ([#70]).
 
 - **BREAKING (deployment): the identity service is renamed device-attestation,
   including its Postgres role and database.** `POSTGRES_USER`/`POSTGRES_DB` and
@@ -89,8 +143,8 @@ they summarise each release rather than list every change.
   decode. Entries at and before 0.2.0 keep the old spelling: they describe
   artifacts already published under it.
   - The binary is `dub` (crate `crates/dub`), so `command:` becomes
-    `["--role", "identity-api"]` on `dub`, healthchecks are `dub --healthcheck`,
-    and `dub --list-roles` prints the ten. Release assets become
+    `["--role", "device-attestation-api"]` on `dub`, healthchecks are
+    `dub --healthcheck`, and `dub --list-roles` prints the eight. Release assets become
     `dub-<version>-<target>.tar.gz` and `dub-compose-<version>.tar.gz`; the
     `ibv2-*` assets on 0.1.2 and 0.2.0 keep their names.
   - **Every Prometheus metric is renamed** `ibv2_*` → `dub_*`
@@ -122,6 +176,19 @@ they summarise each release rather than list every change.
     (`identity-backend/proof-of-compute/hmac-v1`) is deliberately untouched: it
     is wire-compatible with the legacy TypeScript service.
 
+- **Username availability is one chain read instead of 100.**
+  `POST /api/v1/usernames/available` asked for each `{base}.{NN}` key separately;
+  it now fetches all 100 in a single `state_queryStorageAt` request at one block.
+  The request and response shapes are unchanged.
+  - **`PEOPLE_RPC_URL` must serve the legacy `state_queryStorageAt` method.** An
+    endpoint exposing only the newer `chainHead` JSON-RPC API boots, passes
+    `/readyz` and then fails every availability check, because nothing else in the
+    service uses it. Any full Substrate node exposes it; the constraint bites only
+    when repointing at a trimmed or proxied RPC — `docs/runbook.md` carries the
+    symptom.
+  - A response that is short, doubled, or answered at another block fails the
+    check closed rather than reporting a name as available ([#60]).
+
 ### Fixed
 
 - **(API): `GET /api/v1/usernames/search` returns the zero-padded username the
@@ -132,6 +199,17 @@ they summarise each release rather than list every change.
   stored `display_username` verbatim. Rows whose suffix has no leading zero are
   unchanged; a client holding the unpadded string for a padded account sees a
   different value ([#44]).
+- **Every default names the published image, `device-uniqueness-backend`.** The
+  repository was renamed and `release.yml` derives the ghcr path from it, so 0.2.0's
+  images were published under the new name while `global.imageRepo` in
+  `helm/values.yaml`, the `docker-compose.yml` image defaults, `.env.example` and
+  `docker-bake.hcl` still pointed at `identity-backend-rust` — the pull command
+  0.2.0's README gave could not work. Deployments that set `IMAGE_REPO` or
+  `global.imageRepo` explicitly (all of ours) were unaffected; what was broken is
+  what a self-hosting consumer gets by default. The public mirror's destination is
+  read from `DOCKERHUB_REPO`, with the corrected name as the fallback, so an unset
+  variable cannot resurrect the old one — 0.2.0's mirror pushed to a Docker Hub
+  repository that does not exist, which is why that release is ghcr-only ([#63]).
 
 ## [0.2.0] - 2026-08-17
 
@@ -345,7 +423,8 @@ First release published as a multi-arch (amd64 + arm64) image.
 - Username registration is authorized by `candidateSignature` rather than the JWT
   subject ([#3]).
 
-[Unreleased]: https://github.com/paritytech/device-uniqueness-backend/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/paritytech/device-uniqueness-backend/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/paritytech/device-uniqueness-backend/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/paritytech/device-uniqueness-backend/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/paritytech/device-uniqueness-backend/releases/tag/v0.1.2
 
@@ -378,3 +457,8 @@ First release published as a multi-arch (amd64 + arm64) image.
 [#54]: https://github.com/paritytech/device-uniqueness-backend/pull/54
 [#55]: https://github.com/paritytech/device-uniqueness-backend/pull/55
 [#58]: https://github.com/paritytech/device-uniqueness-backend/pull/58
+[#60]: https://github.com/paritytech/device-uniqueness-backend/pull/60
+[#63]: https://github.com/paritytech/device-uniqueness-backend/pull/63
+[#65]: https://github.com/paritytech/device-uniqueness-backend/pull/65
+[#67]: https://github.com/paritytech/device-uniqueness-backend/pull/67
+[#70]: https://github.com/paritytech/device-uniqueness-backend/pull/70
