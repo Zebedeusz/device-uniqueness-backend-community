@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream
 // Copyright (C) 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: GPL-3.0-only
 
@@ -11,41 +10,9 @@
 //! `subxt metadata --url <people-rpc> --pallets <pallets> -f bytes -o crates/chain-types/metadata/metadata.<network>.scale`
 //! where `<pallets>` is `System,Balances,Utility,Proxy,People,PeopleLite,Resources,Members`,
 //! plus `Game,ProofOfInk` on `testnet`; the `polkadot` runtime dropped them.
-=======
-//! Typed People Chain surface, plus the signing configs for the individuality
-//! chains the workspace talks to.
-//!
-//! Static [`subxt`] codegen generated from vendored People Chain metadata. It is
-//! the single canonical chain-facing type surface for the workspace: the read
-//! path (`Resources::UsernameOwnerOf`, the reservation queue, `PeopleLite::AttestationAllowance`),
-//! the device-attestation-chain-writer's registration/attestation calls, and the
-//! invite-tickets service's `Game`/`ProofOfInk` invite-ticket calls all build
-//! against it.
-//! The online transport and signing live in adapter crates, never here.
-//!
-//! Two subxt configs live here, one per chain family: [`PeopleConfig`] and
-//! [`AssetHubConfig`]. Only People is code-generated. The Asset Hub surface the
-//! writer needs is `DotnsGateway::reserve_name` plus two storage reads. It is
-//! built dynamically by name rather than by vendoring a second, faster-churning
-//! metadata blob. See `docs/plans/active/dotns-gateway-write.md`.
-//!
-//! # Vendored metadata provenance
-//!
-//! - Source: Paseo Next v2 People Chain — `wss://paseo-people-next-system-rpc.polkadot.io`
-//! - Runtime: `next-people-paseo`, specVersion `3004000`, transactionVersion `6`
-//! - Format: metadata V16, trimmed to pallets `System`, `Balances`, `Utility`,
-//!   `Proxy`, `People`, `PeopleLite`, `Resources`, `Game`, `ProofOfInk`, `Members`
-//! - File: [`metadata/people.scale`](../metadata/people.scale)
-//!
-//! Refresh with:
-//! `subxt metadata --url <people-rpc> --pallets System,Balances,Utility,Proxy,People,PeopleLite,Resources,Game,ProofOfInk,Members -f bytes -o crates/chain-types/metadata/people.scale`
->>>>>>> Stashed changes
 
 use subxt::config::transaction_extensions as tx_ext;
 
-/// Generated People Chain runtime API (calls, storage, constants, events).
-///
-/// Entry points: [`people::storage`], [`people::tx`], [`people::runtime_types`].
 #[allow(clippy::all, missing_docs, rustdoc::all)]
 #[cfg_attr(
     dub_network = "testnet",
@@ -168,7 +135,6 @@ macro_rules! extrinsic_params_builder {
         }
 
         impl $builder {
-            /// Start with an immortal, no-tip transaction.
             pub fn new() -> Self {
                 Self {
                     mortality: tx_ext::CheckMortalityParams::immortal(),
@@ -177,28 +143,24 @@ macro_rules! extrinsic_params_builder {
                 }
             }
 
-            /// Provide a specific nonce.
             #[must_use]
             pub fn nonce(mut self, nonce: u64) -> Self {
                 self.nonce = Some(nonce);
                 self
             }
 
-            /// Provide a tip, in the native token.
             #[must_use]
             pub fn tip(mut self, tip: u128) -> Self {
                 self.tip = tip;
                 self
             }
 
-            /// Provide a mortality window in place of the immortal default.
             #[must_use]
             pub fn mortality(mut self, mortality: tx_ext::CheckMortalityParams<$config>) -> Self {
                 self.mortality = mortality;
                 self
             }
 
-            /// Build the params tuple for `$extensions`.
             pub fn build(
                 self,
             ) -> <$extensions<$config> as subxt::config::TransactionExtensions<$config>>::Params {
@@ -221,16 +183,6 @@ macro_rules! extrinsic_params_builder {
 }
 
 delegating_config! {
-    /// subxt [`Config`](subxt::Config) for People Chain.
-    ///
-    /// People Chain is Polkadot-shaped (`AccountId32` + `MultiAddress<_, ()>` +
-    /// `MultiSignature`, Blake2 hashing), but its transaction-extension pipeline has
-    /// People-specific no-op gates before the standard nonce/payment checks.
-    ///
-    /// The same config serves every People runtime this workspace talks to, even
-    /// where they disagree on the extension set: subxt encodes extensions by walking
-    /// the **live** runtime's extension list and resolving each name in the tuple, so
-    /// a member the connected runtime does not declare is never encoded.
     PeopleConfig => PeopleTransactionExtensions
 }
 
@@ -263,7 +215,6 @@ pub type PeopleTransactionExtensions<T> = (
 );
 
 extrinsic_params_builder! {
-    /// Builder for the People Chain transaction extension params used by the writer.
     PeopleExtrinsicParamsBuilder<PeopleConfig> => PeopleTransactionExtensions,
     |mortality, nonce, tip| (
         (), (), (), (), (), (), (), (), (), (), (), (), (), (), (), (), (), (),
@@ -272,18 +223,6 @@ extrinsic_params_builder! {
 }
 
 delegating_config! {
-    /// subxt [`Config`](subxt::Config) for the individuality Asset Hub runtimes.
-    ///
-    /// Same Polkadot shape as [`PeopleConfig`]: `AccountId32`,
-    /// `MultiAddress<_, ()>`, `MultiSignature`, Blake2. The
-    /// transaction-extension tuple is **separate**. Asset Hub declares five gates
-    /// People does not (`AsPgas`, `AsRingAlias`, `AsDotnsGateway`,
-    /// `PrevalidateAttests`, `EthSetOrigin`). Merging the two sets would exceed
-    /// subxt's 26-member tuple ceiling. Keeping them apart also leaves the
-    /// proven People pipeline untouched.
-    ///
-    /// One tuple still serves *both* Asset Hub runtimes. They differ only in the
-    /// slot-0 name. That is the same split [`PeopleConfig`] already carries.
     AssetHubConfig => AssetHubTransactionExtensions
 }
 
@@ -291,11 +230,7 @@ delegating_config! {
 pub type AssetHubTransactionExtensions<T> = (
     Noop<UnitTransactionExtension>,
     Noop<AuthorizeValueTransfer>,
-<<<<<<< Updated upstream
-    Noop<VerifyMultiSignature>,
-=======
     tx_ext::VerifySignature<T>,
->>>>>>> Stashed changes
     Noop<AuthorizeCall>,
     Noop<AsPgas>,
     Noop<AsRingAlias>,
@@ -311,19 +246,12 @@ pub type AssetHubTransactionExtensions<T> = (
     Noop<CheckWeight>,
     tx_ext::ChargeAssetTxPayment<T>,
     Noop<PrevalidateAttests>,
-<<<<<<< Updated upstream
-=======
-    // Real, not a `Noop`. Its *implicit* is `Option<[u8; 32]> = None`. A `Noop`
-    // would encode that as nothing, which is a signer-payload mismatch. subxt's
-    // version never provides a hash, so it encodes disabled mode.
->>>>>>> Stashed changes
     tx_ext::CheckMetadataHash,
     Noop<EthSetOrigin>,
     Noop<StorageWeightReclaim>,
 );
 
 extrinsic_params_builder! {
-    /// Builder for the Asset Hub transaction extension params used by the writer.
     AssetHubExtrinsicParamsBuilder<AssetHubConfig> => AssetHubTransactionExtensions,
     |mortality, nonce, tip| (
         (), (), (), (), (), (), (), (), (), (), (), (), (),
@@ -403,10 +331,6 @@ macro_rules! noop_names {
     };
 }
 
-// Slot 0 differs per build, not per spec version: Paseo Next v2 declares
-// `AuthorizeValueTransfer` (`Option<[u8; 64]>`, encoded `None`), PreviewNet
-// declares `UnitTransactionExtension` (`()`). Both names live in the tuple;
-// only the one the connected runtime declares is encoded.
 noop_names! {
     UnitTransactionExtension,
     AuthorizeValueTransfer = &[0],
@@ -424,17 +348,12 @@ noop_names! {
     CheckNonZeroSender,
     CheckWeight,
     StorageWeightReclaim,
-    // Asset Hub-only origin modifiers. All four are `Option<…>`, encoded
-    // `None`. `EthSetOrigin` (pallet_revive's `SetOrigin`) carries no value at all.
     AsPgas = &[0],
     AsRingAlias = &[0],
     AsScarcity = &[0],
     AsDotnsGateway = &[0],
     EthSetOrigin,
-<<<<<<< Updated upstream
     VerifyMultiSignature = &[0],
-=======
->>>>>>> Stashed changes
     PrevalidateAttests,
 }
 
@@ -443,8 +362,6 @@ mod tests {
     use super::*;
     use subxt::storage::Address as _;
 
-    /// Every extension name [`PeopleTransactionExtensions`](super::PeopleTransactionExtensions)
-    /// can satisfy: the `Noop` gates declared above plus the ones subxt implements.
     const TUPLE_EXTENSIONS: &[&str] = &[
         "UnitTransactionExtension",
         "AuthorizeValueTransfer",
@@ -472,11 +389,6 @@ mod tests {
         "StorageWeightReclaim",
     ];
 
-    /// Every extension name [`AssetHubTransactionExtensions`](super::AssetHubTransactionExtensions)
-    /// can satisfy. Deliberately a second list rather than a superset of
-    /// [`TUPLE_EXTENSIONS`]. The merged set is 30 members and subxt's tuple
-    /// impls stop at 26. The two chain families therefore keep separate
-    /// pipelines.
     const ASSET_HUB_TUPLE_EXTENSIONS: &[&str] = &[
         "UnitTransactionExtension",
         "AuthorizeValueTransfer",
@@ -501,26 +413,14 @@ mod tests {
         "StorageWeightReclaim",
     ];
 
-    /// One runtime this workspace knows about: what the chain calls itself,
-    /// which runtime build was inspected, and the extension names it declared.
-    ///
-    /// A human name for diagnostics, plus `spec_name`/`spec_version` to say
-    /// which build the list was captured from. `next-people-paseo` numbers two
-    /// different deployments. The version alone does not identify a chain.
     struct KnownRuntime {
-        /// Human label for diagnostics; never used as a key.
         env: &'static str,
         spec_name: &'static str,
         spec_version: u32,
-        /// The tuple that must be able to sign on this runtime.
         tuple: &'static [&'static str],
-        /// Ordered transaction-extension identifiers, as declared by that build.
         extensions: &'static [&'static str],
     }
 
-<<<<<<< Updated upstream
-    /// What `next-people-paseo` 3000000 declares, in order.
-=======
     const PEOPLE_V3004_EXTENSIONS: &[&str] = &[
         "UnitTransactionExtension",
         "VerifyMultiSignature",
@@ -547,11 +447,7 @@ mod tests {
         "StorageWeightReclaim",
     ];
 
-    /// What `next-people-paseo` 3000000, 3002000 and 3003000 declare, in order.
-    /// paseo-next-v2 and previewnet upgraded together through 3002000 and
-    /// their metadata is identical, so one list covers both; 3003000 left the
-    /// list untouched.
->>>>>>> Stashed changes
+    /// What `next-people-paseo` 3000000 declares, in order.
     const PEOPLE_V3_EXTENSIONS: &[&str] = &[
         "UnitTransactionExtension",
         "VerifyMultiSignature",
@@ -625,19 +521,34 @@ mod tests {
         "StorageWeightReclaim",
     ];
 
-<<<<<<< Updated upstream
     /// What `statemint` 2005000 (the polkadot-test Asset Hub) declares, in
     /// order (extension version 1). New against the Paseo Asset Hubs:
     /// `VerifyMultiSignature` and `PrevalidateAttests`; `AsScarcity` is gone.
     const ASSET_HUB_POLKADOT_2005000_EXTENSIONS: &[&str] = &[
         "UnitTransactionExtension",
         "VerifyMultiSignature",
-=======
+        "AuthorizeCall",
+        "AsPgas",
+        "AsDotnsGateway",
+        "RestrictOrigins",
+        "CheckNonZeroSender",
+        "CheckSpecVersion",
+        "CheckTxVersion",
+        "CheckGenesis",
+        "CheckMortality",
+        "CheckNonce",
+        "CheckWeight",
+        "ChargeAssetTxPayment",
+        "PrevalidateAttests",
+        "CheckMetadataHash",
+        "EthSetOrigin",
+        "StorageWeightReclaim",
+    ];
+
     const ASSET_HUB_V3004_EXTENSIONS: &[&str] = &[
         "UnitTransactionExtension",
         "VerifyMultiSignature",
         "AsScarcity",
->>>>>>> Stashed changes
         "AuthorizeCall",
         "AsPgas",
         "AsDotnsGateway",
@@ -697,16 +608,9 @@ mod tests {
             extensions: PEOPLE_V3_EXTENSIONS,
         },
         KnownRuntime {
-            env: "paseo-next-v2 / previewnet",
+            env: "paseo-next-v2",
             spec_name: "next-people-paseo",
             spec_version: 3_002_000,
-            tuple: TUPLE_EXTENSIONS,
-            extensions: PEOPLE_V3_EXTENSIONS,
-        },
-        KnownRuntime {
-            env: "paseo-next-v2 / previewnet",
-            spec_name: "next-people-paseo",
-            spec_version: 3_000_000,
             tuple: TUPLE_EXTENSIONS,
             extensions: PEOPLE_V3_EXTENSIONS,
         },
@@ -774,13 +678,6 @@ mod tests {
         },
     ];
 
-    /// One binary signs on either runtime of a family. subxt resolves
-    /// extensions by name against the connected runtime's list. The tuple must
-    /// therefore satisfy every name each known build declares. A runtime that
-    /// adds a name (e.g. `CheckMetadataHash` on public Paseo) fails here first.
-    ///
-    /// This is a snapshot, not a live check: it holds the tuple to what was
-    /// observed, and cannot notice a runtime that has since been upgraded.
     #[test]
     fn covers_every_known_runtime_extension_set() {
         for runtime in KNOWN_RUNTIMES {
@@ -796,11 +693,6 @@ mod tests {
         }
     }
 
-    /// Every extension the vendored metadata declares must have a slot in
-    /// [`PeopleTransactionExtensions`](super::PeopleTransactionExtensions).
-    /// [`KNOWN_RUNTIMES`] is a hand-captured snapshot; this reads the list out
-    /// of the metadata the crate generates against, so a metadata refresh that
-    /// introduces an extension fails here without waiting for a new capture.
     #[test]
     fn vendored_metadata_extensions_are_all_in_the_tuple() {
         let metadata = metadata_arc();
@@ -857,17 +749,11 @@ mod tests {
         }
     }
 
-    /// The two slot-0 spellings encode their own value shapes: Paseo Next v2's
-    /// `Option<[u8; 64]>` as `None`, PreviewNet's `()` as nothing at all.
     #[test]
     fn vendored_metadata_names_the_runtime_it_came_from() {
         assert_eq!(
             vendored_spec_version(),
-<<<<<<< Updated upstream
             VENDORED_VERSION.0,
-=======
-            3_004_000,
->>>>>>> Stashed changes
             "the blob's own System::Version is what chain-client logs the live \
              chain against, so refreshing the blob moves this number with it"
         );
@@ -881,9 +767,6 @@ mod tests {
         assert!(UnitTransactionExtension::VALUE.is_empty());
     }
 
-    /// The read path can construct the `Resources::UsernameOwnerOf` lookup used
-    /// for on-chain username availability. In subxt 0.50 the map key is supplied
-    /// at fetch time, so the address itself is keyless but typed on the key.
     #[test]
     fn builds_username_owner_of_query() {
         let query = people::storage().resources().username_owner_of();
@@ -891,8 +774,6 @@ mod tests {
         assert_eq!(query.entry_name(), "UsernameOwnerOf");
     }
 
-    /// The resource watch can construct the `PeopleLite::AttestationAllowance`
-    /// lookup (keyed by attester at fetch time).
     #[test]
     fn builds_attestation_allowance_query() {
         let query = people::storage().people_lite().attestation_allowance();
@@ -900,8 +781,6 @@ mod tests {
         assert_eq!(query.entry_name(), "AttestationAllowance");
     }
 
-    /// The device-attestation-chain-writer can construct the `Resources::register_lite_person`
-    /// registration call from the generated API.
     #[test]
     fn builds_register_lite_person_call() {
         let username =
@@ -913,11 +792,7 @@ mod tests {
         assert_eq!(call.call_name(), "register_lite_person");
     }
 
-<<<<<<< Updated upstream
     #[cfg(invite_tickets)]
-=======
-    /// The invite-tickets pool can construct both DIM variants of `set_invite_ticket`.
->>>>>>> Stashed changes
     #[test]
     fn builds_set_invite_ticket_calls() {
         let ticket = subxt::utils::AccountId32([0u8; 32]);
@@ -930,12 +805,7 @@ mod tests {
         assert_eq!(poi.call_name(), "set_invite_ticket");
     }
 
-<<<<<<< Updated upstream
     #[cfg(invite_tickets)]
-=======
-    /// The invite-tickets pool can construct both DIM variants of the
-    /// `AvailableInvites` quota lookup (keyed by inviter at fetch time).
->>>>>>> Stashed changes
     #[test]
     fn builds_available_invites_queries() {
         let game = people::storage().game().available_invites();
@@ -947,44 +817,26 @@ mod tests {
         assert_eq!(poi.entry_name(), "AvailableInvites");
     }
 
-<<<<<<< Updated upstream
     #[cfg(dub_network = "polkadot")]
     const VENDORED_VERSION: (u32, u32) = (2_005_000, 0);
     #[cfg(not(dub_network = "polkadot"))]
-    const VENDORED_VERSION: (u32, u32) = (3_000_000, 5);
+    const VENDORED_VERSION: (u32, u32) = (3_004_000, 6);
 
-=======
-    /// The vendored metadata, decoded the same way subxt would receive it from
-    /// a node, so extension construction and encoding can run offline.
->>>>>>> Stashed changes
     fn people_metadata() -> subxt::ArcMetadata {
         subxt::Metadata::decode_from(METADATA_BYTES)
             .expect("vendored metadata decodes")
             .arc()
     }
 
-    /// An offline stand-in for the client state subxt hands to transaction
-    /// extensions, using the versions the crate docs record for the vendored
-    /// runtime.
     fn offline_client_state() -> subxt::config::ClientState<PeopleConfig> {
         subxt::config::ClientState {
             genesis_hash: subxt::utils::H256::zero(),
-<<<<<<< Updated upstream
             spec_version: VENDORED_VERSION.0,
             transaction_version: VENDORED_VERSION.1,
-=======
-            spec_version: 3_004_000,
-            transaction_version: 6,
->>>>>>> Stashed changes
             metadata: people_metadata(),
         }
     }
 
-    /// `.nonce(n)` must reach the wire. The params tuple hides the nonce behind
-    /// a private field, so the `CheckNonce` slot is run through subxt's own
-    /// offline constructor and encoder: an explicit nonce comes out as its
-    /// SCALE compact encoding, while the `new()` default encodes none of its
-    /// own and defers to the nonce subxt injects from the chain.
     #[test]
     fn builder_nonce_flows_into_check_nonce_encoding() {
         let state = offline_client_state();
@@ -1020,10 +872,6 @@ mod tests {
         );
     }
 
-    /// `new()` promises an immortal, no-tip transaction: the mortality slot
-    /// must encode the immortal era byte and the payment slot must carry a
-    /// zero tip in the native token, both checked through subxt's own
-    /// constructors rather than the builder's inputs.
     #[test]
     fn builder_starts_immortal_with_no_tip() {
         use subxt::config::transaction_extensions::{ChargeAssetTxPayment, CheckMortality};
@@ -1045,10 +893,6 @@ mod tests {
         assert!(payment.asset_id().is_none(), "tip is in the native token");
     }
 
-    /// `Default` must stay in lockstep with `new()`: the mortality, nonce and
-    /// payment slots of both builders have to encode to identical bytes,
-    /// checked through subxt's own constructors rather than the builders'
-    /// inputs.
     #[test]
     fn default_builder_matches_new() {
         use subxt::config::TransactionExtension as _;
@@ -1086,11 +930,6 @@ mod tests {
         );
     }
 
-    /// The `Noop` encoder impl is the code path that actually writes a gate's
-    /// bytes into an extrinsic: `encode_value_to` must append exactly the
-    /// declared value (the encoded-`None` byte for `AuthorizeValueTransfer`,
-    /// nothing for the unit-valued `UnitTransactionExtension`) and
-    /// `encode_implicit_to` must write nothing, whatever the buffer holds.
     #[test]
     fn noop_encoders_write_value_bytes_and_empty_implicit() {
         use subxt::config::TransactionExtension as _;
@@ -1121,10 +960,6 @@ mod tests {
         assert_eq!(out, [0xAA], "a unit-valued gate writes no bytes at all");
     }
 
-    /// The `Config` impl must hand PolkadotConfig's caches through unchanged:
-    /// a fresh offline config knows nothing (no genesis hash, no spec-version
-    /// ranges, no metadata), and a metadata registration is readable back
-    /// through the same wrapper as the same `Arc`, not a rebuild.
     #[test]
     fn config_delegates_caches_to_polkadot_config() {
         use subxt::Config as _;
@@ -1152,10 +987,6 @@ mod tests {
         );
     }
 
-    /// The personhood-proof verifier can construct the `Members` pallet lookups
-    /// it verifies ring-VRF proofs against: the current ring root, the
-    /// retained previous roots, and the collection descriptor carrying the
-    /// ring size (`Root`/`OldRoots` keyed by collection at fetch time).
     #[test]
     fn builds_members_ring_root_queries() {
         let root = people::storage().members().root();
