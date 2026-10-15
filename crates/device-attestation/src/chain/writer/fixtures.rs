@@ -6,7 +6,7 @@ use std::str::FromStr as _;
 use time::OffsetDateTime;
 
 use crate::{
-    chain::{asset_hub::ValidityWindow, outbox::Reservation},
+    chain::{asset_hub::ValidityWindow, outbox::Reservation, writer::link::Window},
     dotns,
     signature::AccountSignatureForm,
 };
@@ -17,13 +17,20 @@ pub(super) const SKEW: u64 = 30;
 
 pub(super) const SIGNED_AT: i64 = 1_750_000_000;
 
-/// The fixture reservation is signed over the plain message.
-pub(super) const FORM: AccountSignatureForm = AccountSignatureForm::Plain;
-
 pub(super) const BOUNDS: ValidityWindow = ValidityWindow {
     max_validity_secs: WINDOW,
     max_future_skew_secs: SKEW,
 };
+
+/// The lane context for `attester` within [`BOUNDS`]. The fixture reservation
+/// is signed over the plain message.
+pub(super) fn ctx(attester: [u8; 32]) -> Window {
+    Window {
+        window: BOUNDS,
+        attester,
+        signature_form: AccountSignatureForm::Plain,
+    }
+}
 
 pub(super) fn reservation() -> Reservation {
     Reservation {

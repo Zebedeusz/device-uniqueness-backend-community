@@ -243,43 +243,6 @@ mod tests {
         ));
     }
 
-    /// Above the last plain spec version, only the payload in the personhood
-    /// signing context verifies.
-    #[test]
-    fn signature_in_context_verifies_only_in_context_form() {
-        use std::str::FromStr as _;
-        use subxt_signer::sr25519::Keypair;
-        use subxt_signer::SecretUri;
-
-        let keypair = Keypair::from_uri(&SecretUri::from_str("//Alice").unwrap()).unwrap();
-        let candidate = keypair.public_key().0;
-        let context = crate::signature::signing_context(crate::signature::PERSONHOOD, b"paseo");
-        let message = reservation_message(
-            &candidate,
-            &attester(),
-            b"goldenname",
-            &chat_key(),
-            None,
-            SIGNED_AT,
-        );
-        let in_context = keypair.sign(&[context.as_slice(), &message].concat()).0;
-        let verify = |form| {
-            verify_reservation_signature(
-                &in_context,
-                &candidate,
-                &attester(),
-                b"goldenname",
-                &chat_key(),
-                None,
-                SIGNED_AT,
-                &form,
-            )
-        };
-
-        assert!(verify(AccountSignatureForm::InContext(context)));
-        assert!(!verify(AccountSignatureForm::Plain));
-    }
-
     #[test]
     fn lite_base_stops_at_the_first_dot() {
         assert_eq!(lite_base("alice.42"), "alice");

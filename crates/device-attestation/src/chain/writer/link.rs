@@ -100,7 +100,7 @@ impl DotnsLink {
     /// is connected, so the signature form is read on every pass. A pass whose
     /// form cannot be read is skipped.
     async fn pass_ctx(&self, up: &(AssetHub, ValidityWindow)) -> Option<(AssetHub, Window)> {
-        match up.0.account_signature_form().await {
+        match crate::signature::account_signature_form(up.0.online()).await {
             Ok(signature_form) => Some((
                 up.0.clone(),
                 Window {

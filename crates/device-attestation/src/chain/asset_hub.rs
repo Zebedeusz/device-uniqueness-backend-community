@@ -13,9 +13,6 @@ use subxt::OnlineClient;
 use subxt_rpcs::{LegacyRpcMethods, RpcClient};
 
 use crate::dotns;
-use crate::signature::{
-    signing_context, uses_signing_context, AccountSignatureForm, NETWORK_SUFFIX_PALLET, PERSONHOOD,
-};
 
 const PALLET: &str = "DotnsGateway";
 
@@ -148,30 +145,6 @@ impl AssetHub {
             .and_then(|free| free.as_u128())
             .context("System::Account has no data.free field")?;
         Ok(free)
-    }
-
-    /// The message form this chain's runtime accepts for personhood account
-    /// signatures (see [`crate::signature`]).
-    pub async fn account_signature_form(&self) -> anyhow::Result<AccountSignatureForm> {
-        let at = self.client.at_current_block().await?;
-        let has_network_suffix = at
-            .metadata_ref()
-            .pallet_by_name(NETWORK_SUFFIX_PALLET)
-            .is_some();
-        if !uses_signing_context(at.spec_version(), has_network_suffix) {
-            return Ok(AccountSignatureForm::Plain);
-        }
-        let address =
-            subxt::dynamic::storage::<(), Vec<u8>>(NETWORK_SUFFIX_PALLET, "NetworkSuffix");
-        let suffix = at
-            .storage()
-            .fetch(address, ())
-            .await
-            .context("reading NetworkSuffix::NetworkSuffix")?
-            .decode()?;
-        Ok(AccountSignatureForm::InContext(signing_context(
-            PERSONHOOD, &suffix,
-        )))
     }
 
     pub async fn validity_window(&self) -> anyhow::Result<ValidityWindow> {
