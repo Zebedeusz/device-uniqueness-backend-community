@@ -22,6 +22,7 @@ use crate::{
         outbox::{self, Guard, Reservation},
     },
     dotns,
+    signature::AccountSignatureForm,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +41,7 @@ pub(super) fn check_dotns_submittable(
     r: &Reservation,
     candidate: &[u8; 32],
     attester: &[u8; 32],
+    signature_form: &AccountSignatureForm,
     window: ValidityWindow,
     now: i64,
 ) -> Result<(), DotnsReject> {
@@ -93,6 +95,7 @@ pub(super) fn check_dotns_submittable(
         &r.identifier_key,
         r.reserved_username.as_ref().map(|s| s.as_bytes()),
         signed_at,
+        signature_form,
     ) {
         return Err(DotnsReject::BadSignature);
     }
@@ -158,7 +161,14 @@ impl Lane for Dotns {
 
     fn gate(r: &Reservation, ctx: Window, now: i64) -> Result<[u8; 32], Gate> {
         let candidate = parse_candidate(r)?;
-        match check_dotns_submittable(r, &candidate, &ctx.attester, ctx.window, now) {
+        match check_dotns_submittable(
+            r,
+            &candidate,
+            &ctx.attester,
+            &ctx.signature_form,
+            ctx.window,
+            now,
+        ) {
             Ok(()) => Ok(candidate),
             Err(reject) => Err(reject.gate(ctx.window, now)),
         }
@@ -355,7 +365,7 @@ mod tests {
     fn a_fresh_verified_reservation_passes_the_gates() {
         let (r, candidate, attester) = signed_reservation();
         assert_eq!(
-            check_dotns_submittable(&r, &candidate, &attester, BOUNDS, SIGNED_AT + 60),
+            check_dotns_submittable(&r, &candidate, &attester, &FORM, BOUNDS, SIGNED_AT + 60),
             Ok(())
         );
     }
@@ -365,7 +375,14 @@ mod tests {
         let (r, candidate, attester) = signed_reservation();
 
         assert_eq!(
-            check_dotns_submittable(&r, &candidate, &attester, BOUNDS, SIGNED_AT - SKEW as i64),
+            check_dotns_submittable(
+                &r,
+                &candidate,
+                &attester,
+                &FORM,
+                BOUNDS,
+                SIGNED_AT - SKEW as i64
+            ),
             Ok(())
         );
 
@@ -374,6 +391,7 @@ mod tests {
                 &r,
                 &candidate,
                 &attester,
+                &FORM,
                 BOUNDS,
                 SIGNED_AT - SKEW as i64 - 1
             ),
@@ -388,6 +406,7 @@ mod tests {
                 &r,
                 &candidate,
                 &[99; 32],
+                &FORM,
                 BOUNDS,
                 SIGNED_AT - SKEW as i64 - 1
             ),
@@ -402,7 +421,7 @@ mod tests {
             max_future_skew_secs: u64::MAX,
         };
         assert_eq!(
-            check_dotns_submittable(&r, &candidate, &attester, absurd, SIGNED_AT),
+            check_dotns_submittable(&r, &candidate, &attester, &FORM, absurd, SIGNED_AT),
             Ok(())
         );
     }
@@ -416,6 +435,7 @@ mod tests {
                 &r,
                 &candidate,
                 &attester,
+                &FORM,
                 BOUNDS,
                 SIGNED_AT + WINDOW as i64 + 1
             ),
@@ -425,38 +445,59 @@ mod tests {
             })
         );
         assert_eq!(
-            check_dotns_submittable(&r, &candidate, &attester, BOUNDS, SIGNED_AT + WINDOW as i64),
+            check_dotns_submittable(
+                &r,
+                &candidate,
+                &attester,
+                &FORM,
+                BOUNDS,
+                SIGNED_AT + WINDOW as i64
+            ),
             Ok(())
         );
 
         assert_eq!(
-            check_dotns_submittable(&r, &candidate, &[99; 32], BOUNDS, SIGNED_AT),
+            check_dotns_submittable(&r, &candidate, &[99; 32], &FORM, BOUNDS, SIGNED_AT),
             Err(DotnsReject::BadSignature)
         );
 
         assert_eq!(
-            check_dotns_submittable(&reservation(), &candidate, &attester, BOUNDS, SIGNED_AT),
+            check_dotns_submittable(
+                &reservation(),
+                &candidate,
+                &attester,
+                &FORM,
+                BOUNDS,
+                SIGNED_AT
+            ),
             Err(DotnsReject::NotInLane)
         );
 
         let mut no_digits = r.clone();
         no_digits.full_username = "testing".to_string();
         assert!(matches!(
-            check_dotns_submittable(&no_digits, &candidate, &attester, BOUNDS, SIGNED_AT),
+            check_dotns_submittable(&no_digits, &candidate, &attester, &FORM, BOUNDS, SIGNED_AT),
             Err(DotnsReject::UnbuildableLabel(_))
         ));
 
         let mut long_label = r.clone();
         long_label.full_username = format!("{}.42", "a".repeat(30));
         assert!(matches!(
-            check_dotns_submittable(&long_label, &candidate, &attester, BOUNDS, SIGNED_AT),
+            check_dotns_submittable(&long_label, &candidate, &attester, &FORM, BOUNDS, SIGNED_AT),
             Err(DotnsReject::UnbuildableLabel(_))
         ));
 
         let mut long_reserved = r.clone();
         long_reserved.reserved_username = Some("a".repeat(33));
         assert!(matches!(
-            check_dotns_submittable(&long_reserved, &candidate, &attester, BOUNDS, SIGNED_AT),
+            check_dotns_submittable(
+                &long_reserved,
+                &candidate,
+                &attester,
+                &FORM,
+                BOUNDS,
+                SIGNED_AT
+            ),
             Err(DotnsReject::UnbuildableReserved(_))
         ));
     }
@@ -470,6 +511,7 @@ mod tests {
                 &r,
                 &candidate,
                 &attester,
+                &FORM,
                 BOUNDS,
                 SIGNED_AT + WINDOW as i64 + 1
             ),

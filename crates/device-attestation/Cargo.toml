@@ -57,6 +57,8 @@ sqlx = { version = "0.8", default-features = false, features = [
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
 base64 = "0.22"
 sha2 = "0.10"
+# Personhood signing context (blake2_256) for non-transaction account signatures.
+blake2 = "0.10"
 # Widevine dedup: HMAC-SHA256 pseudonymization of the raw device id.
 hmac = "0.12"
 hex = "0.4"

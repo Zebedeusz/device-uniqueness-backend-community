@@ -1279,6 +1279,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "blake2",
  "chain-client",
  "chain-types",
  "ciborium",

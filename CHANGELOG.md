@@ -8,6 +8,19 @@ Pre-1.0, a breaking change bumps the **minor**. Pin an exact `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Changed
+
+- **Candidate and dotNS reservation signatures follow the runtime's signing
+  context rule.** Individuality runtimes above spec version 3004000 accept these
+  account signatures only over `context ++ message`, where the context is
+  `blake2_256("product/peopl.<suffix>/" ++ "sig/" ++ 28 zero bytes)` and
+  `<suffix>` is the chain's `NetworkSuffix` (paritytech/individuality-community#105).
+  Intake (`candidateSignature`) reads People's runtime version on each request,
+  and the chain writer's dotNS gate (`dotns.signature`) reads Asset Hub's on each
+  pass. Each applies the rule that runtime enforces: the plain message up to
+  3004000, the message in the signing context above it. A release works before
+  and after the runtime upgrade and switches as soon as the upgrade is enacted.
+
 ## [0.7.0] - 2026-09-16
 
 ### Added

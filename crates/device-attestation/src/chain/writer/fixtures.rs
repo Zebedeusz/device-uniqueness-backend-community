@@ -8,6 +8,7 @@ use time::OffsetDateTime;
 use crate::{
     chain::{asset_hub::ValidityWindow, outbox::Reservation},
     dotns,
+    signature::AccountSignatureForm,
 };
 
 pub(super) const WINDOW: u64 = 259_200;
@@ -15,6 +16,9 @@ pub(super) const WINDOW: u64 = 259_200;
 pub(super) const SKEW: u64 = 30;
 
 pub(super) const SIGNED_AT: i64 = 1_750_000_000;
+
+/// The fixture reservation is signed over the plain message.
+pub(super) const FORM: AccountSignatureForm = AccountSignatureForm::Plain;
 
 pub(super) const BOUNDS: ValidityWindow = ValidityWindow {
     max_validity_secs: WINDOW,

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::chain::asset_hub::{AssetHub, ValidityWindow};
 use crate::chain::people::PeopleChain;
+use crate::signature::AccountSignatureForm;
 
 pub(super) trait Link {
     type Chain;
@@ -28,6 +29,8 @@ impl Link for PeopleLink {
 pub(super) struct Window {
     pub window: ValidityWindow,
     pub attester: [u8; 32],
+    /// The form the Asset Hub runtime accepts for the reservation signature.
+    pub signature_form: AccountSignatureForm,
 }
 
 const DOTNS_RECONNECT_INTERVAL: Duration = Duration::from_secs(30);
@@ -93,14 +96,24 @@ impl DotnsLink {
         }
     }
 
-    fn ctx(&self, up: &(AssetHub, ValidityWindow)) -> (AssetHub, Window) {
-        (
-            up.0.clone(),
-            Window {
-                window: up.1,
-                attester: self.attester,
-            },
-        )
+    /// The lane's context for one pass. The runtime can upgrade while the lane
+    /// is connected, so the signature form is read on every pass. A pass whose
+    /// form cannot be read is skipped.
+    async fn pass_ctx(&self, up: &(AssetHub, ValidityWindow)) -> Option<(AssetHub, Window)> {
+        match up.0.account_signature_form().await {
+            Ok(signature_form) => Some((
+                up.0.clone(),
+                Window {
+                    window: up.1,
+                    attester: self.attester,
+                    signature_form,
+                },
+            )),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "dotns pass skipped: signature form unreadable");
+                None
+            }
+        }
     }
 }
 
@@ -114,7 +127,7 @@ impl Link for DotnsLink {
             DotnsDial::Skip => return None,
             DotnsDial::Ready => {
                 let up = self.connected.as_ref()?;
-                return Some(self.ctx(up));
+                return self.pass_ctx(up).await;
             }
             DotnsDial::Dial => {}
         }
@@ -128,9 +141,9 @@ impl Link for DotnsLink {
                     "dotns lane connected"
                 );
                 metrics::gauge!("dub_dotns_lane_connected").set(1.0);
-                let ctx = self.ctx(&up);
+                let ctx = self.pass_ctx(&up).await;
                 self.record_dial_success(up);
-                Some(ctx)
+                ctx
             }
             Err(e) => {
                 let reason = format!("{e:#}");

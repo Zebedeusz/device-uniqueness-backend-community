@@ -23,6 +23,7 @@ use crate::{
     eligibility,
     http::state::AppState,
     queue,
+    signature::{verify_account_signature, AccountSignatureForm},
 };
 
 use super::error::{FieldError, UsernamesError, UsernamesResult};
@@ -248,7 +249,12 @@ pub async fn register(
     validate_device_token_header(&headers)?;
 
     let value = super::parse_json_body(&body)?;
-    let mut parsed = validate_register(&value, &state.config)?;
+    let signature_form = state
+        .chain
+        .account_signature_form()
+        .await
+        .map_err(UsernamesError::from)?;
+    let mut parsed = validate_register(&value, &state.config, &signature_form)?;
 
     let base = base_state(&state, &parsed.username).await?;
     if let Some(reserved) = reserved_name(&parsed) {
@@ -846,6 +852,7 @@ fn is_base64(value: &str) -> bool {
 fn validate_register(
     value: &Value,
     config: &crate::config::Config,
+    signature_form: &AccountSignatureForm,
 ) -> Result<ParsedRegister, UsernamesError> {
     let mut errors: Vec<FieldError> = Vec::new();
     let object = value.as_object();
@@ -1144,7 +1151,8 @@ fn validate_register(
                 if candidate_signature_ok {
                     let signature = decode_prefixed_hex(candidate_signature_raw.as_deref());
                     let ring = decode_prefixed_hex(ring_vrf_key.as_deref());
-                    if !verify_candidate_signature(&candidate.0, &signature, &ring) {
+                    if !verify_candidate_signature(&candidate.0, &signature, &ring, signature_form)
+                    {
                         errors.push(FieldError {
                             message: MSG_INVALID_SIGNATURE.to_string(),
                             field: "candidateSignature".to_string(),
@@ -1269,25 +1277,23 @@ const POP_REGISTER_PREFIX: &[u8] = b"pop:people-lite:register using";
 /// Verifies the caller controls `candidate_pubkey`.
 ///
 /// The candidate's sr25519 key must have signed
-/// `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey`. Uses `subxt_signer`
-/// (schnorrkel with the Substrate signing context). Symmetric with the shipping
-/// Polkadot wallets and the on-chain verifier.
+/// `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey` in the form the People
+/// runtime accepts (see [`crate::signature`]).
 fn verify_candidate_signature(
     candidate_pubkey: &[u8; 32],
     candidate_signature: &[u8],
     ring_vrf_key: &[u8],
+    signature_form: &AccountSignatureForm,
 ) -> bool {
-    let Ok(signature) = <[u8; 64]>::try_from(candidate_signature) else {
-        return false;
-    };
     let mut message = Vec::with_capacity(POP_REGISTER_PREFIX.len() + 32 + ring_vrf_key.len());
     message.extend_from_slice(POP_REGISTER_PREFIX);
     message.extend_from_slice(candidate_pubkey);
     message.extend_from_slice(ring_vrf_key);
-    subxt_signer::sr25519::verify(
-        &subxt_signer::sr25519::Signature(signature),
-        message,
-        &subxt_signer::sr25519::PublicKey(*candidate_pubkey),
+    verify_account_signature(
+        candidate_signature,
+        &message,
+        candidate_pubkey,
+        signature_form,
     )
 }
 
@@ -1355,7 +1361,7 @@ mod tests {
     }
 
     fn errors_of(value: serde_json::Value) -> Vec<(String, String)> {
-        match validate_register(&value, &config()) {
+        match validate_register(&value, &config(), &AccountSignatureForm::Plain) {
             Err(UsernamesError::InvalidBody(errors)) => {
                 errors.into_iter().map(|e| (e.field, e.message)).collect()
             }
@@ -1365,7 +1371,8 @@ mod tests {
 
     #[test]
     fn accepts_a_genuinely_signed_request() {
-        let parsed = validate_register(&valid_body(), &config()).expect("valid");
+        let parsed = validate_register(&valid_body(), &config(), &AccountSignatureForm::Plain)
+            .expect("valid");
         assert_eq!(parsed.username, "aliceuser");
         assert_eq!(parsed.candidate_signature.len(), 64);
     }
@@ -1504,7 +1511,7 @@ mod tests {
         future["dotns"] =
             json!({ "signature": format!("0x{}", "ab".repeat(64)), "signedAt": now + 700 });
         assert_eq!(
-            match validate_register(&future, &enabled) {
+            match validate_register(&future, &enabled, &AccountSignatureForm::Plain) {
                 Err(UsernamesError::InvalidBody(errors)) => errors[0].message.clone(),
                 other => panic!("{other:?}", other = other.err()),
             },
@@ -1515,7 +1522,7 @@ mod tests {
         stale["dotns"] =
             json!({ "signature": format!("0x{}", "ab".repeat(64)), "signedAt": now - 700 });
         assert_eq!(
-            match validate_register(&stale, &enabled) {
+            match validate_register(&stale, &enabled, &AccountSignatureForm::Plain) {
                 Err(UsernamesError::InvalidBody(errors)) => errors[0].message.clone(),
                 other => panic!("{other:?}", other = other.err()),
             },
@@ -1525,7 +1532,8 @@ mod tests {
 
         let mut valid = valid_body();
         valid["dotns"] = dotns_block(now, Some("reservedname"), &enabled);
-        let parsed = validate_register(&valid, &enabled).expect("valid dotns");
+        let parsed =
+            validate_register(&valid, &enabled, &AccountSignatureForm::Plain).expect("valid dotns");
         let dotns = parsed.dotns.expect("dotns parsed");
         assert_eq!(dotns.reserved_username.as_deref(), Some("reservedname"));
     }
@@ -1535,7 +1543,8 @@ mod tests {
         let config = config();
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
-        let plain = validate_register(&valid_body(), &config).expect("valid");
+        let plain =
+            validate_register(&valid_body(), &config, &AccountSignatureForm::Plain).expect("valid");
         assert_eq!(
             reserved_name(&plain),
             None,
@@ -1545,14 +1554,18 @@ mod tests {
         let mut without = valid_body();
         without["dotns"] = dotns_block(now, None, &config);
         assert_eq!(
-            reserved_name(&validate_register(&without, &config).expect("valid")),
+            reserved_name(
+                &validate_register(&without, &config, &AccountSignatureForm::Plain).expect("valid")
+            ),
             None
         );
 
         let mut with = valid_body();
         with["dotns"] = dotns_block(now, Some("aliceuser"), &config);
         assert_eq!(
-            reserved_name(&validate_register(&with, &config).expect("valid")),
+            reserved_name(
+                &validate_register(&with, &config, &AccountSignatureForm::Plain).expect("valid")
+            ),
             Some("aliceuser")
         );
     }
@@ -1569,7 +1582,8 @@ mod tests {
         assert_eq!(body["username"], json!("aliceuser"));
         body["dotns"] = dotns_block(now, Some("reservedname"), &config);
 
-        let parsed = validate_register(&body, &config).expect("valid");
+        let parsed =
+            validate_register(&body, &config, &AccountSignatureForm::Plain).expect("valid");
         assert_eq!(reserved_name(&parsed), Some("reservedname"));
     }
 
@@ -1653,7 +1667,8 @@ mod tests {
 
         let mut junk = valid_body();
         junk["dotns"] = json!({ "signature": format!("0x{}", "ab".repeat(64)), "signedAt": now });
-        let parsed = validate_register(&junk, &config).expect("junk dotns signature is accepted");
+        let parsed = validate_register(&junk, &config, &AccountSignatureForm::Plain)
+            .expect("junk dotns signature is accepted");
         assert_eq!(parsed.username, "aliceuser");
         assert!(
             parsed.dotns.is_some(),
@@ -1664,13 +1679,15 @@ mod tests {
         other_attester.attester_account = [0xbb; 32];
         let mut wrong = valid_body();
         wrong["dotns"] = dotns_block(now, None, &other_attester);
-        assert!(validate_register(&wrong, &config).is_ok());
+        assert!(validate_register(&wrong, &config, &AccountSignatureForm::Plain).is_ok());
 
         let mut reserved_mismatch = valid_body();
         let mut block = dotns_block(now, Some("reservedname"), &config);
         block.as_object_mut().unwrap().remove("reservedUsername");
         reserved_mismatch["dotns"] = block;
-        assert!(validate_register(&reserved_mismatch, &config).is_ok());
+        assert!(
+            validate_register(&reserved_mismatch, &config, &AccountSignatureForm::Plain).is_ok()
+        );
     }
 
     #[test]
@@ -1726,7 +1743,7 @@ mod tests {
         let mut at_bound = valid_body();
         let exact = "a".repeat(MAX_DOTNS_LABEL_LEN);
         at_bound["dotns"] = dotns_block(now, Some(&exact), &config);
-        assert!(validate_register(&at_bound, &config).is_ok());
+        assert!(validate_register(&at_bound, &config, &AccountSignatureForm::Plain).is_ok());
     }
 
     #[test]
@@ -1748,12 +1765,13 @@ mod tests {
     fn voucher_field_is_ignored_when_the_feature_is_off() {
         let mut body = valid_body();
         body["lifetimePoUDVoucher"] = json!("some-voucher-key");
-        let parsed = validate_register(&body, &config()).expect("valid");
+        let parsed =
+            validate_register(&body, &config(), &AccountSignatureForm::Plain).expect("valid");
         assert_eq!(parsed.voucher, None);
 
         let mut body = valid_body();
         body["lifetimePoUDVoucher"] = json!(42);
-        assert!(validate_register(&body, &config()).is_ok());
+        assert!(validate_register(&body, &config(), &AccountSignatureForm::Plain).is_ok());
     }
 
     #[test]
@@ -1763,17 +1781,27 @@ mod tests {
 
         let mut body = valid_body();
         body["lifetimePoUDVoucher"] = json!("some-voucher-key");
-        let parsed = validate_register(&body, &on).expect("valid");
+        let parsed = validate_register(&body, &on, &AccountSignatureForm::Plain).expect("valid");
         assert_eq!(parsed.voucher.as_deref(), Some("some-voucher-key"));
 
-        assert_eq!(validate_register(&valid_body(), &on).unwrap().voucher, None);
+        assert_eq!(
+            validate_register(&valid_body(), &on, &AccountSignatureForm::Plain)
+                .unwrap()
+                .voucher,
+            None
+        );
         let mut empty = valid_body();
         empty["lifetimePoUDVoucher"] = json!("");
-        assert_eq!(validate_register(&empty, &on).unwrap().voucher, None);
+        assert_eq!(
+            validate_register(&empty, &on, &AccountSignatureForm::Plain)
+                .unwrap()
+                .voucher,
+            None
+        );
 
         let mut bad = valid_body();
         bad["lifetimePoUDVoucher"] = json!(42);
-        match validate_register(&bad, &on) {
+        match validate_register(&bad, &on, &AccountSignatureForm::Plain) {
             Err(UsernamesError::InvalidBody(errors)) => {
                 assert_eq!(errors.len(), 1);
                 assert_eq!(errors[0].field, "lifetimePoUDVoucher");
@@ -1830,13 +1858,15 @@ mod tests {
         message.extend_from_slice(&ring_vrf_key);
         let signature = keypair.sign(&message).0;
 
+        let plain = AccountSignatureForm::Plain;
         assert!(verify_candidate_signature(
             &candidate,
             &signature,
-            &ring_vrf_key
+            &ring_vrf_key,
+            &plain
         ));
         assert!(!verify_candidate_signature(
-            &candidate, &signature, &[9u8; 32]
+            &candidate, &signature, &[9u8; 32], &plain
         ));
         let other = Keypair::from_uri(&SecretUri::from_str("//Bob").unwrap())
             .unwrap()
@@ -1845,12 +1875,32 @@ mod tests {
         assert!(!verify_candidate_signature(
             &other,
             &signature,
-            &ring_vrf_key
+            &ring_vrf_key,
+            &plain
         ));
         assert!(!verify_candidate_signature(
             &candidate,
             &[0u8; 10],
-            &ring_vrf_key
+            &ring_vrf_key,
+            &plain
+        ));
+
+        // Above the last plain spec version, only the message in the
+        // personhood signing context verifies.
+        let context = crate::signature::signing_context(crate::signature::PERSONHOOD, b"paseo");
+        let in_context_form = AccountSignatureForm::InContext(context);
+        let in_context = keypair.sign(&[context.as_slice(), &message].concat()).0;
+        assert!(verify_candidate_signature(
+            &candidate,
+            &in_context,
+            &ring_vrf_key,
+            &in_context_form
+        ));
+        assert!(!verify_candidate_signature(
+            &candidate,
+            &signature,
+            &ring_vrf_key,
+            &in_context_form
         ));
     }
 }
