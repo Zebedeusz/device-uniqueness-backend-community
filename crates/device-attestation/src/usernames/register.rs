@@ -23,11 +23,11 @@ use crate::{
     eligibility,
     http::state::AppState,
     queue,
-    signature::{verify_account_signature, AccountSignatureForm},
+    signature::{AccountSignatureForm, PEOPLE_PALLET},
 };
 
 use super::error::{FieldError, UsernamesError, UsernamesResult};
-use super::{available_digits, base_state, reservation_state, MAX_BASE_LEN};
+use super::{available_digits, base_state_at, reservation_state, MAX_BASE_LEN};
 
 /// The flat registration request (documentation mirror — the handler
 /// validates raw JSON so it can report every failing field).
@@ -249,12 +249,17 @@ pub async fn register(
     validate_device_token_header(&headers)?;
 
     let value = super::parse_json_body(&body)?;
-    let signature_form = crate::signature::account_signature_form(state.chain.online())
+    // One block handle serves the signature form and the base-state read.
+    let at = state
+        .chain
+        .online()
+        .at_current_block()
         .await
-        .map_err(UsernamesError::from)?;
+        .map_err(|e| UsernamesError::from(anyhow::Error::from(e)))?;
+    let signature_form = crate::signature::account_signature_form(at.metadata_ref(), PEOPLE_PALLET);
     let mut parsed = validate_register(&value, &state.config, &signature_form)?;
 
-    let base = base_state(&state, &parsed.username).await?;
+    let base = base_state_at(&state, &parsed.username, &at).await?;
     if let Some(reserved) = reserved_name(&parsed) {
         let reservation = if reserved == parsed.username {
             base.reservation()
@@ -1149,8 +1154,12 @@ fn validate_register(
                 if candidate_signature_ok {
                     let signature = decode_prefixed_hex(candidate_signature_raw.as_deref());
                     let ring = decode_prefixed_hex(ring_vrf_key.as_deref());
-                    if !verify_candidate_signature(&candidate.0, &signature, &ring, signature_form)
-                    {
+                    if !crate::signature::verify_candidate_signature(
+                        &candidate.0,
+                        &signature,
+                        &ring,
+                        signature_form,
+                    ) {
                         errors.push(FieldError {
                             message: MSG_INVALID_SIGNATURE.to_string(),
                             field: "candidateSignature".to_string(),
@@ -1267,34 +1276,6 @@ fn decode_prefixed_hex(value: Option<&str>) -> Vec<u8> {
     hex::decode(value.strip_prefix("0x").unwrap_or(value)).unwrap_or_default()
 }
 
-/// The message prefix the People Chain reconstructs for `PeopleLite.attest`;
-/// `candidateSignature` (and `proofOfOwnership`) cover
-/// `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey`.
-const POP_REGISTER_PREFIX: &[u8] = b"pop:people-lite:register using";
-
-/// Verifies the caller controls `candidate_pubkey`.
-///
-/// The candidate's sr25519 key must have signed
-/// `POP_REGISTER_PREFIX || candidatePubkey || ringVrfKey` in the form the People
-/// runtime accepts (see [`crate::signature`]).
-fn verify_candidate_signature(
-    candidate_pubkey: &[u8; 32],
-    candidate_signature: &[u8],
-    ring_vrf_key: &[u8],
-    signature_form: &AccountSignatureForm,
-) -> bool {
-    let mut message = Vec::with_capacity(POP_REGISTER_PREFIX.len() + 32 + ring_vrf_key.len());
-    message.extend_from_slice(POP_REGISTER_PREFIX);
-    message.extend_from_slice(candidate_pubkey);
-    message.extend_from_slice(ring_vrf_key);
-    verify_account_signature(
-        candidate_signature,
-        &message,
-        candidate_pubkey,
-        signature_form,
-    )
-}
-
 /// Choose the discriminator: the preferred one if free, else a random free
 /// one. The pool is `01..=99` (`00` is never offered). The preferred string
 /// is regex-validated before this point.
@@ -1341,11 +1322,9 @@ mod tests {
         let keypair = Keypair::from_uri(&SecretUri::from_str("//Alice").unwrap()).unwrap();
         let candidate = keypair.public_key();
         let ring = [7u8; 32];
-        let mut message = Vec::new();
-        message.extend_from_slice(POP_REGISTER_PREFIX);
-        message.extend_from_slice(&candidate.0);
-        message.extend_from_slice(&ring);
-        let signature = keypair.sign(&message).0;
+        let signature = keypair
+            .sign(&crate::signature::candidate_message(&candidate.0, &ring))
+            .0;
 
         json!({
             "candidateAccountId": candidate.to_account_id().to_string(),
@@ -1823,49 +1802,5 @@ mod tests {
             HeaderValue::from_str(&encoded).unwrap(),
         );
         assert_eq!(device_token_bytes(&present).as_deref(), Some(&token[..]));
-    }
-
-    #[test]
-    fn candidate_signature_verifies_control_of_beneficiary() {
-        use std::str::FromStr as _;
-        use subxt_signer::sr25519::Keypair;
-        use subxt_signer::SecretUri;
-
-        let keypair = Keypair::from_uri(&SecretUri::from_str("//Alice").unwrap()).unwrap();
-        let candidate = keypair.public_key().0;
-        let ring_vrf_key = [7u8; 32];
-
-        let mut message = Vec::new();
-        message.extend_from_slice(POP_REGISTER_PREFIX);
-        message.extend_from_slice(&candidate);
-        message.extend_from_slice(&ring_vrf_key);
-        let signature = keypair.sign(&message).0;
-
-        let plain = AccountSignatureForm::Plain;
-        assert!(verify_candidate_signature(
-            &candidate,
-            &signature,
-            &ring_vrf_key,
-            &plain
-        ));
-        assert!(!verify_candidate_signature(
-            &candidate, &signature, &[9u8; 32], &plain
-        ));
-        let other = Keypair::from_uri(&SecretUri::from_str("//Bob").unwrap())
-            .unwrap()
-            .public_key()
-            .0;
-        assert!(!verify_candidate_signature(
-            &other,
-            &signature,
-            &ring_vrf_key,
-            &plain
-        ));
-        assert!(!verify_candidate_signature(
-            &candidate,
-            &[0u8; 10],
-            &ring_vrf_key,
-            &plain
-        ));
     }
 }

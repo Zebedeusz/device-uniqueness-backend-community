@@ -65,6 +65,27 @@ pub(super) fn other_reservation() -> Reservation {
     }
 }
 
+/// A reservation whose candidate signed the `PeopleLite.attest` message over
+/// the plain form, with the candidate's account.
+pub(super) fn signed_people_reservation() -> (Reservation, [u8; 32]) {
+    let keypair = subxt_signer::sr25519::Keypair::from_uri(
+        &subxt_signer::SecretUri::from_str("//people-writer-test").expect("valid uri"),
+    )
+    .expect("keypair");
+    let candidate = keypair.public_key().0;
+
+    let mut r = reservation();
+    r.candidate_account_id = subxt::utils::AccountId32(candidate).to_string();
+    r.candidate_signature = keypair
+        .sign(&crate::signature::candidate_message(
+            &candidate,
+            &r.ring_vrf_key,
+        ))
+        .0
+        .to_vec();
+    (r, candidate)
+}
+
 pub(super) fn signed_reservation() -> (Reservation, [u8; 32], [u8; 32]) {
     let keypair = subxt_signer::sr25519::Keypair::from_uri(
         &subxt_signer::SecretUri::from_str("//dotns-writer-test").expect("valid uri"),

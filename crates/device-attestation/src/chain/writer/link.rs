@@ -3,25 +3,38 @@
 
 use std::time::{Duration, Instant};
 
+use anyhow::Context as _;
+
 use crate::chain::asset_hub::{AssetHub, ValidityWindow};
 use crate::chain::people::PeopleChain;
-use crate::signature::AccountSignatureForm;
+use crate::signature::{account_signature_form, AccountSignatureForm, DOTNS_PALLET, PEOPLE_PALLET};
 
 pub(super) trait Link {
     type Chain;
     type Ctx: Copy;
 
-    async fn up(&mut self) -> Option<(Self::Chain, Self::Ctx)>;
+    /// The chain this lane runs against, dialling if a retry is due. `None`
+    /// while the lane is parked.
+    async fn up(&mut self) -> Option<Self::Chain>;
+
+    /// The lane's context for one pass with rows due. Read per pass, because
+    /// the runtime can upgrade while the lane is connected.
+    async fn ctx(&self, chain: &Self::Chain) -> anyhow::Result<Self::Ctx>;
 }
 
 pub(super) struct PeopleLink(pub PeopleChain);
 
 impl Link for PeopleLink {
     type Chain = PeopleChain;
-    type Ctx = ();
+    type Ctx = AccountSignatureForm;
 
-    async fn up(&mut self) -> Option<(PeopleChain, ())> {
-        Some((self.0.clone(), ()))
+    async fn up(&mut self) -> Option<PeopleChain> {
+        Some(self.0.clone())
+    }
+
+    async fn ctx(&self, chain: &PeopleChain) -> anyhow::Result<AccountSignatureForm> {
+        let at = chain.online().at_current_block().await?;
+        Ok(account_signature_form(at.metadata_ref(), PEOPLE_PALLET))
     }
 }
 
@@ -95,40 +108,17 @@ impl DotnsLink {
             retry_at: None,
         }
     }
-
-    /// The lane's context for one pass. The runtime can upgrade while the lane
-    /// is connected, so the signature form is read on every pass. A pass whose
-    /// form cannot be read is skipped.
-    async fn pass_ctx(&self, up: &(AssetHub, ValidityWindow)) -> Option<(AssetHub, Window)> {
-        match crate::signature::account_signature_form(up.0.online()).await {
-            Ok(signature_form) => Some((
-                up.0.clone(),
-                Window {
-                    window: up.1,
-                    attester: self.attester,
-                    signature_form,
-                },
-            )),
-            Err(e) => {
-                tracing::warn!(error = %format!("{e:#}"), "dotns pass skipped: signature form unreadable");
-                None
-            }
-        }
-    }
 }
 
 impl Link for DotnsLink {
     type Chain = AssetHub;
     type Ctx = Window;
 
-    async fn up(&mut self) -> Option<(AssetHub, Window)> {
+    async fn up(&mut self) -> Option<AssetHub> {
         let now = Instant::now();
         match self.dial_state(now) {
             DotnsDial::Skip => return None,
-            DotnsDial::Ready => {
-                let up = self.connected.as_ref()?;
-                return self.pass_ctx(up).await;
-            }
+            DotnsDial::Ready => return self.connected.as_ref().map(|(chain, _)| chain.clone()),
             DotnsDial::Dial => {}
         }
         let rpc_url = self.rpc_url.clone();
@@ -141,9 +131,9 @@ impl Link for DotnsLink {
                     "dotns lane connected"
                 );
                 metrics::gauge!("dub_dotns_lane_connected").set(1.0);
-                let ctx = self.pass_ctx(&up).await;
+                let chain = up.0.clone();
                 self.record_dial_success(up);
-                ctx
+                Some(chain)
             }
             Err(e) => {
                 let reason = format!("{e:#}");
@@ -159,6 +149,19 @@ impl Link for DotnsLink {
                 None
             }
         }
+    }
+
+    async fn ctx(&self, chain: &AssetHub) -> anyhow::Result<Window> {
+        let (_, window) = self
+            .connected
+            .as_ref()
+            .context("dotns lane is not connected")?;
+        let at = chain.online().at_current_block().await?;
+        Ok(Window {
+            window: *window,
+            attester: self.attester,
+            signature_form: account_signature_form(at.metadata_ref(), DOTNS_PALLET),
+        })
     }
 }
 

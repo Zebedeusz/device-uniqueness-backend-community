@@ -11,15 +11,19 @@ Pre-1.0, a breaking change bumps the **minor**. Pin an exact `vX.Y.Z`.
 ### Changed
 
 - **Candidate and dotNS reservation signatures follow the runtime's signing
-  context rule.** Individuality runtimes above spec version 3004000 accept these
-  account signatures only over `context ++ message`, where the context is
-  `blake2_256("product/peopl.<suffix>/" ++ "sig/" ++ 28 zero bytes)` and
-  `<suffix>` is the chain's `NetworkSuffix` (paritytech/individuality-community#105).
-  Intake (`candidateSignature`) reads People's runtime version on each request,
-  and the chain writer's dotNS gate (`dotns.signature`) reads Asset Hub's on each
-  pass. Each applies the rule that runtime enforces: the plain message up to
-  3004000, the message in the signing context above it. A release works before
-  and after the runtime upgrade and switches as soon as the upgrade is enacted.
+  context rule.** An individuality runtime that checks these account signatures
+  over `context ++ message` (paritytech/individuality-community#196) exposes
+  the context as the `SigningContext` constant of the verifying pallet
+  (`PeopleLite` on People, `DotnsGateway` on Asset Hub). Intake
+  (`candidateSignature`) and the chain writer's gates read the constant from the
+  runtime metadata at the block they work against: the message in that context
+  when it is there, the plain message when it is not. A release works on any
+  network, before and after the runtime upgrade, and switches as soon as the
+  upgrade is enacted.
+- **The People lane verifies the candidate signature before submitting.** A
+  row whose `candidateSignature` the runtime would reject as
+  `InvalidAttestationSignature` is failed at the gate, like a dotNS reservation
+  with a bad signature, instead of spending attempts and fees on-chain.
 
 ## [0.7.0] - 2026-09-16
 

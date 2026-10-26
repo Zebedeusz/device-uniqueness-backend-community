@@ -9,6 +9,12 @@ use chain_types::{people, PeopleConfig};
 use subxt::{config::RpcConfigFor, utils::AccountId32, OnlineClient};
 use subxt_rpcs::{LegacyRpcMethods, RpcClient};
 
+/// The People Chain client pinned to one block.
+pub type PeopleAt = subxt::client::ClientAtBlock<
+    PeopleConfig,
+    subxt::client::OnlineClientAtBlockImpl<PeopleConfig>,
+>;
+
 const DISCRIMINATORS: u8 = 100;
 
 const HEALTH_PROBE_USERNAME: &str = "readyz-probe.00";
